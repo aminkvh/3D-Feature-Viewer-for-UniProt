@@ -2,7 +2,7 @@
 
 A Chrome extension that injects an interactive 3D protein structure viewer directly into UniProt entry and variant-viewer pages.
 
-![UniProt 3D Viewer Screenshot](screenshot.png) <!-- Replace with actual screenshot path later -->
+![UniProt 3D Viewer Screenshot](icon/Screenshot.png) 
 
 ## Motivation
 
