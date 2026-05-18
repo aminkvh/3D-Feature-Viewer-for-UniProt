@@ -423,6 +423,11 @@
             heading.textContent = mode === 'ptm' ? 'PTM Viewer' : 'Variant Viewer';
         }
 
+        // Keep the ID badge in sync with the currently viewed protein
+        // (the modal is built once and reused across SPA navigations)
+        const idBadge = document.getElementById('ufv-id-badge');
+        if (idBadge) idBadge.textContent = uniprotId;
+
         // Show correct panel
         document.getElementById('ufv-ptm-panel').classList.toggle('ufv-hidden', mode !== 'ptm');
         document.getElementById('ufv-var-panel').classList.toggle('ufv-hidden', mode !== 'variant');
@@ -1032,7 +1037,40 @@
             const oldUrl = lastUrl;
             lastUrl = currentUrl;
             // console.log('\[UniProt 3D\] SPA navigation:', oldUrl, '->', currentUrl);
+
+            // If the user navigated to a different protein, the cached
+            // structure/annotations belong to the old accession. Drop them so
+            // the next openModal() reloads fresh data instead of showing stale.
+            const newId = getUniProtId();
+            if (newId && newId !== uniprotId) {
+                // console.log('\[UniProt 3D\] Protein changed:', uniprotId, '->', newId);
+                uniprotId = newId;
+                resetProteinState();
+            }
+
             handlePageType();
+        }
+
+        function resetProteinState() {
+            featuresData = null;
+            variationData = null;
+            ptms = [];
+            ptmGroups = {};
+            variants = [];
+            activeConsequences = new Set();
+            activeProvenances = new Set();
+            activeDiseases = null;
+            scrapedDiseases = [];
+            displayedPositions = [];
+            viewerInitialized = false;
+            lastPageContext = null;
+
+            // The modal (if built) is showing the previous protein — close it.
+            // It will reload from scratch the next time a "View in 3D" button
+            // is clicked for the new protein.
+            if (overlayEl && overlayEl.style.display !== 'none') {
+                closeModal();
+            }
         }
 
         function handlePageType() {
@@ -1077,4 +1115,3 @@
     }
 
 })();
-
