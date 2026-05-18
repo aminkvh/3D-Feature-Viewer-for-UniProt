@@ -14,7 +14,7 @@ When starting a new protein project, I usually want a quick way to see where mut
 - **Large-Scale Data**: Pulls in high-throughput proteomics data (PRIDE / PTMeXchange) to visualize modifications that aren't in the standard UniProt features track.
 - **Interactive Filtering**: Filter variants by disease, consequence, or provenance using an interactive side panel.
 - **Copy IDs**: Quickly copy all currently visualized residue positions to your clipboard for downstream analysis.
-- 
+  
 ## Installation
 
 ### For Users (Chrome Web Store)
