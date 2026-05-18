@@ -15,3 +15,8 @@ Thumbs.db
 *.zip
 dist/
 out/
+build/
+
+# Packaged extension and signing key — never commit the private key
+*.crx
+*.pem
