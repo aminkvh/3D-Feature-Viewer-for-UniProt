@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "UniProt 3D Feature Viewer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
   "permissions": [],
   "host_permissions": [
