@@ -1,4 +1,4 @@
-# UniProt 3D Feature Viewer
+# UniProt 3D Feature Viewer [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20274183.svg)](https://doi.org/10.5281/zenodo.20274183)
 
 A Chrome extension that injects an interactive 3D protein structure viewer directly into UniProt entry and variant-viewer pages.
 
