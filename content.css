@@ -1,0 +1,735 @@
+/* ============================================
+   Content CSS — injected into UniProt pages
+   ============================================ */
+
+/* ---- Theme Variables ---- */
+:root {
+    --ufv-bg-primary: #0c111b;
+    --ufv-bg-secondary: #111827;
+    --ufv-bg-tertiary: #141b2d;
+    --ufv-bg-hover: rgba(255,255,255,0.04);
+    --ufv-border: rgba(255,255,255,0.06);
+    --ufv-border-hover: rgba(255,255,255,0.08);
+    --ufv-text-primary: #e8ecf4;
+    --ufv-text-secondary: #8b95a8;
+    --ufv-text-muted: #5a6478;
+    --ufv-accent: #00e5ff;
+    --ufv-accent-bg: rgba(0,229,255,0.12);
+    --ufv-accent-border: rgba(0,229,255,0.25);
+    --ufv-overlay-bg: rgba(0,0,0,0.65);
+    --ufv-shadow: rgba(0,0,0,0.7);
+    --ufv-checkbox-border: #5a6478;
+    --ufv-checkbox-check: #0c111b;
+    --ufv-scroll-thumb: #5a6478;
+    --ufv-loading-bg: rgba(12,17,27,0.92);
+    --ufv-viewer-bg: #0c111b;
+    --ufv-tooltip-bg: rgba(17,24,39,0.92);
+    --ufv-filter-count-bg: rgba(255,255,255,0.04);
+}
+
+/* Light mode via browser preference */
+@media (prefers-color-scheme: light) {
+    :root:not(.ufv-dark) {
+        --ufv-bg-primary: #ffffff;
+        --ufv-bg-secondary: #f8f9fa;
+        --ufv-bg-tertiary: #eef1f5;
+        --ufv-bg-hover: rgba(0,0,0,0.04);
+        --ufv-border: #dfe4ea;
+        --ufv-border-hover: #c5cbd3;
+        --ufv-text-primary: #1a2735;
+        --ufv-text-secondary: #5a6c7d;
+        --ufv-text-muted: #8a97a6;
+        --ufv-accent: #185F8B;
+        --ufv-accent-bg: rgba(24,95,139,0.08);
+        --ufv-accent-border: rgba(24,95,139,0.25);
+        --ufv-overlay-bg: rgba(0,0,0,0.35);
+        --ufv-shadow: rgba(0,0,0,0.12);
+        --ufv-checkbox-border: #b0b8c8;
+        --ufv-checkbox-check: #ffffff;
+        --ufv-scroll-thumb: #b0b8c8;
+        --ufv-loading-bg: rgba(255,255,255,0.9);
+        --ufv-viewer-bg: #f0f2f5;
+        --ufv-tooltip-bg: rgba(255,255,255,0.96);
+        --ufv-filter-count-bg: rgba(0,0,0,0.06);
+    }
+}
+
+/* Explicit light mode class override */
+.ufv-light {
+    --ufv-bg-primary: #ffffff !important;
+    --ufv-bg-secondary: #f8f9fa !important;
+    --ufv-bg-tertiary: #eef1f5 !important;
+    --ufv-bg-hover: rgba(0,0,0,0.04) !important;
+    --ufv-border: #dfe4ea !important;
+    --ufv-border-hover: #c5cbd3 !important;
+    --ufv-text-primary: #1a2735 !important;
+    --ufv-text-secondary: #5a6c7d !important;
+    --ufv-text-muted: #8a97a6 !important;
+    --ufv-accent: #185F8B !important;
+    --ufv-accent-bg: rgba(24,95,139,0.08) !important;
+    --ufv-accent-border: rgba(24,95,139,0.25) !important;
+    --ufv-overlay-bg: rgba(0,0,0,0.35) !important;
+    --ufv-shadow: rgba(0,0,0,0.12) !important;
+    --ufv-checkbox-border: #b0b8c8 !important;
+    --ufv-checkbox-check: #ffffff !important;
+    --ufv-scroll-thumb: #b0b8c8 !important;
+    --ufv-loading-bg: rgba(255,255,255,0.9) !important;
+    --ufv-viewer-bg: #f0f2f5 !important;
+    --ufv-tooltip-bg: rgba(255,255,255,0.96) !important;
+    --ufv-filter-count-bg: rgba(0,0,0,0.06) !important;
+}
+
+/* Explicit dark mode class override */
+.ufv-dark {
+    --ufv-bg-primary: #0c111b !important;
+    --ufv-bg-secondary: #111827 !important;
+    --ufv-bg-tertiary: #141b2d !important;
+    --ufv-bg-hover: rgba(255,255,255,0.04) !important;
+    --ufv-border: rgba(255,255,255,0.06) !important;
+    --ufv-border-hover: rgba(255,255,255,0.08) !important;
+    --ufv-text-primary: #e8ecf4 !important;
+    --ufv-text-secondary: #8b95a8 !important;
+    --ufv-text-muted: #5a6478 !important;
+    --ufv-accent: #4da8da !important;
+    --ufv-accent-bg: rgba(77,168,218,0.12) !important;
+    --ufv-accent-border: rgba(77,168,218,0.25) !important;
+    --ufv-overlay-bg: rgba(0,0,0,0.65) !important;
+    --ufv-shadow: rgba(0,0,0,0.7) !important;
+    --ufv-checkbox-border: #5a6478 !important;
+    --ufv-checkbox-check: #0c111b !important;
+    --ufv-scroll-thumb: #5a6478 !important;
+    --ufv-loading-bg: rgba(12,17,27,0.92) !important;
+    --ufv-viewer-bg: #0c111b !important;
+    --ufv-tooltip-bg: rgba(17,24,39,0.92) !important;
+    --ufv-filter-count-bg: rgba(255,255,255,0.04) !important;
+}
+
+/* --- 3D Viewer Button injected next to section headings --- */
+/* Matches UniProt's native button style */
+.ufv-3d-btn {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    margin-left: 12px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #ffffff !important;
+    background: #185F8B !important;
+    border: none;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    vertical-align: middle;
+    letter-spacing: 0.2px;
+    line-height: 1;
+    box-shadow: 0 1px 4px rgba(24,95,139,0.25);
+    position: relative;
+    z-index: 10;
+}
+
+.ufv-3d-btn:hover {
+    background: #1a6fa0 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(24,95,139,0.35);
+}
+
+.ufv-3d-btn:active {
+    transform: translateY(0);
+}
+
+.ufv-3d-btn svg {
+    flex-shrink: 0;
+}
+
+/* --- Modal Overlay --- */
+.ufv-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--ufv-overlay-bg);
+    backdrop-filter: blur(6px);
+    animation: ufv-fadeIn 0.25s ease;
+}
+
+@keyframes ufv-fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.ufv-modal {
+    width: 92vw;
+    height: 88vh;
+    max-width: 1500px;
+    background: var(--ufv-bg-primary);
+    border-radius: 14px;
+    border: 1px solid var(--ufv-border);
+    box-shadow: 0 20px 80px var(--ufv-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: ufv-slideUp 0.3s cubic-bezier(0.4,0,0.2,1);
+    color: var(--ufv-text-primary);
+    font-family: 'Segoe UI', -apple-system, Roboto, sans-serif;
+}
+
+@keyframes ufv-slideUp {
+    from { opacity: 0; transform: translateY(30px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* --- Modal Header --- */
+.ufv-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--ufv-bg-secondary);
+    border-bottom: 1px solid var(--ufv-border);
+    flex-shrink: 0;
+}
+
+.ufv-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ufv-modal-title h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ufv-text-primary);
+    letter-spacing: -0.2px;
+}
+
+.ufv-badge {
+    background: var(--ufv-accent-bg);
+    border: 1px solid var(--ufv-accent-border);
+    border-radius: 5px;
+    padding: 2px 9px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ufv-accent);
+    letter-spacing: 0.5px;
+}
+
+.ufv-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ufv-icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--ufv-bg-hover);
+    border: 1px solid var(--ufv-border-hover);
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.ufv-icon-btn:hover {
+    background: var(--ufv-accent-bg);
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+}
+
+.ufv-icon-btn.active {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent);
+    background: var(--ufv-accent-bg);
+}
+
+.ufv-close-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--ufv-bg-hover);
+    border: 1px solid var(--ufv-border-hover);
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    margin-left: 8px;
+}
+
+.ufv-close-btn:hover {
+    background: #ff1744;
+    color: #fff;
+    border-color: #ff1744;
+}
+
+/* --- Body layout --- */
+.ufv-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+/* --- 3D Viewer --- */
+.ufv-viewer-wrap {
+    flex: 1;
+    position: relative;
+    background: var(--ufv-viewer-bg);
+    min-width: 0;
+}
+
+.ufv-viewer {
+    width: 100%;
+    height: 100%;
+}
+
+.ufv-viewer-ctrls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    z-index: 10;
+}
+
+/* --- Tooltip --- */
+.ufv-tooltip {
+    position: absolute;
+    z-index: 20;
+    background: var(--ufv-tooltip-bg);
+    border: 1px solid var(--ufv-accent-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px var(--ufv-shadow);
+    pointer-events: none;
+    max-width: 300px;
+    font-size: 12px;
+    display: none;
+}
+
+.ufv-tooltip.show { display: block; }
+
+.ufv-tooltip-hdr {
+    font-weight: 600;
+    color: var(--ufv-accent);
+    margin-bottom: 3px;
+    font-size: 12.5px;
+}
+
+.ufv-tooltip-body {
+    color: var(--ufv-text-secondary);
+    line-height: 1.4;
+}
+
+/* --- Side Panel --- */
+.ufv-side {
+    width: 320px;
+    min-width: 320px;
+    background: var(--ufv-bg-secondary);
+    border-left: 1px solid var(--ufv-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.ufv-panel-hdr {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--ufv-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.ufv-panel-hdr h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ufv-text-primary);
+}
+
+.ufv-panel-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.ufv-sm-btn {
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-weight: 500;
+    background: var(--ufv-bg-hover);
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 5px;
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ufv-sm-btn:hover {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+}
+
+/* --- Filter items --- */
+.ufv-filter-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+}
+
+.ufv-filter-scroll::-webkit-scrollbar { width: 5px; }
+.ufv-filter-scroll::-webkit-scrollbar-track { background: transparent; }
+.ufv-filter-scroll::-webkit-scrollbar-thumb { background: var(--ufv-scroll-thumb); border-radius: 3px; }
+
+.ufv-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+    user-select: none;
+}
+
+.ufv-filter-item:hover {
+    background: var(--ufv-bg-hover);
+}
+
+.ufv-filter-item input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--ufv-checkbox-border);
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: all 0.12s ease;
+    background: transparent;
+    margin: 0;
+    vertical-align: middle;
+}
+
+.ufv-filter-item input[type="checkbox"]:checked {
+    background: var(--ufv-accent);
+    border-color: var(--ufv-accent);
+}
+
+.ufv-filter-item input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 6px;
+    height: 9px;
+    border: solid var(--ufv-checkbox-check);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.ufv-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.ufv-filter-label {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ufv-text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ufv-filter-count {
+    font-family: 'Courier New', monospace;
+    font-size: 10.5px;
+    color: var(--ufv-text-muted);
+    padding: 1px 6px;
+    background: var(--ufv-filter-count-bg);
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+/* --- Section titles in filter panel --- */
+.ufv-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--ufv-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 8px 9px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 5px;
+}
+
+.ufv-section-actions {
+    display: flex;
+    gap: 3px;
+}
+
+.ufv-section-btn {
+    font-size: 9px;
+    font-weight: 500;
+    padding: 1px 6px;
+    background: none;
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 3px;
+    color: var(--ufv-text-muted);
+    cursor: pointer;
+    transition: all 0.12s ease;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ufv-section-btn:hover {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+}
+
+/* --- Collapsible / Accordion --- */
+.ufv-collapsible {
+    border-top: 1px solid var(--ufv-border);
+    margin-top: 4px;
+}
+
+.ufv-collapsible-hdr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 9px 4px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--ufv-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    transition: color 0.15s ease;
+}
+
+.ufv-collapsible-hdr:hover {
+    color: var(--ufv-text-primary);
+}
+
+.ufv-collapsible-hdr .ufv-section-actions {
+    margin-left: auto;
+}
+
+.ufv-collapsible-chevron {
+    font-size: 8px;
+    transition: transform 0.2s ease;
+    display: inline-block;
+    width: 10px;
+    text-align: center;
+}
+
+.ufv-collapsible-body {
+    overflow: hidden;
+    max-height: 500px;
+    transition: max-height 0.25s ease, opacity 0.2s ease;
+    opacity: 1;
+}
+
+.ufv-collapsible-body.ufv-collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+/* --- Panel footer --- */
+.ufv-panel-footer {
+    padding: 8px 14px;
+    border-top: 1px solid var(--ufv-border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ufv-count-text {
+    font-size: 11.5px;
+    color: var(--ufv-text-muted);
+    font-weight: 500;
+}
+
+.ufv-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-weight: 500;
+    font-family: inherit;
+    background: var(--ufv-bg-hover);
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 5px;
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.ufv-copy-btn:hover {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+}
+
+.ufv-copy-btn:active {
+    transform: scale(0.95);
+}
+
+.ufv-copy-btn.ufv-copied {
+    color: #4caf50;
+    border-color: #4caf50;
+}
+
+/* --- Details panel --- */
+.ufv-details {
+    border-top: 1px solid var(--ufv-border);
+    background: var(--ufv-bg-tertiary);
+    max-height: 240px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: none;
+}
+
+.ufv-details.show { display: block; }
+
+.ufv-details-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--ufv-border);
+    position: sticky;
+    top: 0;
+    background: var(--ufv-bg-tertiary);
+}
+
+.ufv-details-hdr h4 {
+    font-size: 12.5px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ufv-text-primary);
+}
+
+.ufv-details-close {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    background: none;
+    border: 1px solid var(--ufv-border-hover);
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ufv-details-close:hover {
+    background: #ff1744;
+    color: #fff;
+    border-color: #ff1744;
+}
+
+.ufv-details-body {
+    padding: 10px 14px;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--ufv-text-secondary);
+}
+
+.ufv-detail-row {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+}
+
+.ufv-detail-lbl {
+    font-weight: 600;
+    color: var(--ufv-text-primary);
+    min-width: 80px;
+    flex-shrink: 0;
+}
+
+.ufv-detail-val {
+    word-break: break-word;
+}
+
+.ufv-variant-item {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--ufv-border);
+}
+
+.ufv-mutation-tag {
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--ufv-text-primary);
+}
+
+/* --- Loading state inside modal --- */
+.ufv-loading {
+    position: absolute;
+    inset: 0;
+    background: var(--ufv-loading-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.ufv-loading.hidden { display: none; }
+
+.ufv-spinner {
+    width: 48px;
+    height: 48px;
+    border: 3px solid transparent;
+    border-top-color: var(--ufv-accent);
+    border-right-color: var(--ufv-accent);
+    border-radius: 50%;
+    animation: ufv-spin 0.8s linear infinite;
+}
+
+@keyframes ufv-spin {
+    to { transform: rotate(360deg); }
+}
+
+.ufv-loading-text {
+    font-size: 13px;
+    color: var(--ufv-text-secondary);
+    font-weight: 500;
+}
+
+/* --- Hidden utility --- */
+.ufv-hidden { display: none !important; }

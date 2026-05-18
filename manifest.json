@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "UniProt 3D Feature Viewer",
+  "version": "1.0.0",
+  "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.uniprot.org/*",
+    "https://rest.uniprot.org/*",
+    "https://www.ebi.ac.uk/*",
+    "https://alphafold.ebi.ac.uk/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.uniprot.org/uniprotkb/*/entry*",
+        "https://www.uniprot.org/uniprotkb/*/variant-viewer*"
+      ],
+      "js": ["lib/3Dmol-min.js", "data.js", "viewer.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/3Dmol-min.js"],
+      "matches": ["https://www.uniprot.org/*"]
+    }
+  ],
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
