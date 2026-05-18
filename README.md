@@ -6,24 +6,15 @@ A Chrome extension that injects an interactive 3D protein structure viewer direc
 
 ## Motivation
 
-When working with proteins, understanding the structural context of Post-Translational Modifications (PTMs) and genetic variants is crucial. A simple 1D sequence position often doesn't tell the whole story.
-
-*   *Is this mutation buried in the hydrophobic core, or exposed on the surface?*
-*   *Is this phosphorylation site accessible to kinases?*
-*   *Does this disease variant cluster with other known mutations in 3D space?*
-
-Currently, researchers have to manually cross-reference 1D sequence positions from UniProt with a separate 3D viewer (like PyMOL or Chimera). This extension solves that problem by providing a zero-setup, on-the-fly 3D viewer right where you need it—directly on the UniProt page.
+When starting a new protein project, I usually want a quick way to see where mutations and PTMs are located in 3D space. UniProt already has great annotations, but the default feature viewer can feel limited and inconsistent for structural exploration. I found myself repeatedly jumping between UniProt and external visualization tools, so I built a small extension to make that workflow easier and faster directly inside the UniProt page.
 
 ## Features
 
 - **Seamless Integration**: Automatically injects a "View in 3D" button into the "PTM / Processing" and "Disease & Variants" sections of UniProt.
-- **SPA Aware**: Works perfectly with UniProt's single-page application navigation.
 - **Large-Scale Data**: Pulls in high-throughput proteomics data (PRIDE / PTMeXchange) to visualize modifications that aren't in the standard UniProt features track.
 - **Interactive Filtering**: Filter variants by disease, consequence, or provenance using an interactive side panel.
-- **Visual Focus**: Click on any variant or PTM to automatically zoom in, highlight the residue in ball-and-stick mode, and display local interactions (within 5Å).
 - **Copy IDs**: Quickly copy all currently visualized residue positions to your clipboard for downstream analysis.
-- **Secure**: Built with strict XSS prevention and size guards to handle large AlphaFold models safely.
-
+- 
 ## Installation
 
 ### For Users (Chrome Web Store)
