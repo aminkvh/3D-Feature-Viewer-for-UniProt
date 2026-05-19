@@ -18,8 +18,8 @@ When starting a new protein project, I usually want a quick way to see where mut
 ## Installation
 
 ### For Users (Chrome Web Store)
-*(Link coming soon once published to the Chrome Web Store!)*
-
+[*(UniProt 3D Feature Viewer on Google web store)*
+](https://chromewebstore.google.com/detail/uniprot-3d-feature-viewer/fplpkbigppbpbcdmpkefdoilfgcicaof?authuser=1)
 ### For Developers (Manual Install)
 1. Clone this repository or download the source code.
 2. Open Google Chrome and navigate to `chrome://extensions/`.
