@@ -11,7 +11,7 @@ When starting a new protein project, I usually want a quick way to see where mut
 ## Features
 
 - **Seamless Integration**: Automatically injects a "View in 3D" button into the "PTM / Processing" and "Disease & Variants" sections of UniProt.
-- **Large-Scale Data**: Pulls in high-throughput proteomics data (PRIDE / PTMeXchange) to visualize modifications that aren't in the standard UniProt features track.
+- **Large-Scale Data**: Pulls in high-throughput proteomics data from PRIDE / PTMeXchange to visualize modifications.
 - **Interactive Filtering**: Filter variants by disease, consequence, or provenance using an interactive side panel.
 - **Copy IDs**: Quickly copy all currently visualized residue positions to your clipboard for downstream analysis.
   
