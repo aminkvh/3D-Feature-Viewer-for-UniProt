@@ -6,9 +6,7 @@ const DataProcessor = {
 
     // ---- PTM Colors by category ----
     PTM_COLORS: {
-        'Phosphoserine':         '#ff6d00',
-        'Phosphothreonine':      '#ff9100',
-        'Phosphotyrosine':       '#ffab00',
+        'Phosphorylation':       '#ff6d00',
         'N6-acetyllysine':       '#00e5ff',
         'N6-succinyllysine':     '#00acc1',
         'N6-methyllysine':       '#76ff03',
@@ -21,11 +19,10 @@ const DataProcessor = {
         'Ubiquitinated lysine':  '#ea80fc',
         'SUMOylation':           '#d500f9',
         'ADP-ribosylation':      '#ff4081',
-        'Glycosylation':         '#ffea00',
+        'Glycosylation':         '#b87800',
         'Disulfide bond':        '#26a69a',
         'Lipidation':            '#f48fb1',
         'Cross-link':            '#ce93d8',
-        'Phosphorylation':       '#ff8f00',
         'Acetylation':           '#00e5ff',
         'Methylation':           '#76ff03',
         'Citrulline':            '#7c4dff',
@@ -139,11 +136,7 @@ const DataProcessor = {
             if (d.includes('sumo'))      return 'SUMOylation';
             return 'Cross-link';
         }
-        // Phosphorylation variants
-        if (d.includes('phosphoserine'))   return 'Phosphoserine';
-        if (d.includes('phosphothreonine'))return 'Phosphothreonine';
-        if (d.includes('phosphotyrosine')) return 'Phosphotyrosine';
-        if (d === 'phosphorylation')       return 'Phosphorylation';
+        // Phosphorylation — all variants consolidated into one category
         if (d.includes('phospho'))         return 'Phosphorylation';
         // Acetylation / methylation
         if (d.includes('n6-acetyl'))       return 'N6-acetyllysine';
@@ -190,7 +183,7 @@ const DataProcessor = {
      * Extract variants from EBI variation API response.
      * Each variant has .position (residue number).
      */
-    extractVariants(variationData) {
+    extractVariants(variationData, amMap = null) {
         if (!variationData || !variationData.features) return [];
 
         const variants = [];
@@ -202,7 +195,8 @@ const DataProcessor = {
 
             const consequence = this._classifyConsequence(f);
             const provenance  = this._classifyProvenance(f);
-            const diseases    = this._extractDiseases(f);
+            const diseaseData = this._extractDiseaseData(f);
+            const impact = this._extractImpactMetadata(f, amMap);
 
             variants.push({
                 position:         pos,
@@ -214,7 +208,14 @@ const DataProcessor = {
                 provenanceColor:  this.PROVENANCE_CATEGORIES[provenance]?.color || '#26c6da',
                 description:      this._variantDesc(f),
                 sourceType:       f.sourceType || 'unknown',
-                diseases:         diseases,
+                diseases:         diseaseData.labels,
+                diseaseIds:       diseaseData.ids,
+                diseasePairs:     diseaseData.pairs,
+                clinVarSignificance: impact.clinVarSignificance,
+                clinVarReviewStatus: impact.clinVarReviewStatus,
+                rsIds:            impact.rsIds,
+                alphaMissenseScore: impact.alphaMissenseScore,
+                xrefs:            f.xrefs || [],
             });
         });
 
@@ -261,44 +262,46 @@ const DataProcessor = {
     /**
      * Extract disease names from variant data.
      * Primary source: association[] array from the EBI variation API.
-     * Fallback: regex on description strings for abbreviations like DRVT, GEFSP2, etc.
+     * Returns:
+     *   labels  – all disease display-labels (abbreviation or full name)
+     *   ids     – all disease UniProt IDs (DI-xxxxx) from association entries
+     *   pairs   – [{id, label}] with CORRECT 1-to-1 mapping per association entry
      */
-    _extractDiseases(v) {
-        const diseases = new Set();
+    _extractDiseaseData(v) {
+        const labels = new Set();
+        const ids = new Set();
+        const pairs = [];
 
-        // 1) From association array (structured disease data)
+        // 1) From association array – structured disease data with proper id↔label pairing
         if (v.association && Array.isArray(v.association)) {
             v.association.forEach(a => {
+                const id = a.id || a.accession || '';
+                if (id) ids.add(id);
                 if (a.disease === true && a.name) {
-                    // Extract abbreviation from parentheses if present, e.g. "Dravet syndrome (DRVT)" -> "DRVT"
                     const abbrMatch = a.name.match(/\(([A-Z][A-Z0-9]+)\)\s*$/);
-                    if (abbrMatch) {
-                        diseases.add(abbrMatch[1]);
-                    } else {
-                        // Use full name but keep it short for filtering
-                        diseases.add(a.name);
-                    }
+                    const label = abbrMatch ? abbrMatch[1] : a.name;
+                    labels.add(label);
+                    pairs.push({ id: id || '', label }); // correct 1-to-1
                 }
             });
         }
 
-        // 2) From descriptions array
+        // 2) From descriptions array – fallback labels only, no reliable IDs
         if (v.descriptions && Array.isArray(v.descriptions)) {
             v.descriptions.forEach(d => {
                 if (!d.value) return;
-                // Look for short abbreviation patterns like "DRVT", "GEFSP2", etc.
                 const abbrMatch = d.value.match(/^([A-Z][A-Z0-9]{1,15})(?:;|$)/);
                 if (abbrMatch) {
                     const abbr = abbrMatch[1];
                     if (!['ECO', 'MIM', 'NCI', 'VAR', 'PRO'].includes(abbr) && abbr.length > 1) {
-                        diseases.add(abbr);
+                        labels.add(abbr);
                     }
                 }
             });
         }
 
-        // 3) Fallback: regex on flat description string
-        if (diseases.size === 0) {
+        // 3) Last-resort fallback on flat description text
+        if (labels.size === 0) {
             const desc = v.description || '';
             const matches = desc.match(/\bin\s+([A-Z][A-Z0-9]{1,10}(?:\s+and\s+[A-Z][A-Z0-9]{1,10})*)\b/g);
             if (matches) {
@@ -307,14 +310,48 @@ const DataProcessor = {
                     parts.forEach(p => {
                         const trimmed = p.trim();
                         if (trimmed && !['dbSNP'].includes(trimmed) && trimmed.length > 1) {
-                            diseases.add(trimmed);
+                            labels.add(trimmed);
                         }
                     });
                 });
             }
         }
 
-        return Array.from(diseases);
+        return { labels: Array.from(labels), ids: Array.from(ids), pairs };
+    },
+
+    _extractImpactMetadata(v, amMap = null) {
+        const xrefs = v.xrefs || [];
+        const sigs = v.clinicalSignificances || [];
+        const rsIds = new Set();
+        xrefs.forEach(x => {
+            const val = x.id || x.name || x.value || '';
+            if (/^rs\d+$/i.test(val)) rsIds.add(val);
+            if ((x.database || x.name || '').toLowerCase().includes('dbsnp') && val) rsIds.add(val);
+        });
+
+        let alphaMissenseScore = null;
+        // Primary: look up per-variant score from AlphaMissense CSV (AF-{id}-F1-aa-substitutions.csv)
+        if (amMap && v.wildType && v.alternativeSequence && v.alternativeSequence.length === 1) {
+            const key = `${v.wildType}${v.begin}${v.alternativeSequence}`;
+            const s = amMap.get(key);
+            if (Number.isFinite(s)) alphaMissenseScore = s;
+        }
+        // Fallback: EBI variation API predictions (uses predAlgorithmNameType field)
+        if (alphaMissenseScore === null) {
+            (v.predictions || []).forEach(p => {
+                const label = `${p.predAlgorithmNameType || p.predictionName || ''} ${p.name || ''}`.toLowerCase();
+                const score = Number(p.score ?? p.predictionVal ?? p.value);
+                if (label.includes('alphamissense') && Number.isFinite(score)) alphaMissenseScore = score;
+            });
+        }
+
+        return {
+            clinVarSignificance: sigs.map(s => s.type).filter(Boolean).join(', '),
+            clinVarReviewStatus: sigs.map(s => s.reviewStatus || s.review_status).filter(Boolean).join(', '),
+            rsIds: Array.from(rsIds),
+            alphaMissenseScore,
+        };
     },
 
     /** Summary counts for consequence categories (skip 0-count) */
