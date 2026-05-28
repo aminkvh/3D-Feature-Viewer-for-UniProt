@@ -42,12 +42,12 @@ The built-in residue-prioritization views are intended for exploration and hypot
 
 ## What's new in v1.5.0
 
-- Accurate per-chain coverage: RCSB entry-level queries with `auth_asym_id` matching ensure coverage maps to the correct author chain (fixes cases where accessory subunits showed low coverage).
-- Modal and interaction stability: fixed Gsgt9 scroll locking with a deferred lock activation and an explicit lock flag to prevent page jumps on first click; overlay clicks now stop propagation to the page.
-- Viewer UX improvements: wheel/zoom binding corrected to the real viewer container; WebGL context-loss/restore and visibility-change handling improved to keep the viewer responsive.
-- Structural mapping and visualization: improved seqres→author residue mapping, preserved support for chimeric structures, added per-chain hotspot aggregation and more robust residue mapping for PTMs and variants.
-- Performance and network: per-entry RCSB caching reduces repeated requests when exploring multiple chains; manifest host permissions updated to include RCSB GraphQL.
-- Misc: README refreshed, extension renamed to "3D Feature Viewer for UniProt", version bumped to v1.5.0.
+* You can now visualize calculated features directly on AlphaFold or PDB structures.
+* New structure-level annotations include beta values, pLDDT, hotspot enrichment, long-range contact hubs, mutation/phenotype burden scores, and AlphaMissense scores.
+* Calculated features can now be downloaded as a one-hot encoded CSV file.
+* A new interactive sequence ribbon shows annotations directly on the protein sequence.
+* Structure visualization is smoother and more stable, with improved support for different chains and complex structures.
+* The extension has been renamed to **3D Feature Viewer for UniProt**.
 
 ## Data and Privacy
 
