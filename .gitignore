@@ -22,3 +22,4 @@ build/
 *.pem
 
 graphify-out/
+web-ext-artifacts/
