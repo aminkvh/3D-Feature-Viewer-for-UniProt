@@ -33,6 +33,7 @@ const UFVState = (() => {
         scrapedDiseases: [],
         displayedPositions: [],
         selectedResidue: null,
+        selectedChain: null,
         nearbyResidues: new Set(),
         amMap: null,
         settings: { ...defaults },
@@ -59,9 +60,10 @@ const UFVState = (() => {
         state.scrapedDiseases = [];
         state.displayedPositions = [];
         state.selectedResidue = null;
+        state.selectedChain = null;
         state.nearbyResidues = new Set();
         state.amMap = null;
-        state.analysis = { hotspots: null, distantContacts: null, alphaMissense: new Map(), residueBurden: new Set() };
+        state.analysis = { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set() };
     }
 
     async function loadSettings() {

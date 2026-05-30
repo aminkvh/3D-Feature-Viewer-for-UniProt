@@ -143,19 +143,15 @@
     transform: translateY(0);
 }
 
-/* Anchored variant for the in-content section headers: absolutely positioned so injecting it
-   does NOT change the section's height/offset.  A reflow there shifts every section below it and
-   races UniProt's IntersectionObserver, which can leave the left-nav active-slider stuck on
-   first load.  Absolute positioning keeps vertical layout (and those offsets) untouched. */
-.ufv-3d-btn--anchored {
-    position: absolute !important;
-    right: 16px;
-    top: 50%;
-    transform: translateY(-50%) !important;
-    margin: 0 !important;
+/* Inline variant for in-content section headers: sits right after the title text on the
+   heading's own line box.  Vertical margins are zeroed and it is vertically centred so it does
+   NOT add height to the heading — keeping the sections below it (and UniProt's scroll/
+   IntersectionObserver left-nav slider) from shifting on first load. */
+.ufv-3d-btn--inline {
+    vertical-align: middle;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
 }
-.ufv-3d-btn--anchored:hover { transform: translateY(-50%) !important; }
-.ufv-3d-btn--anchored:active { transform: translateY(-50%) !important; }
 
 .ufv-3d-btn svg {
     flex-shrink: 0;

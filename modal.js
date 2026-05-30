@@ -545,6 +545,13 @@ const UFVModal = (() => {
             s.displayedPositions = Array.from(new Set(filteredVariants.map(v => v.position)));
             byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${rangeNote}`;
         }
+        // Preserve an active residue focus across coloring changes: re-apply the new cartoon
+        // coloring (done above) and then re-enter focus on the selected residue instead of
+        // dropping back to the full sphere view.
+        if (s.selectedResidue != null && StructureViewer.currentStructure) {
+            const nearby = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() });
+            if (nearby) s.nearbyResidues = nearby;
+        }
         renderLegend(mode);
         renderSequence();
     }
@@ -829,6 +836,7 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const pos = Number(data.position);
         s.selectedResidue = pos;
+        s.selectedChain = chain; // remember which subunit was focused (for color-change re-focus)
         const annotations = buildAnnotationMap();
         s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }) || new Set([pos]);
         const body = byId('ufv-details-body');

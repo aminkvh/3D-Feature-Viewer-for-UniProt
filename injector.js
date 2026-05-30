@@ -52,16 +52,13 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Attach a section-header button without changing the section's vertical layout: the
-    // button is absolutely positioned (see .ufv-3d-btn--anchored), so it can't reflow the
-    // sections below it and disturb UniProt's scroll/IntersectionObserver active-slider.
+    // Place the button inline, right after the section title text (inside the heading element),
+    // so it sits "by the title" yet stays on the heading's existing line box — it does not add
+    // height or reflow the sections below it, which would otherwise disturb UniProt's
+    // scroll/IntersectionObserver-driven left-nav active slider.
     function placeAnchoredButton(heading, btn) {
-        const container = heading.closest('.card__header, [class*="card__header"]') || heading;
-        try {
-            if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
-        } catch (_) {}
-        btn.classList.add('ufv-3d-btn--anchored');
-        container.appendChild(btn);
+        btn.classList.add('ufv-3d-btn--inline');
+        heading.appendChild(btn);
     }
 
     function tryInjectPTMButton() {
