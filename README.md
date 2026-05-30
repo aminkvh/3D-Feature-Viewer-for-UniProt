@@ -46,24 +46,14 @@ The built-in residue-prioritization views are intended for exploration and hypot
 
 ## What's new in v1.5.1
 
-- **Per-chain multi-subunit support**: for homo- and hetero-oligomeric structures each chain of the protein of interest now gets its own sequence ribbon track, per-chain hotspot/contact-hub coloring, per-chain CSV columns (`pdb_residue_<chain>`, `hotspot_tier_<chain>`, `contact_hub_tier_<chain>`), and clicking a residue sphere focuses the correct subunit rather than always snapping to the primary chain.
-- **Partner-protein disease context**: for hetero-complexes (e.g. GABA-A receptor), pathogenic/benign residues of neighbouring partner proteins are fetched and folded into the 3D-enrichment hotspot calculation so interface residues near a partner's pathogenic cluster are flagged — partner annotations are never shown in the viewer.
-- **Improved hotspot algorithm**: replaced the Fisher exact + BH test with a spatial label-permutation null (1,000 iterations, deterministic seeded PRNG) following Kamburov et al. (PNAS 2015), HotMAPS (Cancer Res 2016), and Sivley et al. (AJHG 2018). A spatial-placement fallback (HotMAPS-style, no benign controls needed) activates automatically for benign-poor proteins so disease genes with few neutral variants still yield results. The legend indicates which null was used.
-- **Improved contact-hub algorithm**: replaced the always-emitting weighted-degree score with betweenness centrality on the residue contact graph (Brandes algorithm), thresholded by an absolute z-score so a structurally featureless chain emits nothing. Based on Vendruscolo et al. (Phys Rev E 2002) and Amitai et al. (JMB 2004).
-- **Improved burden algorithm**: replaced brittle p90/hard-threshold gates with a percentile-rank composite of mutation count and phenotype diversity, mirroring the multi-metric prioritization in Akbari Ahangar et al. (iScience 2024).
-- **Navigation stability**: stale-request token in the open/load state machine prevents wrong-header and stuck-spinner bugs when navigating between proteins or rapidly switching structures; viewer model is cleared on protein change.
-- **Sidebar slider fix**: injected "View in 3D" buttons are now absolutely positioned so they don't reflow section offsets and disrupt UniProt's IntersectionObserver-driven left-nav active slider.
-- **Sequence ribbon**: unified height for single- and multi-chain ribbons; multi-chain scrolls internally.
-- See [METHODS.md](METHODS.md) for a detailed description of all four residue-prioritization algorithms.
-
-## What's new in v1.5.0
-
-* You can now visualize calculated features directly on AlphaFold or PDB structures.
-* New structure-level annotations include beta values, pLDDT, hotspot enrichment, long-range contact hubs, mutation/phenotype burden scores, and AlphaMissense scores.
-* Calculated features can now be downloaded as a one-hot encoded CSV file.
-* A new interactive sequence ribbon shows annotations directly on the protein sequence.
-* Structure visualization is smoother and more stable, with improved support for different chains and complex structures.
-* The extension has been renamed to **3D Feature Viewer for UniProt**.
+* **Multi-chain support:** Each protein chain now has its own sequence ribbon, hotspot/contact-hub coloring, CSV columns, and accurate 3D residue focusing.
+* **Partner-protein context:** In protein complexes, nearby disease-associated residues from partner proteins are included in hotspot detection, improving interface-level predictions without showing partner annotations in the viewer.
+* **Better hotspot detection:** Hotspots now use a spatial permutation-based method with an automatic fallback for proteins with few benign variants. The legend shows which method was used.
+* **Better contact-hub detection:** Contact hubs are now identified using residue-network centrality and only shown when structurally meaningful.
+* **Better burden scoring:** Burden scores now combine mutation count and phenotype diversity using percentile ranks for more stable prioritization.
+* **More stable navigation:** Rapid protein or structure switching no longer causes stale headers, stuck spinners, or incorrect viewer state.
+* **Cleaner sequence ribbon:** Single- and multi-chain ribbons now use consistent sizing, with internal scrolling for multi-chain views.
+* See [METHODS.md](METHODS.md) for a detailed description of all four residue-prioritization algorithms.
 
 ## Data and Privacy
 
