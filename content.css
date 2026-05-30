@@ -143,6 +143,20 @@
     transform: translateY(0);
 }
 
+/* Anchored variant for the in-content section headers: absolutely positioned so injecting it
+   does NOT change the section's height/offset.  A reflow there shifts every section below it and
+   races UniProt's IntersectionObserver, which can leave the left-nav active-slider stuck on
+   first load.  Absolute positioning keeps vertical layout (and those offsets) untouched. */
+.ufv-3d-btn--anchored {
+    position: absolute !important;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%) !important;
+    margin: 0 !important;
+}
+.ufv-3d-btn--anchored:hover { transform: translateY(-50%) !important; }
+.ufv-3d-btn--anchored:active { transform: translateY(-50%) !important; }
+
 .ufv-3d-btn svg {
     flex-shrink: 0;
 }
@@ -607,6 +621,23 @@
     cursor: pointer;
 }
 
+/* Multi-chain ribbon: one track per chain, each with a small chain label. The container keeps
+   the SAME height as the single-chain ribbon (inherits .ufv-sequence-wrap max-height) and scrolls
+   internally when there are several chains, so the panel doesn't grow taller for complexes. */
+.ufv-seq-track { display: block; }
+.ufv-seq-track + .ufv-seq-track { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--ufv-border); }
+.ufv-seq-chain-label {
+    display: block;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--ufv-text-muted);
+    margin: 0 0 2px 2px;
+}
+.ufv-seq-aas { display: block; }
+
 .ufv-seq-aa.covered { color: var(--ufv-text-primary); background: var(--ufv-bg-hover); }
 .ufv-seq-aa.missing {
     color: var(--ufv-text-muted) !important;
@@ -665,6 +696,13 @@
     border-radius: 3px;
     flex-shrink: 0;
 }
+
+/* Method note (e.g. "spatial clustering") — italic text, no colour swatch. */
+.ufv-legend-note {
+    font-style: italic;
+    opacity: 0.8;
+}
+.ufv-legend-note > span { display: none !important; }
 
 /* Separator between main legend entries and CPK hint */
 .ufv-legend-sep {

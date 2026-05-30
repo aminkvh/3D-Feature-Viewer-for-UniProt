@@ -36,7 +36,7 @@ const UFVState = (() => {
         nearbyResidues: new Set(),
         amMap: null,
         settings: { ...defaults },
-        analysis: { hotspots: null, distantContacts: null, alphaMissense: new Map(), residueBurden: new Set() },
+        analysis: { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set() },
     };
 
     function resetForProtein(id) {

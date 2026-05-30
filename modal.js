@@ -13,6 +13,12 @@ const UFVModal = (() => {
     let modalEl = null;
     let _gsgt9SavedScrollTop = 0;
     let _gsgt9LockActive = false;
+    // Monotonic token: every open() and structure load captures the current value; if a newer
+    // call has since bumped it, the older (superseded) flow bails instead of clobbering the UI.
+    // This is what prevents the "variant modal shows the PTM header / nothing ever loads" race
+    // when the user navigates between proteins or re-opens the modal mid-load.
+    let _openSeq = 0;
+    let _loadSeq = 0;
 
     function createButton(id, label, onClick) {
         const btn = document.createElement('button');
@@ -227,9 +233,11 @@ const UFVModal = (() => {
 
     async function open(mode) {
         const s = UFVState.state;
+        const mySeq = ++_openSeq;
         s.currentMode = mode;
         build();
         await UFVState.loadSettings();
+        if (_openSeq !== mySeq) return; // superseded by a newer open()
         syncSettingsControls();
         byId('ufv-id-badge').textContent = s.uniprotId;
         byId('ufv-modal-heading').textContent = mode === 'ptm' ? 'PTM Viewer' : 'Disease & Variants';
@@ -259,8 +267,10 @@ const UFVModal = (() => {
         }
         // Join any in-progress background prefetch so we don't double-fetch
         if (s.loadingPromise) await s.loadingPromise;
+        if (_openSeq !== mySeq) return;
         if (!s.annotationsLoaded) {
             await loadAnnotations();
+            if (_openSeq !== mySeq) return;
         }
         buildFilters();
         if (!s.loaded) {
@@ -325,6 +335,7 @@ const UFVModal = (() => {
     async function loadSelectedStructure() {
         const s = UFVState.state;
         const requestedId = s.uniprotId;
+        const mySeq = ++_loadSeq; // re-entrancy guard: a newer load supersedes this one
         const structure = UFVState.selectedStructure();
         if (!structure) {
             showError('No AlphaFold or mapped PDB structure is available for this protein.');
@@ -347,21 +358,29 @@ const UFVModal = (() => {
                         throw pdbErr;
                     }
                 }
-                // 3-D analyses are computed once from the first loaded structure so the
-                // colour map stays consistent when the user switches between structures.
-                // Sequence-based residueBurden is always recomputed (always same result).
-                if (UFVState.state.uniprotId !== requestedId) return;
-                if (s.analysis.hotspots === null)
-                    s.analysis.hotspots = UFVAnalysis.computeHotspots(StructureViewer.viewer, s.variants, structure);
-                if (s.analysis.distantContacts === null)
-                    s.analysis.distantContacts = UFVAnalysis.computeDistantContacts(StructureViewer.viewer, structure, s.variants);
+                // Bail if the protein changed or a newer load started while we were fetching —
+                // prevents two interleaved loads from rendering against a half-built model.
+                if (UFVState.state.uniprotId !== requestedId || _loadSeq !== mySeq) return;
+                // Structure-dependent analyses are (re)computed for THIS structure so the
+                // per-chain hotspot / contact-hub results reflect the displayed subunits.
+                // Sequence-based residueBurden is identical regardless of structure.
+                // (Partner-protein disease residues are folded in afterwards, off the critical
+                // path, by augmentHotspotsWithPartners so loading a complex isn't delayed.)
+                const hotspots = UFVAnalysis.computeHotspots(StructureViewer.viewer, s.variants, structure);
+                s.analysis.hotspots = hotspots.merged;
+                s.analysis.hotspotsByChain = hotspots.byChain;
+                s.analysis.hotspotMethod = hotspots.method;
+                const contacts = UFVAnalysis.computeDistantContacts(StructureViewer.viewer, structure, s.variants);
+                s.analysis.distantContacts = contacts.merged;
+                s.analysis.distantContactsByChain = contacts.byChain;
                 s.analysis.residueBurden = UFVAnalysis.computeResidueBurden(s.variants);
                 byId('ufv-loading').classList.add('hidden');
             } catch (err) {
-                showError(err.message || 'Unable to load selected structure.');
+                if (_loadSeq === mySeq) showError(err.message || 'Unable to load selected structure.');
                 return;
             }
         }
+        if (_loadSeq !== mySeq) return; // a newer load owns the viewer now
         StructureViewer.hoverCb = onHover;
         StructureViewer.clickCb = onClick;
         StructureViewer.dblClickCb = () => {
@@ -379,6 +398,29 @@ const UFVModal = (() => {
         };
         updateStructureMeta();
         applyMode();
+        // Fold neighbouring partner-protein disease residues into the hotspot test, off the
+        // critical path (network fetch) so opening a complex isn't delayed.
+        augmentHotspotsWithPartners(structure, requestedId, mySeq);
+    }
+
+    /**
+     * After a hetero-complex structure is shown, fetch the disease residues of its partner
+     * proteins and recompute the 3-D hotspots so their proximity is accounted for.  Partner
+     * annotations are never displayed; only OUR protein's hotspot tiers may change.
+     */
+    async function augmentHotspotsWithPartners(structure, requestedId, loadSeq) {
+        if (!structure?.partners?.length) return;
+        let partnerPoints = [];
+        try { partnerPoints = await UFVApi.loadPartnerClassified(structure); } catch (_) { return; }
+        if (!partnerPoints.length) return;
+        const s = UFVState.state;
+        if (s.uniprotId !== requestedId || _loadSeq !== loadSeq || UFVState.selectedStructure() !== structure) return;
+        const hotspots = UFVAnalysis.computeHotspots(StructureViewer.viewer, s.variants, structure, 8, partnerPoints);
+        s.analysis.hotspots = hotspots.merged;
+        s.analysis.hotspotsByChain = hotspots.byChain;
+        s.analysis.hotspotMethod = hotspots.method;
+        // Re-render only if the user is currently looking at the hotspot view.
+        if (getColorMode() === 'hotspots') applyMode();
     }
 
     function shortMethod(m) {
@@ -487,7 +529,9 @@ const UFVModal = (() => {
             ptms: activePtms(),
             variants: filteredVariants,
             hotspots: s.analysis.hotspots,
+            hotspotsByChain: s.analysis.hotspotsByChain,
             distantContacts: s.analysis.distantContacts,
+            distantContactsByChain: s.analysis.distantContactsByChain,
             alphaMissense: s.analysis.alphaMissense,
             residueBurden: s.analysis.residueBurden,
         }, true);
@@ -620,13 +664,48 @@ const UFVModal = (() => {
         const wrap = byId('ufv-sequence-wrap');
         wrap.textContent = '';
         if (!s.sequence) return;
-        const mappedResi = StructureViewer.mappedResidues();
+        const st = UFVState.selectedStructure();
+        const isAlphaFold = st?.source === 'AlphaFold';
+        // Multi-chain experimental structures get one ribbon track per chain: each subunit
+        // resolves a (slightly) different set of residues and carries its own structure-
+        // dependent hotspot / contact-hub tiers, so they must be shown separately.
+        if (st?.chainIds?.length > 1) {
+            wrap.classList.add('ufv-multichain');
+            st.chainIds.forEach(chain => {
+                wrap.appendChild(buildSequenceTrack(chain, StructureViewer.mappedResiduesForChain(chain), isAlphaFold, `Chain ${chain}`));
+            });
+        } else {
+            wrap.classList.remove('ufv-multichain');
+            wrap.appendChild(buildSequenceTrack(null, StructureViewer.mappedResidues(), isAlphaFold, null));
+        }
+    }
+
+    /** Build one sequence-ribbon track (a chain, or the whole structure when chain is null). */
+    function buildSequenceTrack(chain, mappedResi, isAlphaFold, label) {
+        const s = UFVState.state;
         const hasCoverage = mappedResi !== null;
         const coverage = new Set(mappedResi || s.sequence.split('').map((_, i) => i + 1));
-        const isAlphaFold = UFVState.selectedStructure()?.source === 'AlphaFold';
         const ptmPos = new Set(activePtms().map(p => p.position));
         const varPos = new Set(s.variants.map(v => v.position));
         const displayed = new Set(s.displayedPositions);
+        // Per-chain structure-dependent tiers reflected directly in the ribbon.
+        const mode = getColorMode();
+        const tierColors = mode === 'hotspots' ? { strong: '#b71c1c', moderate: '#e64a19', weak: '#ffa726' }
+                         : mode === 'distantContacts' ? { strong: '#6a1b9a', moderate: '#ab47bc' } : null;
+        let tierMap = null;
+        if (mode === 'hotspots') tierMap = chain != null ? s.analysis.hotspotsByChain?.get(chain) : s.analysis.hotspots;
+        else if (mode === 'distantContacts') tierMap = chain != null ? s.analysis.distantContactsByChain?.get(chain) : s.analysis.distantContacts;
+
+        const track = document.createElement('div');
+        track.className = 'ufv-seq-track';
+        if (label) {
+            const lab = document.createElement('span');
+            lab.className = 'ufv-seq-chain-label';
+            lab.textContent = label;
+            track.appendChild(lab);
+        }
+        const row = document.createElement('div');
+        row.className = 'ufv-seq-aas';
         s.sequence.split('').forEach((aa, idx) => {
             const pos = idx + 1;
             const span = document.createElement('button');
@@ -637,7 +716,7 @@ const UFVModal = (() => {
             if (missing) {
                 span.classList.add('missing');
                 span.disabled = true;
-                span.title = `${aa}${pos} — not resolved in this structure`;
+                span.title = `${aa}${pos} — not resolved in this ${chain != null ? 'chain' : 'structure'}`;
             } else if (coverage.has(pos)) {
                 span.classList.add('covered');
             }
@@ -646,9 +725,15 @@ const UFVModal = (() => {
             if (displayed.has(pos)) span.classList.add('visible');
             if (s.nearbyResidues.has(pos)) span.classList.add('nearby');
             if (s.selectedResidue === pos) span.classList.add('selected');
-            if (!missing) span.addEventListener('click', () => onClick({ position: pos, variants: s.variants.filter(v => v.position === pos) }, 'sequence'));
-            wrap.appendChild(span);
+            if (!missing && tierMap && tierColors) {
+                const tier = tierMap.get(pos);
+                if (tier) { span.classList.add('feature'); span.style.boxShadow = `inset 0 -3px 0 ${tierColors[tier]}`; }
+            }
+            if (!missing) span.addEventListener('click', () => onClick({ position: pos, variants: s.variants.filter(v => v.position === pos) }, 'sequence', chain));
+            row.appendChild(span);
         });
+        track.appendChild(row);
+        return track;
     }
 
     function renderLegend(mode) {
@@ -685,6 +770,21 @@ const UFVModal = (() => {
 
         // Only show items for explicit coloring modes; default cyan needs no legend unless zoomed in
         (modeItems[mode] || []).forEach(([color, label]) => appendLegendItem(color, label));
+
+        // Be explicit about which hotspot null was used (case-control vs spatial), since the
+        // spatial fallback doesn't control for ascertainment bias.
+        if (mode === 'hotspots') {
+            const m = UFVState.state.analysis.hotspotMethod;
+            if (m) {
+                const note = document.createElement('span');
+                note.className = 'ufv-legend-item ufv-legend-note';
+                note.textContent = m === 'spatial' ? 'spatial clustering' : 'case–control enrichment';
+                note.title = m === 'spatial'
+                    ? 'Pathogenic clustering vs. random placement (no benign controls available); does not adjust for which residues were studied.'
+                    : 'Pathogenic vs. benign spatial enrichment (case–control permutation).';
+                legend.appendChild(note);
+            }
+        }
 
         // In focus/zoom mode always append annotation context on top of coloring legend
         const s = UFVState.state;
@@ -725,12 +825,12 @@ const UFVModal = (() => {
         tip.classList.add('show');
     }
 
-    function onClick(data) {
+    function onClick(data, _mode, chain = null) {
         const s = UFVState.state;
         const pos = Number(data.position);
         s.selectedResidue = pos;
         const annotations = buildAnnotationMap();
-        s.nearbyResidues = StructureViewer.focusResidue(pos, { annotatedResidues: annotations }) || new Set([pos]);
+        s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }) || new Set([pos]);
         const body = byId('ufv-details-body');
         body.textContent = '';
         byId('ufv-details-title').textContent = `Residue ${pos}`;
@@ -1045,7 +1145,7 @@ const UFVModal = (() => {
         const s = UFVState.state;
         if (!s.uniprotId || s.annotationsLoaded || s.loadingPromise) return;
         const requestedId = s.uniprotId;
-        s.loadingPromise = (async () => {
+        const thisPromise = (async () => {
             try {
                 await UFVState.loadSettings();
                 const data = await UFVApi.loadFeatureData(requestedId);
@@ -1059,10 +1159,14 @@ const UFVModal = (() => {
             } catch (_) {
                 // Fail silently — open() will retry via loadAnnotations()
             } finally {
-                s.loadingPromise = null;
+                // Only clear the shared handle if it is still ours: a newer protein's
+                // prefetch may have replaced it after a navigation, and nulling that one
+                // would make open() skip awaiting the in-flight load.
+                if (s.loadingPromise === thisPromise) s.loadingPromise = null;
             }
         })();
-        return s.loadingPromise;
+        s.loadingPromise = thisPromise;
+        return thisPromise;
     }
 
     function byId(id) {

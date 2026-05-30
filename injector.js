@@ -1,4 +1,4 @@
-/* global UFVState, UFVModal */
+/* global UFVState, UFVModal, StructureViewer */
 const UFVInjector = (() => {
     'use strict';
 
@@ -52,13 +52,25 @@ const UFVInjector = (() => {
         return null;
     }
 
+    // Attach a section-header button without changing the section's vertical layout: the
+    // button is absolutely positioned (see .ufv-3d-btn--anchored), so it can't reflow the
+    // sections below it and disturb UniProt's scroll/IntersectionObserver active-slider.
+    function placeAnchoredButton(heading, btn) {
+        const container = heading.closest('.card__header, [class*="card__header"]') || heading;
+        try {
+            if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+        } catch (_) {}
+        btn.classList.add('ufv-3d-btn--anchored');
+        container.appendChild(btn);
+    }
+
     function tryInjectPTMButton() {
         const existing = document.getElementById('ufv-btn-ptm');
         if (existing && document.body.contains(existing)) return;
         const heading = findSectionHeading('ptm_processing');
         if (!heading) return;
         const btn = UFVModal.createButton('ufv-btn-ptm', 'View PTMs in 3D', () => UFVModal.open('ptm'));
-        (heading.closest('.card__header, [class*="card__header"]') || heading).appendChild(btn);
+        placeAnchoredButton(heading, btn);
     }
 
     function tryInjectVariantButton() {
@@ -68,7 +80,7 @@ const UFVInjector = (() => {
         if (!heading) return;
         UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(heading);
         const btn = UFVModal.createButton('ufv-btn-variant', 'View Variants in 3D', () => UFVModal.open('variant'));
-        (heading.closest('.card__header, [class*="card__header"]') || heading).appendChild(btn);
+        placeAnchoredButton(heading, btn);
     }
 
     function tryInjectVariantViewerButton() {
@@ -151,6 +163,9 @@ const UFVInjector = (() => {
         if (UFVState.state.uniprotId !== id) {
             UFVState.resetForProtein(id);
             UFVModal.close();
+            // Drop the previous protein's loaded model + caches so a stale structure can't be
+            // mistaken for an already-loaded one (and so the next open starts clean).
+            try { StructureViewer?.clearModel(); } catch (_) {}
         }
         UFVState.state.pageContext = isVariantViewerPage() ? 'variant-viewer' : 'entry';
         // Kick off background annotation fetch so the modal opens instantly

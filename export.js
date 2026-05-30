@@ -115,12 +115,38 @@ const UFVExport = (() => {
      * each PTM category and each disease, plus the per-residue AlphaMissense
      * average score when the CSV map is available.
      */
+    // Resolve UniProt position → author residue number for a SPECIFIC chain of a structure.
+    function uniprotToPdbResiForChain(pos, structure, chain) {
+        if (!structure || structure.source === 'AlphaFold') return pos;
+        const ranges = (structure.chainMappings?.[chain]) || structure.mappedRanges || [];
+        const map = (structure.chainSeqresToAuthor?.[chain]) || structure.seqresToAuthor || null;
+        if (!ranges.length) return pos;
+        for (const r of ranges) {
+            if (pos >= r.uniprotStart && pos <= r.uniprotEnd) {
+                if (map && r.seqresStart != null) {
+                    const seqresPos = r.seqresStart + (pos - r.uniprotStart);
+                    return map.get(seqresPos) ?? null;
+                }
+                return r.pdbStart + (pos - r.uniprotStart);
+            }
+        }
+        return null;
+    }
+
     function buildResidueMatrix(sequence, ptms, ptmGroups, variants, amMap, analysis = {}, structure = null) {
         const AM_AAS = 'ACDEFGHIKLMNPQRSTVWY';
         const ptmCats = Object.keys(ptmGroups).sort();
         const diseaseSet = new Set();
         variants.forEach(v => (v.diseasePairs || []).forEach(p => { if (p.label) diseaseSet.add(p.label); }));
         const diseases = [...diseaseSet].sort();
+
+        // Structure-dependent columns (pdb_residue, hotspot_tier, contact_hub_tier) are repeated
+        // per chain for multi-chain structures because each subunit resolves and scores residues
+        // slightly differently.  Single-chain output keeps the original column layout unchanged.
+        const chains = structure?.chainIds?.length > 1 ? structure.chainIds : null;
+        const hotspotTierNum = { strong: 3, moderate: 2, weak: 1 };
+        const hubTierNum = { strong: 2, moderate: 1 };
+        const tierFor = (map, pos, lut) => (map instanceof Map ? (lut[map.get(pos)] ?? 0) : 0);
 
         // Build per-position lookups
         const ptmByPos = new Map(); // pos → Set<category>
@@ -138,15 +164,26 @@ const UFVExport = (() => {
 
         // Sanitise column names for CSV
         const safe = s => s.replace(/[^A-Za-z0-9_]/g, '_').replace(/_+/g, '_');
-        const headers = [
-            'position', 'aa', 'pdb_residue',
-            ...ptmCats.map(c => `ptm_${safe(c)}`),
-            ...diseases.map(d => `disease_${safe(d)}`),
-            'am_avg_score',
-            'hotspot_tier',
-            'contact_hub_tier',
-            'residue_burden',
-        ];
+        // Single-chain: original layout (pdb_residue before the one-hot columns; tiers after
+        // am_avg_score).  Multi-chain: structure-dependent columns repeated per chain at the end.
+        const headers = chains
+            ? [
+                'position', 'aa',
+                ...ptmCats.map(c => `ptm_${safe(c)}`),
+                ...diseases.map(d => `disease_${safe(d)}`),
+                'am_avg_score',
+                'residue_burden',
+                ...chains.flatMap(c => [`pdb_residue_${c}`, `hotspot_tier_${c}`, `contact_hub_tier_${c}`]),
+            ]
+            : [
+                'position', 'aa', 'pdb_residue',
+                ...ptmCats.map(c => `ptm_${safe(c)}`),
+                ...diseases.map(d => `disease_${safe(d)}`),
+                'am_avg_score',
+                'hotspot_tier',
+                'contact_hub_tier',
+                'residue_burden',
+            ];
         const rows = [headers.join(',')];
         sequence.split('').forEach((aa, i) => {
             const pos = i + 1;
@@ -162,13 +199,20 @@ const UFVExport = (() => {
                 }
                 if (scores.length > 0) amAvg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(4);
             }
-            const hotspotTierNum = { strong: 3, moderate: 2, weak: 1 };
-            const hotspotTier = analysis.hotspots instanceof Map ? (hotspotTierNum[analysis.hotspots.get(pos)] ?? 0) : 0;
-            const hubTierNum = { strong: 2, moderate: 1 };
-            const hubTier = analysis.distantContacts instanceof Map ? (hubTierNum[analysis.distantContacts.get(pos)] ?? 0) : 0;
             const burden = analysis.residueBurden instanceof Set && analysis.residueBurden.has(pos) ? 1 : 0;
-            const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
-            rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, hotspotTier, hubTier, burden].join(','));
+            if (chains) {
+                const structVals = chains.flatMap(c => [
+                    uniprotToPdbResiForChain(pos, structure, c) ?? '',
+                    tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
+                    tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
+                ]);
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, burden, ...structVals].join(','));
+            } else {
+                const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
+                const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
+                const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, hotspotTier, hubTier, burden].join(','));
+            }
         });
         return rows.join('\n');
     }

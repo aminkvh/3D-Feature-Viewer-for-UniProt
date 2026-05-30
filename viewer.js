@@ -17,6 +17,7 @@ const StructureViewer = {
     _observedResiByChain: null,
     _inFocusMode: false,
     _resizeBound: false,
+    _lastRender: null, // closure that re-draws the active PTM/variant spheres (for WebGL restore)
 
     init(container) {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -40,10 +41,17 @@ const StructureViewer = {
         container.addEventListener('webglcontextlost', e => { e.preventDefault(); }, false);
         container.addEventListener('webglcontextrestored', () => {
             if (this.currentPdbText && this.currentStructure) {
-                // Re-load the already-fetched PDB text to rebuild the WebGL state.
+                // Clear any half-restored state first, then re-load the already-fetched PDB
+                // text to rebuild the WebGL model from scratch.
+                this.viewer.removeAllModels();
+                this.viewer.removeAllLabels();
+                this.viewer.removeAllShapes();
                 this.viewer.addModel(this.currentPdbText, this.currentFormat);
                 this._buildObservedResiCache();
                 this.applyCartoonColoring(this.activeColoringMode, this._lastColoringContext);
+                // Re-draw the active PTM/variant spheres and re-bind hover/click so the
+                // recovered context is fully interactive again (not just a static cartoon).
+                if (this._lastRender) this._lastRender();
                 this.viewer.zoomTo();
                 this.viewer.render();
             }
@@ -183,6 +191,47 @@ const StructureViewer = {
     },
 
     /**
+     * Resolve a UniProt position to a {chain, resi} selector for a SPECIFIC chain of a
+     * multi-chain structure.  Each subunit may have its own author residue numbering
+     * (chainMappings / chainSeqresToAuthor), so clicking a residue on chain D must address
+     * chain D's atoms — not the primary chain's copy.  Falls back to residueSelector() when
+     * no chain is given.
+     */
+    residueSelectorForChain(resi, chain) {
+        const structure = this.currentStructure;
+        if (chain == null) return this.residueSelector(resi);
+        if (!structure || structure.source === 'AlphaFold') return { resi };
+        const ranges = structure.chainMappings?.[chain] || structure.mappedRanges || [];
+        const obs = this._observedResiByChain?.[chain] ?? this._observedResi;
+        for (const r of ranges) {
+            if (resi >= r.uniprotStart && resi <= r.uniprotEnd) {
+                const pdbResi = this._resiToPdb(resi, r, chain);
+                if (obs && !obs.has(pdbResi)) return { chain, resi: -999999 };
+                return { chain, resi: pdbResi };
+            }
+        }
+        return { chain, resi: -999999 };
+    },
+
+    /**
+     * Apply a style to one chain's copy of a UniProt position (per-chain coloring for
+     * structure-dependent modes like hotspots / contact hubs, where each subunit may carry
+     * a different tier).  Returns true when the style was applied.
+     */
+    chainAddStyle(chain, resi, style, atomSel = {}) {
+        const structure = this.currentStructure;
+        if (chain == null) return this.allChainsAddStyle(resi, style, atomSel);
+        const ranges = structure?.chainMappings?.[chain] || structure?.mappedRanges || [];
+        const obs = this._observedResiByChain?.[chain] ?? this._observedResi;
+        const r = ranges.find(mr => resi >= mr.uniprotStart && resi <= mr.uniprotEnd);
+        if (!r) return false;
+        const pdbResi = this._resiToPdb(resi, r, chain);
+        if (obs && !obs.has(pdbResi)) return false;
+        this.viewer.addStyle({ chain, resi: pdbResi, ...atomSel }, style);
+        return true;
+    },
+
+    /**
      * Applies an addStyle to the correct PDB residue(s) for a UniProt position.
      * Returns true if the style was applied, false if the position is outside the
      * mapped range or maps to an unmodelled (unobserved) residue.
@@ -224,16 +273,26 @@ const StructureViewer = {
     },
 
     mappedResidues() {
+        return this.mappedResiduesForChain(null);
+    },
+
+    /**
+     * UniProt positions that are actually modelled in a given chain (or the primary chain
+     * when chain is null).  Used to render one sequence-ribbon track per chain, each showing
+     * which residues are resolved in that specific subunit.
+     */
+    mappedResiduesForChain(chain) {
         const s = this.currentStructure;
-        if (!s?.mappedRanges?.length) return null;
-        const obs = this._observedResi; // Set of observed PDB resi with CA atoms
+        const ranges = (chain != null && s?.chainMappings?.[chain]) || s?.mappedRanges;
+        if (!ranges?.length) return null;
+        const obs = (chain != null ? (this._observedResiByChain?.[chain] ?? null) : this._observedResi);
         const residues = [];
-        s.mappedRanges.forEach(r => {
+        ranges.forEach(r => {
             for (let i = r.uniprotStart; i <= r.uniprotEnd; i++) {
                 if (!obs) {
                     residues.push(i); // no cache yet: include all mapped
                 } else {
-                    const pdbResi = this._resiToPdb(i, r);
+                    const pdbResi = this._resiToPdb(i, r, chain);
                     if (obs.has(pdbResi)) residues.push(i);
                 }
             }
@@ -286,17 +345,11 @@ const StructureViewer = {
         } else if (mode === 'hotspots') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             const tierColors = { strong: '#b71c1c', moderate: '#e64a19', weak: '#ffa726' };
-            (context.hotspots || new Map()).forEach((tier, pos) => {
-                const color = tierColors[tier] || '#b9c2cf';
-                this.allChainsAddStyle(pos, { cartoon: { ...base, color } });
-            });
+            this._applyTierColoring(context.hotspots, context.hotspotsByChain, tierColors, base);
         } else if (mode === 'distantContacts') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             const dcColors = { strong: '#6a1b9a', moderate: '#ab47bc' };
-            (context.distantContacts || new Map()).forEach((tier, pos) => {
-                const color = dcColors[tier] || '#b9c2cf';
-                this.allChainsAddStyle(pos, { cartoon: { ...base, color } });
-            });
+            this._applyTierColoring(context.distantContacts, context.distantContactsByChain, dcColors, base);
         } else if (mode === 'alphaMissense') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             (context.alphaMissense || new Map()).forEach((d, pos) => {
@@ -316,11 +369,32 @@ const StructureViewer = {
     },
 
     /**
+     * Color a structure-dependent tier map.  For multi-chain structures each chain's copy is
+     * colored from ITS OWN per-chain tier map (byChain) so subunits that differ structurally
+     * show different tiers; single-chain/AlphaFold uses the merged map across all chains.
+     */
+    _applyTierColoring(merged, byChain, tierColors, base) {
+        const structure = this.currentStructure;
+        if (structure?.chainIds?.length > 1 && byChain) {
+            byChain.forEach((tierMap, chain) => {
+                tierMap.forEach((tier, pos) => {
+                    this.chainAddStyle(chain, pos, { cartoon: { ...base, color: tierColors[tier] || '#b9c2cf' } });
+                });
+            });
+            return;
+        }
+        (merged || new Map()).forEach((tier, pos) => {
+            this.allChainsAddStyle(pos, { cartoon: { ...base, color: tierColors[tier] || '#b9c2cf' } });
+        });
+    },
+
+    /**
      * Render PTM residues as Cα VDW spheres.
      * For disulfide bonds, both begin and end positions are rendered.
      */
     showPTMs(ptms, ptmGroups) {
         this._selectedResi = null;
+        this._lastRender = () => this.showPTMs(ptms, ptmGroups);
         const hoverMap = new Map();
         let count = 0;
 
@@ -375,6 +449,7 @@ const StructureViewer = {
 
     showVariants(filtered) {
         this._selectedResi = null;
+        this._lastRender = () => this.showVariants(filtered);
         const severity = [
             'Likely pathogenic or pathogenic',
             'Predicted deleterious',
@@ -416,22 +491,25 @@ const StructureViewer = {
 
     _bindHover(map, mode) {
         const self = this;
-        const reverseMap = this._reverseResidueMap();
+        // Resolve the atom's author residue number to a UniProt position using the mapping of
+        // the chain the atom actually belongs to, so clicks on any subunit are interpreted
+        // (and later focused) on that subunit rather than the primary chain.
+        const resolveUni = atom => self._reverseResidueMapForChain(atom.chain).get(atom.resi) || atom.resi;
         this.viewer.setHoverable({}, true,
             (atom, _v, ev) => {
                 if (!atom?.resi) return;
-                const uniResi = reverseMap.get(atom.resi) || atom.resi;
+                const uniResi = resolveUni(atom);
                 const d = map.get(uniResi);
-                if (d && self.hoverCb) self.hoverCb(d, mode, ev);
+                if (d && self.hoverCb) self.hoverCb(d, mode, ev, atom.chain);
             },
             () => { if (self.hoverCb) self.hoverCb(null, mode, null); }
         );
         this.viewer.setClickable({}, true,
             (atom) => {
                 if (!atom?.resi) return;
-                const uniResi = reverseMap.get(atom.resi) || atom.resi;
+                const uniResi = resolveUni(atom);
                 const d = map.get(uniResi);
-                if (d && self.clickCb) self.clickCb(d, mode);
+                if (d && self.clickCb) self.clickCb(d, mode, atom.chain);
             }
         );
     },
@@ -441,29 +519,34 @@ const StructureViewer = {
      * and its 5Å neighbors as ball-and-stick overlay.
      * No interaction lines. No residue label.
      */
-    focusResidue(resi, annotations = {}) {
+    focusResidue(resi, chain = null, annotations = {}) {
         if (!this.viewer) return;
         this.viewer.removeAllShapes();
         this.viewer.removeAllLabels();
         this._selectedResi = resi;
 
-        const selector = this.residueSelector(resi);
+        // Resolve to the clicked chain's copy so focus lands on the right subunit.
+        const selector = this.residueSelectorForChain(resi, chain);
+        const selChain = selector.chain ?? null;
         const pdbResi = selector.resi;
-        const allAtoms = this.viewer.getModel().selectedAtoms(selector.chain ? { chain: selector.chain } : {});
-        const selAtoms = allAtoms.filter(a => a.resi === pdbResi);
+        const model = this.viewer.getModel();
+        // Search the WHOLE model (all chains) so interface neighbours from other subunits
+        // are still captured, then restrict the "selected" atoms to the clicked chain.
+        const allAtoms = model.selectedAtoms({});
+        const selAtoms = allAtoms.filter(a => a.resi === pdbResi && (selChain == null || a.chain === selChain));
         if (selAtoms.length === 0) return;
 
         const CONTACT_DIST = 5.0;
-        const nearbyResis = new Set();
-        nearbyResis.add(pdbResi);
-
-        // Find nearby residues: any atom within 5Å of any atom in selected residue
+        // Residue numbers repeat across chains, so track neighbours by chain+resi.
+        const keyOf = (c, r) => `${c ?? ''} ${r}`;
+        const nearby = new Map(); // key → { chain, resi }
+        nearby.set(keyOf(selChain, pdbResi), { chain: selChain, resi: pdbResi });
         allAtoms.forEach(a => {
-            if (a.resi === pdbResi) return;
+            if (a.resi === pdbResi && a.chain === selChain) return;
             for (const sa of selAtoms) {
                 const dx = a.x - sa.x, dy = a.y - sa.y, dz = a.z - sa.z;
                 if (Math.sqrt(dx*dx + dy*dy + dz*dz) < CONTACT_DIST) {
-                    nearbyResis.add(a.resi);
+                    nearby.set(keyOf(a.chain, a.resi), { chain: a.chain, resi: a.resi });
                     break;
                 }
             }
@@ -477,15 +560,20 @@ const StructureViewer = {
             this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
         }
 
-        // Show nearby residues as thin sticks
-        const reverseMap = this._reverseResidueMap();
         const annotated = annotations.annotatedResidues || new Map();
-        nearbyResis.forEach(nResi => {
-            if (nResi === pdbResi) return;
-            const uniResi = reverseMap.get(nResi) || nResi;
+        const reverseCache = new Map(); // chain → reverse map (built lazily, reused)
+        const toUni = (c, r) => {
+            if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c));
+            return reverseCache.get(c).get(r) || r;
+        };
+
+        // Show nearby residues as thin sticks (each on its own chain's copy)
+        nearby.forEach(({ chain: nc, resi: nr }) => {
+            if (nc === selChain && nr === pdbResi) return;
+            const uniResi = toUni(nc, nr);
             const color = annotated.get(uniResi)?.color;
             this.viewer.addStyle(
-                selector.chain ? { chain: selector.chain, resi: nResi } : { resi: nResi },
+                nc != null ? { chain: nc, resi: nr } : { resi: nr },
                 { stick: color ? { radius: 0.15, color, opacity: 0.8 } : { radius: 0.12, colorscheme: 'Jmol', opacity: 0.6 } }
             );
         });
@@ -501,29 +589,40 @@ const StructureViewer = {
 
         // Bind hover/click BEFORE render so callbacks survive geometry rebuild
         const focusHoverMap = new Map();
-        nearbyResis.forEach(nResi => {
-            const uni = reverseMap.get(nResi) || nResi;
+        nearby.forEach(({ chain: nc, resi: nr }) => {
+            const uni = toUni(nc, nr);
             focusHoverMap.set(uni, { position: uni, color: annotated.get(uni)?.color });
         });
         this._bindHover(focusHoverMap, 'focus');
 
-        // Zoom to the neighborhood with animation and render
-        this.viewer.zoomTo(selector.chain ? { chain: selector.chain, resi: Array.from(nearbyResis) } : { resi: Array.from(nearbyResis) }, 600);
+        // Zoom to the local pocket on the selected chain (frame the clicked subunit).
+        const zoomResis = Array.from(nearby.values())
+            .filter(n => n.chain === selChain)
+            .map(n => n.resi);
+        this.viewer.zoomTo(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis }, 600);
         this.viewer.render();
 
-        return new Set(Array.from(nearbyResis).map(p => reverseMap.get(p) || p));
+        return new Set(Array.from(nearby.values()).map(n => toUni(n.chain, n.resi)));
     },
 
-    _reverseResidueMap() {
+    /**
+     * author-residue-number → UniProt-position map for ONE chain (or the primary/whole
+     * structure when chain is null).  Honours per-chain mappings and chimeric seqres→author
+     * maps so a click on any subunit resolves to the correct UniProt position.
+     */
+    _reverseResidueMapForChain(chain = null) {
         const out = new Map();
         const s = this.currentStructure;
-        const obs = this._observedResi; // only map residues that are physically present
-        (s?.mappedRanges || []).forEach(r => {
-            if (s.seqresToAuthor && r.seqresStart != null) {
+        if (!s) return out;
+        const ranges = (chain != null && s.chainMappings?.[chain]) || s.mappedRanges || [];
+        const map = (chain != null && s.chainSeqresToAuthor?.[chain]) || s.seqresToAuthor || null;
+        const obs = (chain != null ? (this._observedResiByChain?.[chain] ?? this._observedResi) : this._observedResi);
+        ranges.forEach(r => {
+            if (map && r.seqresStart != null) {
                 // Non-linear mapping (e.g. chimeric structures like 6CDU):
                 // invert seqresToAuthor over this range to get correct UniProt positions.
                 const seqresEnd = r.seqresStart + (r.uniprotEnd - r.uniprotStart);
-                s.seqresToAuthor.forEach((author, seqres) => {
+                map.forEach((author, seqres) => {
                     if (seqres < r.seqresStart || seqres > seqresEnd) return;
                     if (obs && !obs.has(author)) return;
                     out.set(author, r.uniprotStart + (seqres - r.seqresStart));
@@ -554,6 +653,29 @@ const StructureViewer = {
             }
         });
         return count;
+    },
+
+    /**
+     * Tear down the currently-loaded model and per-structure caches without destroying the
+     * 3Dmol viewer/WebGL context (recreating the context risks hitting the browser's live
+     * context limit).  Called when the page navigates to a different protein so a stale model
+     * can't be mistaken for an already-loaded structure on the next open.
+     */
+    clearModel() {
+        this._selectedResi = null;
+        this._inFocusMode = false;
+        this._observedResi = null;
+        this._observedResiByChain = null;
+        this._lastRender = null;
+        this.currentStructure = null;
+        this.currentPdbText = '';
+        this._lastColoringContext = {};
+        try {
+            this.viewer?.removeAllModels();
+            this.viewer?.removeAllLabels();
+            this.viewer?.removeAllShapes();
+            this.viewer?.render();
+        } catch (_) { /* viewer may not be initialised yet */ }
     },
 
     resetView(animated = false) {

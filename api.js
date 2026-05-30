@@ -182,6 +182,112 @@ const UFVApi = (() => {
         return _rcsbEntryCache.get(key);
     }
 
+    // Cache the per-entry SIFTS mapping (covers our protein AND all partner proteins).
+    const _siftsCache = new Map();
+    function fetchSifts(pdbId) {
+        const key = pdbId.toLowerCase();
+        if (!_siftsCache.has(key)) _siftsCache.set(key, fetchOptionalJson(PDBe_SIFTS(pdbId)));
+        return _siftsCache.get(key);
+    }
+
+    // How many distinct partner accessions we will fetch variant data for (bounds network use
+    // on large hetero-complexes).
+    const PARTNER_ACCESSION_CAP = 8;
+
+    /**
+     * From the per-entry SIFTS mapping, list the OTHER proteins (different UniProt accession)
+     * present in this PDB entry and the chains they occupy.  Used so the 3-D hotspot test can
+     * account for disease residues on neighbouring partner proteins — without annotating them.
+     * Returns [{ accession, chainId, uniprotStart, uniprotEnd, startAuthor, startSeqres }].
+     */
+    async function extractPartnerMappings(pdbId, uniprotId, ourChainIds) {
+        const sifts = await fetchSifts(pdbId);
+        const uni = sifts?.[pdbId.toLowerCase()]?.UniProt;
+        if (!uni) return [];
+        const ourId = (uniprotId || '').toUpperCase();
+        const ourBase = ourId.split('-')[0];
+        const ours = new Set(ourChainIds || []);
+        const out = [];
+        for (const [acc, entry] of Object.entries(uni)) {
+            const accU = acc.toUpperCase();
+            if (accU === ourId || accU === ourBase) continue; // our protein, skip
+            (entry.mappings || []).forEach(m => {
+                if (ours.has(m.chain_id)) return; // chain already counted as ours
+                out.push({
+                    accession: acc,
+                    chainId: m.chain_id,
+                    uniprotStart: m.unp_start,
+                    uniprotEnd: m.unp_end,
+                    startAuthor: m.start?.author_residue_number ?? null,
+                    startSeqres: m.start?.residue_number ?? null,
+                });
+            });
+        }
+        return out;
+    }
+
+    // Build a UniProt-position → PDB author-residue resolver for one partner chain mapping.
+    async function partnerUniToAuthor(pdbId, m) {
+        if (m.startAuthor != null) {
+            return pos => m.startAuthor + (pos - m.uniprotStart); // linear author numbering
+        }
+        // Author numbers absent in SIFTS — fall back to the residue_listing seqres→author map.
+        const map = await buildSeqresToAuthorMap(pdbId, m.chainId);
+        if (map && m.startSeqres != null) {
+            return pos => map.get(m.startSeqres + (pos - m.uniprotStart)) ?? null;
+        }
+        return () => null;
+    }
+
+    // Cache classified partner residues per (pdbId, structure identity) so re-opening a
+    // structure doesn't refetch partner variant data.
+    const _partnerClassifiedCache = new Map();
+
+    /**
+     * Fetch variant data for the partner proteins of a loaded structure and map their
+     * pathogenic / benign positions to PDB author residue numbers on the partner chains.
+     * Returns [{ chainId, pdbResi, path }] — `path` true = pathogenic, false = benign-only.
+     * Used by computeHotspots to fold neighbouring-protein disease residues into the spatial
+     * enrichment test.  Annotations for these proteins are NOT displayed.
+     */
+    async function loadPartnerClassified(structure) {
+        const partners = structure?.partners || [];
+        if (!partners.length) return [];
+        const cacheKey = `${structure.pdbId}|${(structure.chainIds || [structure.chainId]).join(',')}`;
+        if (_partnerClassifiedCache.has(cacheKey)) return _partnerClassifiedCache.get(cacheKey);
+
+        const promise = (async () => {
+            // Group mappings by accession; cap the number of distinct proteins we fetch.
+            const byAcc = new Map();
+            partners.forEach(p => { if (!byAcc.has(p.accession)) byAcc.set(p.accession, []); byAcc.get(p.accession).push(p); });
+            const accs = [...byAcc.keys()].slice(0, PARTNER_ACCESSION_CAP);
+            const points = [];
+            await Promise.all(accs.map(async acc => {
+                const variation = await fetchOptionalJson(VARIATION_URL(acc));
+                const variants = DataProcessor.extractVariants(variation);
+                if (!variants.length) return;
+                const pathSet = new Set();
+                variants.forEach(v => { if (/pathogenic|deleterious/i.test(v.consequence || '')) pathSet.add(v.position); });
+                const benignSet = new Set();
+                variants.forEach(v => { if (!pathSet.has(v.position) && /benign/i.test(v.consequence || '')) benignSet.add(v.position); });
+                if (!pathSet.size && !benignSet.size) return;
+                for (const m of byAcc.get(acc)) {
+                    const resolve = await partnerUniToAuthor(structure.pdbId, m);
+                    const add = (set, path) => set.forEach(pos => {
+                        if (pos < m.uniprotStart || pos > m.uniprotEnd) return;
+                        const author = resolve(pos);
+                        if (author != null) points.push({ chainId: m.chainId, pdbResi: author, path });
+                    });
+                    add(pathSet, true);
+                    add(benignSet, false);
+                }
+            }));
+            return points;
+        })();
+        _partnerClassifiedCache.set(cacheKey, promise);
+        return promise;
+    }
+
     // Fetch modelled residue count matching by author chain ID (auth_asym_id),
     // not label_asym_id, so auxiliary/accessory subunits don't get mixed up.
     async function fetchModelledResidueCount(pdbId, chainId) {
@@ -200,7 +306,7 @@ const UFVApi = (() => {
             const [summary, molecules, sifts] = await Promise.all([
                 fetchOptionalJson(PDBe_ENTRY(s.pdbId)),
                 fetchOptionalJson(PDBe_MOLECULES(s.pdbId)),
-                uniprotId ? fetchOptionalJson(PDBe_SIFTS(s.pdbId)) : Promise.resolve(null),
+                uniprotId ? fetchSifts(s.pdbId) : Promise.resolve(null),
             ]);
             const sum = summary?.[s.pdbId.toLowerCase()]?.[0];
             if (sum) {
@@ -348,6 +454,12 @@ const UFVApi = (() => {
                 s.otherChains = false; // all copies of this protein are represented
             }
         }
+        // Attach neighbouring (partner) protein chains from the entry SIFTS so the hotspot
+        // analysis can account for their disease residues (e.g. other subunits of a GABA-A
+        // receptor).  SIFTS is cached, so this adds no extra network beyond what decorate did.
+        await Promise.all([...byPdb.values()].map(async s => {
+            s.partners = await extractPartnerMappings(s.pdbId, id, s.chainIds);
+        }));
         return [...byPdb.values()];
     }
 
@@ -387,5 +499,5 @@ const UFVApi = (() => {
         });
     }
 
-    return { loadFeatureData, getStructures, fetchText };
+    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified };
 })();
