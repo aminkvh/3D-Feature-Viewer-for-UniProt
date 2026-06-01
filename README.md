@@ -26,7 +26,7 @@ The built-in residue-prioritization views are intended for exploration and hypot
 
 ### FireFox ADD-ONS
 
-[3D Feature Viewer for UniProt](https://addons.mozilla.org/en-US/developers/addon/3d-feature-viewer-for-uniprot)
+[3D Feature Viewer for UniProt](https://addons.mozilla.org/en-US/firefox/addon/3d-feature-viewer-for-uniprot/)
 
 ### Manual Install
 
