@@ -172,6 +172,8 @@ const UFVExport = (() => {
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
                 'am_avg_score',
+                'am_max_score',
+                'am_n_subs',
                 'residue_burden',
                 ...chains.flatMap(c => [`pdb_residue_${c}`, `hotspot_tier_${c}`, `contact_hub_tier_${c}`]),
             ]
@@ -180,6 +182,8 @@ const UFVExport = (() => {
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
                 'am_avg_score',
+                'am_max_score',
+                'am_n_subs',
                 'hotspot_tier',
                 'contact_hub_tier',
                 'residue_burden',
@@ -189,7 +193,7 @@ const UFVExport = (() => {
             const pos = i + 1;
             const ptmFlags = ptmCats.map(c => ptmByPos.get(pos)?.has(c) ? 1 : 0);
             const diseaseFlags = diseases.map(d => diseaseByPos.get(pos)?.has(d) ? 1 : 0);
-            let amAvg = '';
+            let amAvg = '', amMax = '', amN = '';
             if (amMap && amMap.size > 0) {
                 const scores = [];
                 for (const mut of AM_AAS) {
@@ -197,7 +201,11 @@ const UFVExport = (() => {
                     const sc = amMap.get(`${aa}${pos}${mut}`);
                     if (Number.isFinite(sc)) scores.push(sc);
                 }
-                if (scores.length > 0) amAvg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(4);
+                if (scores.length > 0) {
+                    amAvg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(4);
+                    amMax = Math.max(...scores).toFixed(4);
+                    amN = scores.length;
+                }
             }
             const burden = analysis.residueBurden instanceof Set && analysis.residueBurden.has(pos) ? 1 : 0;
             if (chains) {
@@ -206,12 +214,12 @@ const UFVExport = (() => {
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, burden, ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, hotspotTier, hubTier, burden].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden].join(','));
             }
         });
         return rows.join('\n');
