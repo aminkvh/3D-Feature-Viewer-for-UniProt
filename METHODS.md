@@ -147,7 +147,7 @@ Both *C* and *P* reflect reporting intensity: frequently studied positions (e.g.
 
 10. Gorlov IP et al. Shifting paradigm of association studies: value of rare single-nucleotide polymorphisms. *Am J Hum Genet* 2008; 82(1):100–112.
 11. Walsh R et al. Reassessment of Mendelian gene pathogenicity using 7,855 cardiomyopathy cases and 60,706 reference samples. *Genet Med* 2017; 19(2):192–203.
-12. Akbari Ahangar A et al. Mapping structural distribution and gating-property impacts of disease-associated mutations in voltage-gated sodium channels. *iScience* 2024; 27(9):110687. doi:10.1016/j.isci.2024.110687. PMID: 39286500.
+12. Akbari Ahangar A et al. Mapping structural distribution and gating-property impacts of disease-associated mutations in voltage-gated sodium channels. *iScience* 2024; 27(9):110678. doi:10.1016/j.isci.2024.110678. PMID: 39286500.
 
 ---
 
