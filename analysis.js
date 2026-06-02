@@ -174,7 +174,7 @@ const UFVAnalysis = (() => {
      *     permuting mutated positions across the structure.
      *   • Tokheim et al. "HotMAPS", Cancer Res 2016 (doi:10.1158/0008-5472.CAN-15-3190) —
      *     significantly increased local mutation density vs. an empirical null.
-     *   • Sivley et al., Am J Hum Genet 2018 (doi:10.1016/j.ajhg.2018.01.018) — spatial
+     *   • Sivley et al., Am J Hum Genet 2018 (doi:10.1016/j.ajhg.2018.01.017) — spatial
      *     clustering of germline pathogenic vs. neutral variants in human protein structures.
      * Empirical p-values use the (b+1)/(m+1) estimator (Phipson & Smyth, SAGMB 2010) so a
      * p-value is never exactly zero.
@@ -404,12 +404,11 @@ const UFVAnalysis = (() => {
      *
      * Why betweenness instead of raw contact count: a plain contact-degree score mostly
      * rediscovers buried core residues (degree ≈ burial), which is a confound.  Betweenness
-     * instead rewards residues that lie on many shortest paths — i.e. that BRIDGE otherwise
-     * distant regions/domains — which is what a "long-range hub" should mean, and is far less
-     * correlated with simple burial.  High-betweenness residues in residue interaction networks
-     * are known to coincide with functionally important sites:
-     *   • Vendruscolo et al., Phys Rev E 2002 (doi:10.1103/PhysRevE.65.061910)
-     *   • Amitai et al., J Mol Biol 2004 (doi:10.1016/j.jmb.2004.03.077)
+     * instead rewards residues that lie on many shortest paths — i.e. that bridge otherwise
+     * distant regions/domains.  Residue-interaction networks and short-path communication have
+     * established precedent in protein-structure analysis:
+     *   • del Sol et al., Mol Syst Biol 2006 (doi:10.1038/msb4100063)
+     *   • Amitai et al., J Mol Biol 2004 (doi:10.1016/j.jmb.2004.10.055)
      * Centrality is computed with Brandes' algorithm (J Math Sociol 2001) on the unweighted
      * graph; residues are flagged by an absolute z-score on the betweenness distribution
      * rather than always taking a top percentile.
@@ -556,13 +555,25 @@ const UFVAnalysis = (() => {
     function computeResidueBurden(variants) {
         const mutCountByPos = new Map();
         const phenByPos = new Map();
+        const identifiedLabelsByPos = new Map();
         variants.forEach(v => {
             const pos = v.position;
             mutCountByPos.set(pos, (mutCountByPos.get(pos) || 0) + 1);
             if (!phenByPos.has(pos)) phenByPos.set(pos, new Set());
+            if (!identifiedLabelsByPos.has(pos)) identifiedLabelsByPos.set(pos, new Set());
+            const identifiedLabels = identifiedLabelsByPos.get(pos);
             (v.diseasePairs || []).forEach(p => {
                 const key = p.id || p.label;
+                if (p.id && p.label) {
+                    identifiedLabels.add(p.label);
+                    phenByPos.get(pos).delete(p.label);
+                }
                 if (key) phenByPos.get(pos).add(key);
+            });
+            // Structured disease IDs are preferred. Description-derived labels are the
+            // fallback when the API does not provide a paired identifier.
+            (v.diseases || []).forEach(label => {
+                if (label && !identifiedLabels.has(label)) phenByPos.get(pos).add(label);
             });
         });
         if (mutCountByPos.size === 0) return new Set();

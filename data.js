@@ -239,7 +239,17 @@ const DataProcessor = {
             if (t.includes('uncertain'))
                 return 'Uncertain significance';
         }
-        if (v.predictions && v.predictions.length > 0) return 'Predicted deleterious';
+        const predictedDeleterious = (v.predictions || []).some(p => {
+            const label = [
+                p.predictionValType,
+                p.predictionVal,
+                p.value,
+                p.name,
+            ].filter(Boolean).join(' ').toLowerCase();
+            return /\b(deleterious|damaging|pathogenic)\b/.test(label)
+                && !/\b(benign|tolerated)\b/.test(label);
+        });
+        if (predictedDeleterious) return 'Predicted deleterious';
         return 'Uncertain significance';
     },
 
