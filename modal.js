@@ -1233,9 +1233,14 @@ const UFVModal = (() => {
         UFVExport.downloadText(`${s.uniprotId}_${st.id || 'structure'}_${mode}.pdb`, text);
     }
 
-    function exportCsv() {
+    async function exportCsv() {
         const s = UFVState.state;
         if (!s.sequence) return;
+        // Compute the constraint-pocket values on demand for the loaded structure so the CSV
+        // always carries them (the analysis is otherwise only run when its coloring mode is used).
+        if (!s.analysis.prism && s.amMap?.size && StructureViewer.viewer) {
+            try { await ensurePocketAnalysis(); } catch (_) {}
+        }
         const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure());
         UFVExport.downloadText(`${s.uniprotId}_residue_annotations.csv`, text, 'text/csv');
     }

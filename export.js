@@ -155,6 +155,14 @@ const UFVExport = (() => {
         const hubTierNum = { strong: 2, moderate: 1 };
         const tierFor = (map, pos, lut) => (map instanceof Map ? (lut[map.get(pos)] ?? 0) : 0);
 
+        // Constraint-pocket values (UniProt-position-keyed, structure-dependent): per-residue
+        // BH-FDR q-value and geometric class for candidates (positions with a positive residual).
+        const pocketByPos = analysis.prism?.byPos instanceof Map ? analysis.prism.byPos : null;
+        const pocketCols = pos => {
+            const info = pocketByPos?.get(pos);
+            return [info ? info.q.toFixed(4) : '', info ? info.cat : ''];
+        };
+
         // Build per-position lookups
         const ptmByPos = new Map(); // pos → Set<category>
         ptms.forEach(p => {
@@ -182,6 +190,8 @@ const UFVExport = (() => {
                 'am_max_score',
                 'am_n_subs',
                 'residue_burden',
+                'constraint_pocket_q',
+                'constraint_pocket_class',
                 ...chains.flatMap(c => [`pdb_residue_${c}`, `hotspot_tier_${c}`, `contact_hub_tier_${c}`]),
             ]
             : [
@@ -194,6 +204,8 @@ const UFVExport = (() => {
                 'hotspot_tier',
                 'contact_hub_tier',
                 'residue_burden',
+                'constraint_pocket_q',
+                'constraint_pocket_class',
             ];
         const rows = [headers.join(',')];
         sequence.split('').forEach((aa, i) => {
@@ -215,18 +227,19 @@ const UFVExport = (() => {
                 }
             }
             const burden = analysis.residueBurden instanceof Set && analysis.residueBurden.has(pos) ? 1 : 0;
+            const [pocketQ, pocketClass] = pocketCols(pos);
             if (chains) {
                 const structVals = chains.flatMap(c => [
                     uniprotToPdbResiForChain(pos, structure, c) ?? '',
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass].join(','));
             }
         });
         return rows.join('\n');
