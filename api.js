@@ -8,6 +8,7 @@ const UFVApi = (() => {
     const PROTEOMICS_PTM_URL = (id) => `https://www.ebi.ac.uk/proteins/api/proteomics-ptm/${id}`;
     const UNIPROT_URL = (id) => `https://rest.uniprot.org/uniprotkb/${id}.json`;
     const AM_CSV_URL = (id) => `https://alphafold.ebi.ac.uk/files/AF-${id}-F1-aa-substitutions.csv`;
+    const PAE_URL = (id, ver) => `https://alphafold.ebi.ac.uk/files/AF-${id}-F1-predicted_aligned_error_v${ver}.json`;
     const PDBe_BEST = (id) => `https://www.ebi.ac.uk/pdbe/api/mappings/best_structures/${id}`;
     const PDBe_ENTRY = (pdb) => `https://www.ebi.ac.uk/pdbe/api/pdb/entry/summary/${pdb.toLowerCase()}`;
     const PDBe_MOLECULES = (pdb) => `https://www.ebi.ac.uk/pdbe/api/pdb/entry/molecules/${pdb.toLowerCase()}`;
@@ -488,6 +489,56 @@ const UFVApi = (() => {
         return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sequence, amMap };
     }
 
+    /**
+     * Parse an AlphaFold predicted-aligned-error (PAE) JSON into a flat Float32Array.
+     * Handles both the current AFDB format ({ predicted_aligned_error: [[…]] }) and the
+     * legacy triplet format ({ residue1, residue2, distance }).  Returns { n, data } where
+     * data[(i-1)*n + (j-1)] is the PAE between 1-based residues i and j, or null.
+     * Capped at 2500 residues to bound the NxN memory / downstream O(N²) cost in-browser.
+     */
+    function parsePae(json) {
+        if (!json) return null;
+        const obj = Array.isArray(json) ? json[0] : json;
+        if (!obj) return null;
+        const m = obj.predicted_aligned_error;
+        if (Array.isArray(m) && Array.isArray(m[0])) {
+            const n = m.length;
+            if (n === 0 || n > 2500) return null;
+            const data = new Float32Array(n * n);
+            for (let i = 0; i < n; i++) {
+                const row = m[i];
+                for (let j = 0; j < n; j++) data[i * n + j] = +row[j] || 0;
+            }
+            return { n, data };
+        }
+        if (Array.isArray(obj.distance) && Array.isArray(obj.residue1) && Array.isArray(obj.residue2)) {
+            const r1 = obj.residue1, r2 = obj.residue2, d = obj.distance;
+            let n = 0;
+            for (let k = 0; k < r1.length; k++) { if (r1[k] > n) n = r1[k]; if (r2[k] > n) n = r2[k]; }
+            if (n === 0 || n > 2500) return null;
+            const data = new Float32Array(n * n);
+            for (let k = 0; k < d.length; k++) data[(r1[k] - 1) * n + (r2[k] - 1)] = +d[k] || 0;
+            return { n, data };
+        }
+        return null;
+    }
+
+    const _paeCache = new Map(); // id → Promise<{n, data}|null>
+    function getPaeMatrix(id, version) {
+        const key = id.toUpperCase();
+        if (_paeCache.has(key)) return _paeCache.get(key);
+        const p = (async () => {
+            const versions = [version, 4, 3].filter((v, i, a) => v && a.indexOf(v) === i);
+            for (const ver of versions) {
+                const parsed = parsePae(await fetchOptionalJson(PAE_URL(id, ver)));
+                if (parsed) return parsed;
+            }
+            return null;
+        })();
+        _paeCache.set(key, p);
+        return p;
+    }
+
     async function getStructures(id, sequenceLength) {
         const [alphaFold, pdbs] = await Promise.all([
             getAlphaFoldStructure(id, sequenceLength),
@@ -499,5 +550,5 @@ const UFVApi = (() => {
         });
     }
 
-    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified };
+    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix };
 })();

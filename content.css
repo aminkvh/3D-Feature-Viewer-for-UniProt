@@ -581,6 +581,23 @@
     white-space: nowrap;
 }
 
+/* Sensitivity slider (FDR q-value threshold for the constraint-pocket mode) */
+.ufv-sens-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+}
+.ufv-sens-slider label {
+    font-size: 10.5px;
+    color: var(--ufv-text-secondary);
+}
+.ufv-sens-slider input[type="range"] {
+    width: 100%;
+    accent-color: var(--ufv-accent);
+    cursor: pointer;
+}
+
 .ufv-structure-meta {
     padding: 6px 14px;
     font-size: 11px;

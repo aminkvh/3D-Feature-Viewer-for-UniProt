@@ -30,6 +30,7 @@ const UFVState = (() => {
         activeConsequences: new Set(),
         activeProvenances: new Set(),
         activeDiseases: null,
+        variantPtmCats: new Set(), // PTM categories co-displayed in the Disease & Variants view
         scrapedDiseases: [],
         displayedPositions: [],
         selectedResidue: null,
@@ -37,7 +38,7 @@ const UFVState = (() => {
         nearbyResidues: new Set(),
         amMap: null,
         settings: { ...defaults },
-        analysis: { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set() },
+        analysis: { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set(), prism: null },
     };
 
     function resetForProtein(id) {
@@ -57,6 +58,7 @@ const UFVState = (() => {
         state.activeConsequences = new Set();
         state.activeProvenances = new Set();
         state.activeDiseases = null;
+        state.variantPtmCats = new Set();
         state.scrapedDiseases = [];
         state.displayedPositions = [];
         state.selectedResidue = null;

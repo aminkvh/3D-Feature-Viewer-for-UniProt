@@ -78,6 +78,13 @@ const UFVExport = (() => {
             if (colorMode === 'residueBurden') {
                 return setBFactor(line, colorContext instanceof Set && colorContext.has(uniprotResi) ? 1 : 0);
             }
+            // Constraint pocket: encode geometric class as fractional B-factor
+            // (buried pocket = 1.0, exposed = 0.66, none = 0).
+            if (colorMode === 'prism') {
+                const catVal = { pocket: 1.0, exposed: 0.66 };
+                const info = colorContext instanceof Map ? colorContext.get(uniprotResi) : null;
+                return setBFactor(line, info ? (catVal[info.cat] ?? 1.0) : 0);
+            }
             // Default (cyan): 1 for currently displayed (selected) residues, 0 elsewhere
             return setBFactor(line, selected.has(uniprotResi) ? 1 : 0);
         }).join('\n');

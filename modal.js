@@ -19,6 +19,19 @@ const UFVModal = (() => {
     // when the user navigates between proteins or re-opens the modal mid-load.
     let _openSeq = 0;
     let _loadSeq = 0;
+    // Constraint-pocket significance threshold (BH-FDR q) controlled by the sensitivity slider.
+    // The analysis returns ALL candidates with q-values; this filters what's shown, so moving
+    // the slider re-thresholds instantly without recomputing.
+    let sensThreshold = 0.10;
+
+    // The displayed constraint-pocket candidate set, filtered to q ≤ sensThreshold.
+    function filteredPocketByPos() {
+        const res = UFVState.state.analysis.prism;
+        if (!res?.byPos) return null;
+        const out = new Map();
+        res.byPos.forEach((v, pos) => { if (v.q <= sensThreshold) out.set(pos, v); });
+        return out;
+    }
 
     function createButton(id, label, onClick) {
         const btn = document.createElement('button');
@@ -88,11 +101,16 @@ const UFVModal = (() => {
                                 <div class="ufv-cm-opt selected" data-value="default">Default cyan</div>
                                 <div class="ufv-cm-opt" data-value="plddt">pLDDT confidence</div>
                                 <div class="ufv-cm-opt" data-value="bfactor">Experimental B-factor</div>
-                                <div class="ufv-cm-opt" data-value="hotspots">3D enrichment hotspot</div>
+                                <div class="ufv-cm-opt" data-value="hotspots">3D variant enrichment</div>
                                 <div class="ufv-cm-opt" data-value="distantContacts">Long-range contact hub</div>
                                 <div class="ufv-cm-opt" data-value="alphaMissense">AlphaMissense score</div>
-                                <div class="ufv-cm-opt" data-value="residueBurden">Residue burden hotspot</div>
+                                <div class="ufv-cm-opt" data-value="residueBurden">Variant burden</div>
+                                <div class="ufv-cm-opt" data-value="prism">Constraint pocket</div>
                             </div>
+                        </div>
+                        <div class="ufv-sens-slider ufv-hidden" id="ufv-sens-wrap">
+                            <label for="ufv-sens-slider">Sensitivity (FDR q ≤ <span id="ufv-sens-q">0.10</span>)</label>
+                            <input type="range" id="ufv-sens-slider" min="1" max="40" value="10">
                         </div>
                     </div>
                     <div id="ufv-ptm-panel" class="ufv-filter-scroll">
@@ -103,6 +121,7 @@ const UFVModal = (() => {
                         <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button></div></div><div id="ufv-dis-list"></div></div>
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-prov-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Provenance</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-prov-all">All</button><button class="ufv-section-btn" id="ufv-prov-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-prov-body"><div id="ufv-prov-list"></div></div></div>
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
                     <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
@@ -212,16 +231,38 @@ const UFVModal = (() => {
         byId('ufv-dis-none').addEventListener('click', () => varSectionSetAll('disease', false));
         byId('ufv-prov-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-prov-body', 'ufv-prov-toggle'); });
         byId('ufv-cons-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-cons-body', 'ufv-cons-toggle'); });
+        byId('ufv-vptm-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-vptm-body', 'ufv-vptm-toggle'); });
+        byId('ufv-vptm-all').addEventListener('click', () => variantPtmSetAll(true));
+        byId('ufv-vptm-none').addEventListener('click', () => variantPtmSetAll(false));
         byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
         byId('ufv-cs-btn').addEventListener('click', e => { e.stopPropagation(); byId('ufv-cs').classList.toggle('open'); });
         byId('ufv-cm-btn').addEventListener('click', e => { e.stopPropagation(); byId('ufv-cm').classList.toggle('open'); });
         byId('ufv-cm-drop').querySelectorAll('.ufv-cm-opt').forEach(opt => {
             opt.addEventListener('click', () => {
                 byId('ufv-cm').classList.remove('open');
-                setColorMode(opt.dataset.value);
-                UFVState.saveSettings({ coloringMode: opt.dataset.value });
-                requestAnimationFrame(() => applyMode());
+                const val = opt.dataset.value;
+                setColorMode(val);
+                // In-modal coloring is session-only — the persistent startup default lives in the
+                // options page (defaults to "Default cyan"), so the viewer always opens on cyan
+                // and the expensive constraint-pocket compute is never triggered automatically.
+                const isPocket = val === 'prism';
+                byId('ufv-sens-wrap').classList.toggle('ufv-hidden', !isPocket);
+                if (isPocket) {
+                    ensurePocketAnalysis().then(() => applyMode());
+                } else {
+                    requestAnimationFrame(() => applyMode());
+                }
             });
+        });
+        // Sensitivity slider: update the q label live, but only re-colour on release ('change')
+        // — re-colouring on every drag tick caused visible lag.  Re-thresholding the cached
+        // candidates is cheap; the cost is the 3Dmol cartoon recolour, so we do it once on release.
+        byId('ufv-sens-slider').addEventListener('input', e => {
+            sensThreshold = Math.max(0.01, Math.min(0.40, e.target.value / 100));
+            byId('ufv-sens-q').textContent = sensThreshold.toFixed(2);
+        });
+        byId('ufv-sens-slider').addEventListener('change', () => {
+            requestAnimationFrame(() => applyMode());
         });
         byId('ufv-structure-prev').addEventListener('click', () => cycleStructure(-1));
         byId('ufv-structure-next').addEventListener('click', () => cycleStructure(1));
@@ -374,6 +415,9 @@ const UFVModal = (() => {
                 s.analysis.distantContacts = contacts.merged;
                 s.analysis.distantContactsByChain = contacts.byChain;
                 s.analysis.residueBurden = UFVAnalysis.computeResidueBurden(s.variants);
+                // Constraint-pocket analysis is structure-dependent (geometry + PAE) — drop so it
+                // recomputes for the newly loaded structure on next selection.
+                s.analysis.prism = null;
                 byId('ufv-loading').classList.add('hidden');
             } catch (err) {
                 if (_loadSeq === mySeq) showError(err.message || 'Unable to load selected structure.');
@@ -398,6 +442,8 @@ const UFVModal = (() => {
         };
         updateStructureMeta();
         applyMode();
+        // If the constraint-pocket mode is active, (re)compute it for this structure then recolour.
+        if (getColorMode() === 'prism') ensurePocketAnalysis().then(() => applyMode());
         // Fold neighbouring partner-protein disease residues into the hotspot test, off the
         // critical path (network fetch) so opening a complex isn't delayed.
         augmentHotspotsWithPartners(structure, requestedId, mySeq);
@@ -492,7 +538,6 @@ const UFVModal = (() => {
             const cur = getColorMode();
             if ((cur === 'bfactor' && isAlphaFold) || (cur === 'plddt' && !isAlphaFold)) {
                 setColorMode('default');
-                UFVState.saveSettings({ coloringMode: 'default' });
             }
         }
         byId('ufv-structure-meta') && (byId('ufv-structure-meta').textContent = '');
@@ -534,6 +579,7 @@ const UFVModal = (() => {
             distantContactsByChain: s.analysis.distantContactsByChain,
             alphaMissense: s.analysis.alphaMissense,
             residueBurden: s.analysis.residueBurden,
+            pocketByPos: mode === 'prism' ? filteredPocketByPos() : null,
         }, true);
         const rangeNote = getMappedRangeNote();
         if (s.currentMode === 'ptm') {
@@ -541,9 +587,14 @@ const UFVModal = (() => {
             s.displayedPositions = activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]);
             byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${rangeNote}`;
         } else {
-            const r = StructureViewer.showVariants(filteredVariants);
-            s.displayedPositions = Array.from(new Set(filteredVariants.map(v => v.position)));
-            byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${rangeNote}`;
+            const coPtms = activeCoDisplayPtms();
+            const r = StructureViewer.showVariants(filteredVariants, coPtms);
+            s.displayedPositions = Array.from(new Set([
+                ...filteredVariants.map(v => v.position),
+                ...coPtms.flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]),
+            ]));
+            const ptmNote = r.ptmCount ? `, ${r.ptmCount} PTM site${r.ptmCount === 1 ? '' : 's'}` : '';
+            byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${ptmNote}${rangeNote}`;
         }
         // Preserve an active residue focus across coloring changes: re-apply the new cartoon
         // coloring (done above) and then re-enter focus on the selected residue instead of
@@ -577,6 +628,79 @@ const UFVModal = (() => {
         return s.ptms.filter(p => s.ptmGroups[p.category]?.visible && p.visible !== false);
     }
 
+    /**
+     * Lazily compute the constraint-pocket analysis for the current structure.
+     * Fetches the AlphaFold PAE matrix on demand (only for AlphaFold models — PAE indices
+     * align with UniProt positions there) to gate the spatial weights, then runs the heavy
+     * permutation test in a Web Worker (off the main thread) with a synchronous fallback.
+     */
+    async function ensurePocketAnalysis() {
+        const s = UFVState.state;
+        const st = UFVState.selectedStructure();
+        if (!st || !StructureViewer.viewer) return s.analysis.prism;
+        if (s.analysis.prism) return s.analysis.prism; // already computed for this structure
+        const requestedId = s.uniprotId;
+        showLoading('Computing constraint pockets…');
+        try {
+            let pae = null;
+            if (st.source === 'AlphaFold') {
+                try { pae = await UFVApi.getPaeMatrix(requestedId, st.version); } catch (_) {}
+            }
+            if (s.uniprotId !== requestedId || UFVState.selectedStructure() !== st) return s.analysis.prism;
+            const geometry = StructureViewer.residueGeometry();
+            const res = await runPocketAnalysis(geometry, s.amMap, s.sequence, pae);
+            if (s.uniprotId !== requestedId || UFVState.selectedStructure() !== st) return s.analysis.prism;
+            s.analysis.prism = res;
+        } catch (err) {
+            s.analysis.prism = { byPos: new Map(), reason: err?.message || 'Computation failed.' };
+        } finally {
+            byId('ufv-loading').classList.add('hidden');
+        }
+        return s.analysis.prism;
+    }
+
+    // ---- Constraint-pocket compute: short-lived Web Worker with a synchronous fallback ----
+    // A fresh worker is created for each compute and ALWAYS terminated when it finishes, so the
+    // extension never holds a background worker thread once the analysis is done — no persistent
+    // CPU/memory footprint.  A page CSP on uniprot.org could block worker creation; if so (or on
+    // any worker error) we mark it broken and compute synchronously instead.
+    let _workerBroken = false;
+
+    async function runPocketAnalysis(geometry, amMap, sequence, pae) {
+        if (!_workerBroken && typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+            let w = null;
+            try {
+                w = new Worker(chrome.runtime.getURL('pocket-worker.js'));
+                const worker = w;
+                return await new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('worker timeout')), 60000);
+                    worker.onmessage = (e) => {
+                        clearTimeout(timer);
+                        const { result, error } = e.data || {};
+                        if (error) reject(new Error(error));
+                        else resolve({ byPos: new Map(result.byPos), reason: result.reason, hasPae: result.hasPae, n: result.n });
+                    };
+                    worker.onerror = () => { clearTimeout(timer); reject(new Error('worker error')); };
+                    worker.postMessage({ geometry, sequence, amEntries: [...amMap], pae: pae ? { n: pae.n, data: pae.data } : null });
+                });
+            } catch (_) {
+                _workerBroken = true; // don't retry worker creation this session; fall through to sync
+            } finally {
+                if (w) { try { w.terminate(); } catch (_) {} } // offload: no lingering worker thread
+            }
+        }
+        // Synchronous fallback — paint the spinner before the brief main-thread block.
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        return UFVPocket.computePockets(geometry, amMap, sequence, pae);
+    }
+
+    // PTMs the user opted to co-display in the Disease & Variants view (off by default).
+    function activeCoDisplayPtms() {
+        const s = UFVState.state;
+        if (!s.variantPtmCats || s.variantPtmCats.size === 0) return [];
+        return s.ptms.filter(p => s.variantPtmCats.has(p.category));
+    }
+
     function buildFilters() {
         buildPTMFilters();
         buildVariantFilters();
@@ -594,10 +718,37 @@ const UFVModal = (() => {
         });
     }
 
+    // PTM co-display list inside the Disease & Variants panel — collapsed, all-off by default.
+    // Lets the user overlay PTM spheres on top of the variant view without leaving it.
+    function buildVariantPtmFilters() {
+        const s = UFVState.state;
+        const section = byId('ufv-vptm-section');
+        const list = byId('ufv-vptm-list');
+        if (!section || !list) return;
+        list.textContent = '';
+        const groups = Object.entries(s.ptmGroups).sort((a, b) => b[1].items.length - a[1].items.length);
+        if (groups.length === 0) { section.classList.add('ufv-hidden'); return; }
+        section.classList.remove('ufv-hidden');
+        groups.forEach(([cat, group]) => {
+            list.appendChild(makeFilterItem(cat, group.color, group.items.length, s.variantPtmCats.has(cat), checked => {
+                checked ? s.variantPtmCats.add(cat) : s.variantPtmCats.delete(cat);
+                applyMode();
+            }));
+        });
+    }
+
+    function variantPtmSetAll(select) {
+        const s = UFVState.state;
+        s.variantPtmCats = new Set(select ? Object.keys(s.ptmGroups) : []);
+        document.querySelectorAll('#ufv-vptm-list input[type="checkbox"]').forEach(cb => { cb.checked = select; });
+        applyMode();
+    }
+
     function buildVariantFilters() {
         const s = UFVState.state;
         fillFilterList('ufv-prov-list', DataProcessor.getProvenanceSummary(s.variants), s.activeProvenances, applyMode);
         fillFilterList('ufv-cons-list', DataProcessor.getConsequenceSummary(s.variants), s.activeConsequences, applyMode);
+        buildVariantPtmFilters();
         const ds = DataProcessor.getDiseaseSummary(s.variants);
         const dis = byId('ufv-dis-section');
         const list = byId('ufv-dis-list');
@@ -762,7 +913,8 @@ const UFVModal = (() => {
             hotspots: [['#b9c2cf', 'Not enriched'], ['#ffa726', 'Weak'], ['#e64a19', 'Moderate'], ['#b71c1c', 'Strong']],
             distantContacts: [['#b9c2cf', 'No contact hub'], ['#ab47bc', 'Moderate hub'], ['#6a1b9a', 'Strong hub']],
             alphaMissense: [['#3d85c8', 'Likely benign (<0.34)'], ['#b9c2cf', 'Ambiguous (0.34–0.564)'], ['#e06666', 'Likely pathogenic (0.564–0.78)'], ['#b71c1c', 'Pathogenic (>0.78)']],
-            residueBurden: [['#b9c2cf', 'Low burden'], ['#e65100', 'Burden hotspot']],
+            residueBurden: [['#b9c2cf', 'Low burden'], ['#e65100', 'High burden']],
+            prism: [['#00897b', 'Buried (pocket)'], ['#8e24aa', 'Exposed site'], ['#b9c2cf', 'Not significant']],
         };
 
         // Safe DOM helper — never uses innerHTML so API-derived labels can't inject HTML.
@@ -791,6 +943,24 @@ const UFVModal = (() => {
                     : 'Pathogenic vs. benign spatial enrichment (case–control permutation).';
                 legend.appendChild(note);
             }
+        }
+
+        // Constraint-pocket mode: surface a short status note (candidate count / why empty).
+        if (mode === 'prism') {
+            const res = UFVState.state.analysis.prism;
+            const note = document.createElement('span');
+            note.className = 'ufv-legend-item ufv-legend-note';
+            if (res?.reason) {
+                note.textContent = res.reason;
+                note.title = res.reason;
+            } else if (res) {
+                const n = filteredPocketByPos()?.size || 0;
+                note.textContent = `${n} pocket candidate${n === 1 ? '' : 's'} (q≤${sensThreshold.toFixed(2)})`;
+                note.title = 'Exploratory heuristic. Buried, evolutionarily-constrained candidate functional sites; not a validated predictor and not a protein-interface detector. Getis-Ord Gi* on AlphaMissense residuals vs structural burial.';
+            } else {
+                note.textContent = 'constraint pockets';
+            }
+            legend.appendChild(note);
         }
 
         // In focus/zoom mode always append annotation context on top of coloring legend
@@ -1058,8 +1228,9 @@ const UFVModal = (() => {
         else if (mode === 'hotspots') colorContext = s.analysis.hotspots;
         else if (mode === 'distantContacts') colorContext = s.analysis.distantContacts;
         else if (mode === 'residueBurden') colorContext = s.analysis.residueBurden;
+        else if (mode === 'prism') colorContext = s.analysis.prism?.byPos;
         const text = UFVExport.rewritePdbBeta(StructureViewer.currentPdbText, s.displayedPositions, st, mode, colorContext);
-        UFVExport.downloadText(`${s.uniprotId}_${st.id || 'structure'}_${mode}_beta.pdb`, text);
+        UFVExport.downloadText(`${s.uniprotId}_${st.id || 'structure'}_${mode}.pdb`, text);
     }
 
     function exportCsv() {
@@ -1088,8 +1259,13 @@ const UFVModal = (() => {
     }
 
     function syncSettingsControls() {
-        const set = UFVState.state.settings;
-        setColorMode(set.coloringMode);
+        let mode = UFVState.state.settings.coloringMode;
+        // Constraint pocket is never a startup mode — it is an opt-in, per-session selection, so
+        // the viewer never auto-runs the expensive compute on open (and any legacy saved value
+        // falls back to the default cyan view).
+        if (mode === 'prism' || mode === 'topos') mode = 'default';
+        setColorMode(mode);
+        byId('ufv-sens-wrap').classList.add('ufv-hidden');
     }
 
     function switchTab(_name) { /* tabs removed — settings moved to options page */ }

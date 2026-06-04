@@ -24,6 +24,7 @@
         "state.js",
         "export.js",
         "analysis.js",
+        "algorithms.js",
         "viewer.js",
         "modal.js",
         "injector.js",
@@ -35,7 +36,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["lib/3Dmol-min.js"],
+      "resources": ["lib/3Dmol-min.js", "pocket-worker.js", "algorithms.js"],
       "matches": ["https://www.uniprot.org/*"]
     }
   ],

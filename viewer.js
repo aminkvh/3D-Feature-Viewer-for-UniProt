@@ -18,6 +18,8 @@ const StructureViewer = {
     _inFocusMode: false,
     _resizeBound: false,
     _lastRender: null, // closure that re-draws the active PTM/variant spheres (for WebGL restore)
+    _activeSpheres: null, // Map<uniProtPos, color> of the currently-drawn annotation spheres
+                          // (PTM and/or variant) — used to keep them visible while zoomed in
 
     init(container) {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -363,6 +365,13 @@ const StructureViewer = {
         } else if (mode === 'residueBurden') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             (context.residueBurden || new Set()).forEach(pos => this.allChainsAddStyle(pos, { cartoon: { ...base, color: '#e65100' } }));
+        } else if (mode === 'prism') {
+            // Constraint-pocket mode: colour candidate residues by geometric class.
+            this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
+            const catColors = { pocket: '#00897b', exposed: '#8e24aa' };
+            if (context.pocketByPos instanceof Map) {
+                context.pocketByPos.forEach((info, pos) => this.allChainsAddStyle(pos, { cartoon: { ...base, color: catColors[info.cat] || '#00897b' } }));
+            }
         } else {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#00bcd4' } });
         }
@@ -396,6 +405,7 @@ const StructureViewer = {
         this._selectedResi = null;
         this._lastRender = () => this.showPTMs(ptms, ptmGroups);
         const hoverMap = new Map();
+        const active = new Map(); // uniProtPos → color, for zoom-mode sphere persistence
         let count = 0;
 
         ptms.forEach(ptm => {
@@ -410,11 +420,14 @@ const StructureViewer = {
             if (!placed) return;
 
             hoverMap.set(ptm.position, ptm);
+            active.set(ptm.position, ptm.color);
             count++;
 
             // For disulfide bonds, also render the end position
             if (ptm.endPosition && ptm.endPosition !== ptm.position) {
-                this.allChainsAddStyle(ptm.endPosition, { sphere: { radius: 1.8, color: ptm.color, opacity: 0.92 } }, { atom: 'CA' });
+                if (this.allChainsAddStyle(ptm.endPosition, { sphere: { radius: 1.8, color: ptm.color, opacity: 0.92 } }, { atom: 'CA' })) {
+                    active.set(ptm.endPosition, ptm.color);
+                }
                 // Create a hover entry for the end position too
                 if (!hoverMap.has(ptm.endPosition)) {
                     hoverMap.set(ptm.endPosition, {
@@ -426,6 +439,7 @@ const StructureViewer = {
             }
         });
 
+        this._activeSpheres = active;
         this._bindHover(hoverMap, 'ptm');
         this.viewer.render();
         return count;
@@ -447,9 +461,15 @@ const StructureViewer = {
         return this.showPTMs(ptms, ptmGroups);
     },
 
-    showVariants(filtered) {
+    /**
+     * Render variant spheres, plus (optionally) a set of co-displayed PTMs so the user can
+     * see post-translational modifications alongside variants in the Disease & Variants view.
+     * Where a residue carries both, the variant sphere wins (its severity colour is kept) but
+     * the PTM still shows in that residue's hover/details.
+     */
+    showVariants(filtered, coPtms = []) {
         this._selectedResi = null;
-        this._lastRender = () => this.showVariants(filtered);
+        this._lastRender = () => this.showVariants(filtered, coPtms);
         const severity = [
             'Likely pathogenic or pathogenic',
             'Predicted deleterious',
@@ -474,19 +494,38 @@ const StructureViewer = {
         });
 
         const hoverMap = new Map();
+        const active = new Map(); // uniProtPos → color, for zoom-mode sphere persistence
         let placedPosCount = 0;
         let placedVarCount = 0;
         posMap.forEach((d, pos) => {
             const placed = this.allChainsAddStyle(pos, { sphere: { radius: 1.8, color: d.color, opacity: 0.92 } }, { atom: 'CA' });
             if (!placed) return;
             hoverMap.set(pos, d);
+            active.set(pos, d.color);
             placedPosCount++;
             placedVarCount += d.variants.length;
         });
 
+        // Co-displayed PTM spheres (Disease & Variants "show PTMs too" option).
+        let placedPtmCount = 0;
+        coPtms.forEach(ptm => {
+            if (posMap.has(ptm.position)) return; // variant sphere already occupies this Cα
+            const placed = this.allChainsAddStyle(ptm.position, { sphere: { radius: 1.8, color: ptm.color, opacity: 0.92 } }, { atom: 'CA' });
+            if (!placed) return;
+            if (!hoverMap.has(ptm.position)) hoverMap.set(ptm.position, { position: ptm.position, color: ptm.color, category: ptm.category });
+            active.set(ptm.position, ptm.color);
+            placedPtmCount++;
+            if (ptm.endPosition && ptm.endPosition !== ptm.position && !posMap.has(ptm.endPosition)) {
+                if (this.allChainsAddStyle(ptm.endPosition, { sphere: { radius: 1.8, color: ptm.color, opacity: 0.92 } }, { atom: 'CA' })) {
+                    active.set(ptm.endPosition, ptm.color);
+                }
+            }
+        });
+
+        this._activeSpheres = active;
         this._bindHover(hoverMap, 'variant');
         this.viewer.render();
-        return { posCount: placedPosCount, varCount: placedVarCount };
+        return { posCount: placedPosCount, varCount: placedVarCount, ptmCount: placedPtmCount };
     },
 
     _bindHover(map, mode) {
@@ -495,6 +534,8 @@ const StructureViewer = {
         // the chain the atom actually belongs to, so clicks on any subunit are interpreted
         // (and later focused) on that subunit rather than the primary chain.
         const resolveUni = atom => self._reverseResidueMapForChain(atom.chain).get(atom.resi) || atom.resi;
+        // Hover stays annotated-only: it fires on every mousemove, so rebuilding the tooltip
+        // (which scans all PTMs/variants) for bare backbone residues would jank large proteins.
         this.viewer.setHoverable({}, true,
             (atom, _v, ev) => {
                 if (!atom?.resi) return;
@@ -504,12 +545,15 @@ const StructureViewer = {
             },
             () => { if (self.hoverCb) self.hoverCb(null, mode, null); }
         );
+        // Click is bound on the WHOLE model ({}) so EVERY residue is clickable — not just
+        // annotated ones.  Unannotated residues fall back to a bare { position } payload so the
+        // cartoon is always focusable/zoomable regardless of whether it carries a PTM/variant.
         this.viewer.setClickable({}, true,
             (atom) => {
                 if (!atom?.resi) return;
                 const uniResi = resolveUni(atom);
                 const d = map.get(uniResi);
-                if (d && self.clickCb) self.clickCb(d, mode, atom.chain);
+                if (self.clickCb) self.clickCb(d || { position: uniResi }, mode, atom.chain);
             }
         );
     },
@@ -552,20 +596,31 @@ const StructureViewer = {
             }
         });
 
-        // Dim the cartoon to background opacity only on first focus (avoids expensive
-        // full geometry rebuild on every residue click while already in focus mode)
-        if (!this._inFocusMode) {
-            this._inFocusMode = true;
-            const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
-            this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
-        }
-
         const annotated = annotations.annotatedResidues || new Map();
         const reverseCache = new Map(); // chain → reverse map (built lazily, reused)
         const toUni = (c, r) => {
             if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c));
             return reverseCache.get(c).get(r) || r;
         };
+
+        // Focused neighbourhood as UniProt positions — these become sticks below, so the rest
+        // of the annotation spheres should stay as spheres (the user wants other PTMs/variants
+        // to remain visible while zoomed into one of them).
+        const nearbyUni = new Set(Array.from(nearby.values()).map(n => toUni(n.chain, n.resi)));
+
+        // Dim the cartoon to background opacity.  Re-applied on every focus (not only the
+        // first) because setStyle replaces the per-atom style layers — this clears the
+        // previous click's sticks/context spheres so they don't accumulate, and lets us
+        // re-draw the surrounding annotation spheres cleanly each time.
+        this._inFocusMode = true;
+        const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
+        this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
+
+        // Keep every OTHER annotation sphere visible (everything not in the focused pocket).
+        (this._activeSpheres || new Map()).forEach((color, uniPos) => {
+            if (nearbyUni.has(uniPos)) return; // shown as a stick instead
+            this.allChainsAddStyle(uniPos, { sphere: { radius: 1.8, color, opacity: 0.92 } }, { atom: 'CA' });
+        });
 
         // Show nearby residues as thin sticks (each on its own chain's copy)
         nearby.forEach(({ chain: nc, resi: nr }) => {
@@ -602,7 +657,7 @@ const StructureViewer = {
         this.viewer.zoomTo(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis }, 600);
         this.viewer.render();
 
-        return new Set(Array.from(nearby.values()).map(n => toUni(n.chain, n.resi)));
+        return nearbyUni;
     },
 
     /**
@@ -637,6 +692,41 @@ const StructureViewer = {
         return out;
     },
 
+    /**
+     * Extract one record per modelled Cα for the constraint-pocket analysis:
+     *   { uniPos, chain, resi, ca:{x,y,z} }
+     * EVERY Cα in the model is returned — including partner-protein chains and other copies of
+     * the entry protein — so the analysis can account for burial at subunit/partner interfaces.
+     * `uniPos` is the UniProt position for residues of the entry protein, and null for
+     * partner-protein / unmapped atoms, which serve as burial context only (never scored).
+     * `resi` is the PDB author number (used for the sequential pseudo-Cβ direction).
+     */
+    residueGeometry() {
+        const model = this.viewer?.getModel?.();
+        if (!model) return [];
+        const s = this.currentStructure;
+        // Chains belonging to OUR protein (the entry).  Everything else is partner context.
+        // null ⇒ no chain info (AlphaFold / single unmapped) ⇒ treat all chains as ours.
+        const ourChains = s?.chainIds?.length ? new Set(s.chainIds)
+                        : (s?.chainId ? new Set([s.chainId]) : null);
+        const reverseCache = new Map(); // chain → (authorResi → uniPos)
+        const toUni = (chain, resi) => {
+            if (!reverseCache.has(chain)) reverseCache.set(chain, this._reverseResidueMapForChain(chain));
+            return reverseCache.get(chain).get(resi);
+        };
+        const seen = new Set(); // chain|resi — one CA per residue
+        const out = [];
+        (model.selectedAtoms({ atom: 'CA' }) || []).forEach(a => {
+            const key = `${a.chain}|${a.resi}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            const isOurs = !ourChains || ourChains.has(a.chain);
+            const uni = isOurs ? toUni(a.chain, a.resi) : null;
+            out.push({ uniPos: uni != null ? uni : null, chain: a.chain ?? null, resi: a.resi, ca: { x: a.x, y: a.y, z: a.z } });
+        });
+        return out;
+    },
+
     computeActualCoverage(structure) {
         if (!this.viewer || !structure?.mappedRanges?.length) return null;
         const model = this.viewer.getModel();
@@ -667,6 +757,7 @@ const StructureViewer = {
         this._observedResi = null;
         this._observedResiByChain = null;
         this._lastRender = null;
+        this._activeSpheres = null;
         this.currentStructure = null;
         this.currentPdbText = '';
         this._lastColoringContext = {};

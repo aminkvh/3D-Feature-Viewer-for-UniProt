@@ -39,13 +39,22 @@ const UFVInjector = (() => {
 
     function findSectionHeading(sectionId) {
         const section = document.getElementById(sectionId);
-        if (section) return section.querySelector('h2') || section;
+        if (section) {
+            // Only treat a real heading element as the anchor.  Returning the <section>
+            // itself (when its <h2> hasn't rendered yet) would append the button to the very
+            // bottom of the section AND mark injection as "done" — stranding the button far
+            // from the title until a manual refresh.  Returning null instead lets the poll /
+            // MutationObserver retry until the heading actually exists.  This was the main
+            // cause of "sometimes I have to refresh to see the button".
+            const h = section.querySelector('h1, h2, h3');
+            if (h) return h;
+        }
         const textMap = {
             ptm_processing: ['PTM/Processing', 'PTM / Processing'],
             disease_variants: ['Disease & Variants', 'Disease and Variants'],
         };
         const main = document.querySelector('main') || document.querySelector('[role="main"]') || document.body;
-        for (const h of main.querySelectorAll('h2')) {
+        for (const h of main.querySelectorAll('h1, h2, h3')) {
             const text = h.textContent.trim().toLowerCase();
             if ((textMap[sectionId] || []).some(term => text.includes(term.toLowerCase()))) return h;
         }
@@ -220,6 +229,12 @@ const UFVInjector = (() => {
         if (!UFVState.state.uniprotId) UFVState.resetForProtein(id);
         handlePageType();
         patchHistory();
+        // Restored from the back/forward (bfcache) cache: the content script doesn't re-run
+        // and the injection timers may have been frozen, so re-arm injection on pageshow.
+        if (!runtime.pageshowBound) {
+            runtime.pageshowBound = true;
+            window.addEventListener('pageshow', e => { if (e.persisted) handlePageType(); });
+        }
     }
 
     return { boot, getUniProtId };
