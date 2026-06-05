@@ -19,6 +19,8 @@ const UFVApi = (() => {
     // 3D-Beacons (PDBe-KB) aggregates computed/predicted models (SWISS-MODEL, ModelArchive,
     // AlphaFold, PED, …) for a UniProt accession alongside experimental structures.
     const BEACONS_SUMMARY = (id) => `https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/${id}.json`;
+    // RCSB Chemical Component Dictionary entry for a ligand CCD code (e.g. ABU = GABA).
+    const LIGAND_CCD = (ccd) => `https://data.rcsb.org/rest/v1/core/chemcomp/${encodeURIComponent(String(ccd).toUpperCase())}`;
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -620,5 +622,29 @@ const UFVApi = (() => {
         });
     }
 
-    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix };
+    // Ligand chemistry from the RCSB Chemical Component Dictionary, keyed by 3-letter CCD code.
+    // Returns { id, name, formula, smiles, inchikey, drugbank }. Cached (promise) per code.
+    const _ligandCache = new Map();
+    function getLigandInfo(ccd) {
+        if (!ccd) return Promise.resolve(null);
+        const key = String(ccd).toUpperCase();
+        if (_ligandCache.has(key)) return _ligandCache.get(key);
+        const p = (async () => {
+            const j = await fetchOptionalJson(LIGAND_CCD(key));
+            const d = j?.rcsb_chem_comp_descriptor || {};
+            const db = (j?.rcsb_chem_comp_related || []).find(x => x.resource_name === 'DrugBank');
+            return {
+                id: key,
+                name: j?.chem_comp?.name || null,
+                formula: j?.chem_comp?.formula || null,
+                smiles: d.SMILES_stereo || d.SMILES || null,
+                inchikey: d.InChIKey || null,
+                drugbank: db?.resource_accession_code || null,
+            };
+        })();
+        _ligandCache.set(key, p);
+        return p;
+    }
+
+    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo };
 })();

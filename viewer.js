@@ -6,6 +6,7 @@ const StructureViewer = {
     viewer: null,
     hoverCb: null,
     clickCb: null,
+    ligandClickCb: null,
     dblClickCb: null,
     _selectedResi: null,
     currentPdbText: '',
@@ -595,6 +596,13 @@ const StructureViewer = {
         this.viewer.setClickable({}, true,
             (atom) => {
                 if (!atom?.resi) return;
+                // Ligand/cofactor (HETATM) — route to the ligand handler instead of treating it
+                // as a protein residue (which would map it to a bogus UniProt position and show
+                // variants / AlphaMissense / hotspot flags for it).
+                if (atom.hetflag && atom.resn !== 'HOH' && self.ligandClickCb) {
+                    self.ligandClickCb({ resn: atom.resn, resi: atom.resi, chain: atom.chain ?? null });
+                    return;
+                }
                 const uniResi = resolveUni(atom);
                 const d = map.get(uniResi);
                 if (self.clickCb) self.clickCb(d || { position: uniResi }, mode, atom.chain);
@@ -708,6 +716,76 @@ const StructureViewer = {
         }
         this.viewer.render();
 
+        return nearbyUni;
+    },
+
+    /**
+     * List the distinct ligand/cofactor instances (HETATM groups, excluding water) present in
+     * the loaded model. Returns [{ resn, resi, chain }] — one per (chain, resi).
+     */
+    enumerateLigands() {
+        const model = this.viewer?.getModel?.();
+        if (!model) return [];
+        const seen = new Map();
+        (model.selectedAtoms({ hetflag: true }) || []).forEach(a => {
+            if (a.resn === 'HOH' || a.resn === 'WAT') return;
+            const key = `${a.chain ?? ''}|${a.resi}`;
+            if (!seen.has(key)) seen.set(key, { resn: a.resn, resi: a.resi, chain: a.chain ?? null });
+        });
+        return [...seen.values()];
+    },
+
+    /**
+     * Focus a ligand: dim the cartoon, HIDE all other hetero groups, show the selected ligand as
+     * prominent licorice, draw its nearby protein residues as sticks, and zoom to it. Returns the
+     * set of nearby protein residues as UniProt positions (for the detail panel's "Nearby" list).
+     */
+    focusLigand(resn, resi, chain = null) {
+        if (!this.viewer) return new Set();
+        this.viewer.removeAllShapes();
+        this.viewer.removeAllLabels();
+        this.clearProximityLines();
+        this._selectedResi = null;
+        const model = this.viewer.getModel();
+        const ligSel = { resn, resi, ...(chain != null ? { chain } : {}) };
+        const ligAtoms = (model.selectedAtoms(ligSel) || []).filter(a => a.hetflag);
+        if (!ligAtoms.length) return new Set();
+
+        // Nearby PROTEIN residues within 5 Å of any ligand atom.
+        const CONTACT2 = 25; // 5 Å squared
+        const nearby = new Map(); // chain|resi → {chain, resi}
+        (model.selectedAtoms({}) || []).forEach(a => {
+            if (a.hetflag) return; // protein atoms only
+            for (const la of ligAtoms) {
+                const dx = a.x - la.x, dy = a.y - la.y, dz = a.z - la.z;
+                if (dx * dx + dy * dy + dz * dz < CONTACT2) { nearby.set(`${a.chain ?? ''}|${a.resi}`, { chain: a.chain ?? null, resi: a.resi }); break; }
+            }
+        });
+
+        // Dim cartoon; setStyle({}, {}) wipes prior styles so OTHER ligands disappear (they get no
+        // style here), satisfying "selecting a ligand hides the others".
+        this._inFocusMode = true;
+        this.viewer.setStyle({}, {});
+        const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
+        this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
+        // Selected ligand — prominent ball-and-stick.
+        this.viewer.addStyle(ligSel, { stick: { radius: 0.25, colorscheme: 'Jmol' }, sphere: { radius: 0.45, colorscheme: 'Jmol' } });
+        // Nearby protein residues — thin sticks (same look as residue focus).
+        nearby.forEach(({ chain: nc, resi: nr }) => {
+            this.viewer.addStyle(nc != null ? { chain: nc, resi: nr } : { resi: nr }, { stick: { radius: 0.15, colorscheme: 'Jmol', opacity: 0.8 } });
+        });
+
+        // Map nearby protein residues to UniProt positions and keep hover/click alive.
+        const reverseCache = new Map();
+        const toUni = (c, r) => { if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c)); return reverseCache.get(c).get(r) || r; };
+        const nearbyUni = new Set([...nearby.values()].map(n => toUni(n.chain, n.resi)));
+        const focusHoverMap = new Map();
+        nearby.forEach(({ chain: nc, resi: nr }) => { const u = toUni(nc, nr); focusHoverMap.set(u, { position: u }); });
+        this._activeSpheres = new Map();
+        this._bindHover(focusHoverMap, 'focus');
+
+        this.viewer.zoomTo(ligSel, 600);
+        this.viewer.render();
         return nearbyUni;
     },
 

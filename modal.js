@@ -117,6 +117,7 @@ const UFVModal = (() => {
                         <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button></div></div>
                         <div id="ufv-ptm-list"></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-sites-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-ptm-all">All</button><button class="ufv-section-btn" id="ufv-sites-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-ptm-body"><div id="ufv-sites-ptm-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-ligands-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-ptm-body"><div id="ufv-ligands-ptm-list"></div></div></div>
                     </div>
                     <div id="ufv-var-panel" class="ufv-filter-scroll ufv-hidden">
                         <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button></div></div><div id="ufv-dis-list"></div></div>
@@ -124,6 +125,7 @@ const UFVModal = (() => {
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-var"><div class="ufv-collapsible-hdr" id="ufv-ligands-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-var-body"><div id="ufv-ligands-var-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
                     <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show/hide annotation spheres"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
@@ -242,6 +244,8 @@ const UFVModal = (() => {
         byId('ufv-sites-var-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-sites-var-body', 'ufv-sites-var-toggle'); });
         byId('ufv-sites-var-all').addEventListener('click', () => sitesSetAll(true));
         byId('ufv-sites-var-none').addEventListener('click', () => sitesSetAll(false));
+        byId('ufv-ligands-ptm-toggle').addEventListener('click', () => toggleCollapsible('ufv-ligands-ptm-body', 'ufv-ligands-ptm-toggle'));
+        byId('ufv-ligands-var-toggle').addEventListener('click', () => toggleCollapsible('ufv-ligands-var-body', 'ufv-ligands-var-toggle'));
         byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
         // Header sphere-visibility toggle: controls whether other annotation spheres stay visible
         // while zoomed into a residue.  Always available (PTM / variant / disease views).
@@ -448,9 +452,14 @@ const UFVModal = (() => {
         if (_loadSeq !== mySeq) return; // a newer load owns the viewer now
         StructureViewer.hoverCb = onHover;
         StructureViewer.clickCb = onClick;
+        StructureViewer.ligandClickCb = onLigandClick;
+        // Enumerate ligands present in the loaded model (AlphaFill cofactors etc.).
+        s.ligands = StructureViewer.enumerateLigands ? StructureViewer.enumerateLigands() : [];
+        buildLigandFilters();
         StructureViewer.dblClickCb = () => {
             const s = UFVState.state;
             s.selectedResidue = null;
+            s.selectedLigand = null;
             s.nearbyResidues = new Set();
             StructureViewer._selectedResi = null;
             byId('ufv-details').classList.remove('show');
@@ -552,6 +561,7 @@ const UFVModal = (() => {
         const s = UFVState.state;
         s.selectedResidue = null;
         s.selectedChain = null;
+        s.selectedLigand = null;
         s.nearbyResidues = new Set();
         byId('ufv-details')?.classList.remove('show');
         _proximityLinesOn = false;
@@ -643,10 +653,12 @@ const UFVModal = (() => {
             const ptmNote = r.ptmCount ? `, ${r.ptmCount} PTM site${r.ptmCount === 1 ? '' : 's'}` : '';
             byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${ptmNote}${rangeNote}`;
         }
-        // Preserve an active residue focus across coloring changes: re-apply the new cartoon
-        // coloring (done above) and then re-enter focus on the selected residue instead of
-        // dropping back to the full sphere view.
-        if (s.selectedResidue != null && StructureViewer.currentStructure) {
+        // Preserve an active focus across coloring changes: re-enter focus on the selected
+        // ligand or residue instead of dropping back to the full sphere view.
+        if (s.selectedLigand && StructureViewer.currentStructure) {
+            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain);
+            if (nb) s.nearbyResidues = nb;
+        } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
             const nearby = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() });
             if (nearby) s.nearbyResidues = nearby;
         }
@@ -790,6 +802,27 @@ const UFVModal = (() => {
         UFVState.state.sites.forEach(site => site.visible = select);
         buildSiteFilters(); // rebuild both lists so their checkboxes reflect the new state
         applySiteChange();
+    }
+
+    // Ligands present in the loaded model (AlphaFill cofactors etc.). A collapsible list in both
+    // panels; clicking an entry focuses that ligand (zoom, nearby protein residues, others hidden)
+    // and opens its chemistry detail panel.
+    function buildLigandFilters() {
+        const s = UFVState.state;
+        [['ufv-ligands-section-ptm', 'ufv-ligands-ptm-list'], ['ufv-ligands-section-var', 'ufv-ligands-var-list']].forEach(([secId, listId]) => {
+            const section = byId(secId), list = byId(listId);
+            if (!section || !list) return;
+            list.textContent = '';
+            if (!s.ligands.length) { section.classList.add('ufv-hidden'); return; }
+            section.classList.remove('ufv-hidden');
+            s.ligands.forEach(lig => {
+                const item = document.createElement('button');
+                item.className = 'ufv-ligand-item';
+                item.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? lig.chain + ' ' : ''}${lig.resi}</span>`;
+                item.addEventListener('click', () => onLigandClick({ resn: lig.resn, resi: lig.resi, chain: lig.chain }));
+                list.appendChild(item);
+            });
+        });
     }
 
     function applySiteChange() {
@@ -1122,6 +1155,7 @@ const UFVModal = (() => {
         const pos = Number(data.position);
         s.selectedResidue = pos;
         s.selectedChain = chain;
+        s.selectedLigand = null; // clicking a residue clears any ligand focus
         const annotations = buildAnnotationMap();
         s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }, { showOtherSpheres: _showOtherSpheres }) || new Set([pos]);
 
@@ -1353,6 +1387,87 @@ const UFVModal = (() => {
         byId('ufv-details').classList.add('show');
         renderLegend(getColorMode());
         renderSequence();
+    }
+
+    // Clicking a ligand/cofactor (e.g. an AlphaFill-transplanted molecule) — NOT a protein
+    // residue: no hotspot/variant/AlphaMissense info applies. Focus it (zoom, nearby protein
+    // residues as sticks, other ligands hidden) and show a chemistry-only detail panel.
+    function onLigandClick(lig) {
+        const s = UFVState.state;
+        s.selectedResidue = null;
+        s.selectedChain = null;
+        s.selectedLigand = lig;
+        s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain) || new Set();
+        renderLigandPanel(lig);
+        renderSequence();
+    }
+
+    function copyChip(value) {
+        const chip = document.createElement('button');
+        chip.className = 'ufv-copy-chip';
+        chip.title = 'Copy';
+        chip.textContent = value;
+        chip.addEventListener('click', async () => {
+            const ok = await UFVExport.copyText(value);
+            if (ok) { const prev = chip.textContent; chip.textContent = 'Copied'; chip.classList.add('copied'); setTimeout(() => { chip.textContent = prev; chip.classList.remove('copied'); }, 1000); }
+        });
+        return chip;
+    }
+
+    function renderLigandPanel(lig) {
+        const s = UFVState.state;
+        const body = byId('ufv-details-body');
+        body.textContent = '';
+        // Title: the CCD code, no algorithm bulbs (they don't apply to a ligand).
+        const titleEl = byId('ufv-details-title');
+        titleEl.textContent = lig.resn;
+
+        // CCD | Nearby grid.
+        const topGrid = document.createElement('div');
+        topGrid.className = 'ufv-detail-grid';
+        topGrid.innerHTML =
+            `<div class="ufv-detail-cell"><span class="ufv-detail-lbl">Ligand</span><span class="ufv-detail-val">${_esc(lig.resn)} (CCD)</span></div>` +
+            `<div class="ufv-detail-cell"><span class="ufv-detail-lbl">Nearby</span><span class="ufv-detail-val ufv-nearby-val">${Array.from(s.nearbyResidues).sort((a, b) => a - b).join(', ') || '—'}</span></div>`;
+        body.appendChild(topGrid);
+
+        // Chemistry rows — populated asynchronously from the RCSB chemical component dictionary.
+        const info = document.createElement('div');
+        info.className = 'ufv-ligand-info';
+        info.innerHTML = `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Loading chemistry…</span></div>`;
+        body.appendChild(info);
+
+        byId('ufv-details').classList.add('show');
+        renderLegend(getColorMode());
+
+        UFVApi.getLigandInfo(lig.resn).then(meta => {
+            // Bail if the user moved on to a different ligand/residue meanwhile.
+            if (UFVState.state.selectedLigand !== lig) return;
+            info.textContent = '';
+            const addRow = (label, valueNode) => {
+                const r = document.createElement('div');
+                r.className = 'ufv-detail-row';
+                const l = document.createElement('span'); l.className = 'ufv-detail-lbl'; l.textContent = label;
+                const v = document.createElement('span'); v.className = 'ufv-detail-val';
+                if (typeof valueNode === 'string') v.textContent = valueNode; else v.appendChild(valueNode);
+                r.append(l, v); info.appendChild(r);
+            };
+            if (!meta || (!meta.name && !meta.smiles && !meta.inchikey)) {
+                addRow('Name', `${lig.resn} (no chemical record found)`);
+                return;
+            }
+            if (meta.name) addRow('Name', meta.name);
+            if (meta.formula) addRow('Formula', meta.formula);
+            if (meta.smiles) addRow('SMILES', copyChip(meta.smiles));
+            if (meta.inchikey) addRow('InChIKey', copyChip(meta.inchikey));
+            if (meta.drugbank) {
+                const a = document.createElement('a');
+                a.href = `https://go.drugbank.com/drugs/${meta.drugbank}`;
+                a.target = '_blank'; a.rel = 'noopener noreferrer';
+                a.className = 'ufv-ligand-link';
+                a.textContent = meta.drugbank;
+                addRow('DrugBank', a);
+            }
+        });
     }
 
     function _esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }

@@ -37,6 +37,8 @@ const UFVState = (() => {
         displayedPositions: [],
         selectedResidue: null,
         selectedChain: null,
+        selectedLigand: null, // {resn, resi, chain} when a ligand (not a residue) is focused
+        ligands: [],          // ligand instances present in the loaded model (AlphaFill etc.)
         nearbyResidues: new Set(),
         amMap: null,
         settings: { ...defaults },
@@ -67,6 +69,8 @@ const UFVState = (() => {
         state.displayedPositions = [];
         state.selectedResidue = null;
         state.selectedChain = null;
+        state.selectedLigand = null;
+        state.ligands = [];
         state.nearbyResidues = new Set();
         state.amMap = null;
         state.analysis = { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set(), prism: null, ptmVariantProximity: null };
