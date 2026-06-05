@@ -1235,7 +1235,13 @@ const UFVModal = (() => {
         posCell.innerHTML = `<span class="ufv-detail-lbl">Position</span><span class="ufv-detail-val">${pos}</span>`;
         const nearCell = document.createElement('div');
         nearCell.className = 'ufv-detail-cell';
-        nearCell.innerHTML = `<span class="ufv-detail-lbl">Nearby</span><span class="ufv-detail-val ufv-nearby-val">${Array.from(s.nearbyResidues).sort((a, b) => a - b).join(', ')}</span>`;
+        // Colour each nearby residue number by its annotation (variant consequence / PTM) so a
+        // nearby disease variant stands out — same colour map used for the focus sticks.
+        const nearbyHtml = Array.from(s.nearbyResidues).sort((a, b) => a - b).map(p => {
+            const c = annotations.get(p)?.color;
+            return c ? `<span style="color:${c}">${p}</span>` : `${p}`;
+        }).join(', ');
+        nearCell.innerHTML = `<span class="ufv-detail-lbl">Nearby</span><span class="ufv-detail-val ufv-nearby-val">${nearbyHtml}</span>`;
         topGrid.append(posCell, nearCell);
         body.appendChild(topGrid);
 
@@ -1291,7 +1297,27 @@ const UFVModal = (() => {
         }
 
         // ── PTM–Variant Proximity ────────────────────────────────────────────────
-        const proximity = s.analysis.ptmVariantProximity?.get(pos);
+        // Show the clicked residue's own PTM proximity, or — when clicking a residue that is NOT
+        // a PTM but lies within 12 Å of one — the nearest such PTM's proximity (so clicking near
+        // a PTM still surfaces it).
+        const proxMap = s.analysis.ptmVariantProximity;
+        let proximityPos = pos, proximityNote = null;
+        if (proxMap && !proxMap.has(pos)) {
+            const caByUni = new Map();
+            (StructureViewer.residueGeometry?.() || []).forEach(g => { if (g.uniPos != null && !caByUni.has(g.uniPos)) caByUni.set(g.uniPos, g.ca); });
+            const rCa = caByUni.get(pos);
+            if (rCa) {
+                let bestD = Infinity, best = null;
+                proxMap.forEach((_v, ptmPos) => {
+                    const ca = caByUni.get(ptmPos); if (!ca) return;
+                    const dx = ca.x - rCa.x, dy = ca.y - rCa.y, dz = ca.z - rCa.z;
+                    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    if (d <= 12 && d < bestD) { bestD = d; best = ptmPos; }
+                });
+                if (best != null) { proximityPos = best; proximityNote = `Near PTM at residue ${best} (${bestD.toFixed(1)} Å away)`; }
+            }
+        }
+        const proximity = proxMap?.get(proximityPos);
         if (proximity) {
             const tierFg = { 1: '#ef5350', 2: '#ff7043', 3: '#ffa726' };
             const tierLabel = ['', 'Same residue', 'Pathogenic within 8 Å', 'Within 12 Å'];
@@ -1305,8 +1331,8 @@ const UFVModal = (() => {
             const addPair = (variantPos, tier) => { if (!linePairs.find(p => p.variantPos === variantPos)) linePairs.push({ variantPos, tier }); };
             proximity.tier1.forEach(v => addPair(v.position, 1));
             proximity.tier2.forEach(({ variant }) => addPair(variant.position, 2));
-            _lastProximityArgs = { ptmPos: pos, pairs: linePairs, geometry: geo };
-            if (_proximityLinesOn && linePairs.length) StructureViewer.showProximityLines(pos, linePairs, geo);
+            _lastProximityArgs = { ptmPos: proximityPos, pairs: linePairs, geometry: geo };
+            if (_proximityLinesOn && linePairs.length) StructureViewer.showProximityLines(proximityPos, linePairs, geo);
 
             const { lbl: linesToggleLbl, chk: linesChk } = makeToggle(_proximityLinesOn, 'Show/hide distances');
             linesChk.addEventListener('change', () => {
@@ -1331,7 +1357,11 @@ const UFVModal = (() => {
             const proxBody = document.createElement('div');
             proxBody.className = 'ufv-am-body';
 
-            // (sphere-visibility toggle lives in the panel header, applies to all residues)
+            // When showing a nearby PTM's proximity (clicked residue isn't the PTM), say which.
+            if (proximityNote) {
+                proxBody.insertAdjacentHTML('beforeend',
+                    `<div class="ufv-detail-row"><span class="ufv-detail-val" style="color:var(--ufv-text-secondary)">${proximityNote}</span></div>`);
+            }
 
             // Summary rows.
             proxBody.insertAdjacentHTML('beforeend',
