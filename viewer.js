@@ -328,8 +328,11 @@ const StructureViewer = {
      * would hide them. setStyle() in _applyModeStyles replaces all per-atom styles, so this must
      * be called AFTER it on every (re)style.
      */
+    showLigands: true, // global "show all ligands" toggle (Ligands list All/None)
+
     _drawLigands() {
         const st = this.currentStructure;
+        if (this.showLigands === false) return;
         if (!st || !/alphafill/i.test(st.provider || st.label || '')) return;
         this.viewer.addStyle({ hetflag: true }, { stick: { radius: 0.18, colorscheme: 'Jmol' }, sphere: { radius: 0.35, colorscheme: 'Jmol' } });
     },

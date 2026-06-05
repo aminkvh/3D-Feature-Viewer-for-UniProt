@@ -569,7 +569,10 @@ const UFVApi = (() => {
             const category = String(sm.model_category || '').toUpperCase();
             const provider = sm.provider || 'Computed model';
             if (category.includes('EXPERIMENTAL')) continue;   // covered by best_structures
-            if (/alphafold/i.test(provider)) continue;          // covered by our AlphaFold model
+            // Include AlphaFold DB models EXCEPT the canonical F1 we already load as the primary
+            // model — this brings in non-canonical AlphaFold models (e.g. multi-fragment models
+            // for very long proteins) that would otherwise be hidden.
+            if (/alphafold/i.test(provider) && String(sm.model_identifier || '').toUpperCase() === `AF-${String(id).toUpperCase()}-F1`) continue;
             const fmt = String(sm.model_format || '').toUpperCase();
             if (fmt !== 'PDB' && fmt !== 'MMCIF') continue;     // skip BCIF / unknown
             let host;
