@@ -163,6 +163,26 @@ const UFVExport = (() => {
             return [info ? info.q.toFixed(4) : '', info ? info.cat : ''];
         };
 
+        // PTM–Variant Proximity columns (structure-dependent, PTM positions only).
+        // For residue-centric CSV, nearby variants are serialised as a semicolon-delimited list.
+        const proxMap = analysis.ptmVariantProximity instanceof Map ? analysis.ptmVariantProximity : null;
+        const proxCols = pos => {
+            const p = proxMap?.get(pos);
+            if (!p) return ['', '', '', '', ''];
+            const allVars = [
+                ...p.tier1.map(v => `${v.wildType||''}${v.position}${v.mutant||''}(T1)`),
+                ...p.tier2.map(({variant:v, dist}) => `${v.wildType||''}${v.position}${v.mutant||''}(T2,${dist.toFixed(1)}Å)`),
+                ...p.tier3.map(({variant:v, dist}) => `${v.wildType||''}${v.position}${v.mutant||''}(T3,${dist.toFixed(1)}Å)`),
+            ];
+            return [
+                p.tier ?? '',
+                p.nearestVariant ?? '',
+                p.nearestDist !== null ? p.nearestDist.toFixed(1) : '',
+                p.nearbyCount8A,
+                p.pathCount8A,
+            ];
+        };
+
         // Build per-position lookups
         const ptmByPos = new Map(); // pos → Set<category>
         ptms.forEach(p => {
@@ -181,6 +201,7 @@ const UFVExport = (() => {
         const safe = s => s.replace(/[^A-Za-z0-9_]/g, '_').replace(/_+/g, '_');
         // Single-chain: original layout (pdb_residue before the one-hot columns; tiers after
         // am_avg_score).  Multi-chain: structure-dependent columns repeated per chain at the end.
+        const proxHeaders = ['ptm_variant_tier', 'nearest_variant_to_ptm', 'ptm_variant_distance_A', 'nearby_variant_count_8A', 'nearby_pathogenic_count_8A'];
         const headers = chains
             ? [
                 'position', 'aa',
@@ -192,6 +213,7 @@ const UFVExport = (() => {
                 'residue_burden',
                 'constraint_pocket_q',
                 'constraint_pocket_class',
+                ...proxHeaders,
                 ...chains.flatMap(c => [`pdb_residue_${c}`, `hotspot_tier_${c}`, `contact_hub_tier_${c}`]),
             ]
             : [
@@ -206,6 +228,7 @@ const UFVExport = (() => {
                 'residue_burden',
                 'constraint_pocket_q',
                 'constraint_pocket_class',
+                ...proxHeaders,
             ];
         const rows = [headers.join(',')];
         sequence.split('').forEach((aa, i) => {
@@ -228,18 +251,19 @@ const UFVExport = (() => {
             }
             const burden = analysis.residueBurden instanceof Set && analysis.residueBurden.has(pos) ? 1 : 0;
             const [pocketQ, pocketClass] = pocketCols(pos);
+            const proxVals = proxCols(pos);
             if (chains) {
                 const structVals = chains.flatMap(c => [
                     uniprotToPdbResiForChain(pos, structure, c) ?? '',
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals].join(','));
             }
         });
         return rows.join('\n');

@@ -38,7 +38,7 @@ const UFVState = (() => {
         nearbyResidues: new Set(),
         amMap: null,
         settings: { ...defaults },
-        analysis: { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set(), prism: null },
+        analysis: { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set(), prism: null, ptmVariantProximity: null },
     };
 
     function resetForProtein(id) {
@@ -65,7 +65,7 @@ const UFVState = (() => {
         state.selectedChain = null;
         state.nearbyResidues = new Set();
         state.amMap = null;
-        state.analysis = { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set() };
+        state.analysis = { hotspots: null, hotspotsByChain: null, hotspotMethod: null, distantContacts: null, distantContactsByChain: null, alphaMissense: new Map(), residueBurden: new Set(), prism: null, ptmVariantProximity: null };
     }
 
     async function loadSettings() {

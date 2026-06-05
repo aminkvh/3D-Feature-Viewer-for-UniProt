@@ -1240,6 +1240,8 @@
     font-weight: 600;
     margin: 0;
     color: var(--ufv-text-primary);
+    display: flex;
+    align-items: center;
 }
 
 .ufv-details-close {
@@ -1491,3 +1493,75 @@
 
 /* --- Hidden utility --- */
 .ufv-hidden { display: none !important; }
+
+/* ── Algorithm status bulbs ─────────────────────────────────────────────── */
+.ufv-bulb-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.ufv-bulb {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ufv-border);
+    border: 1.5px solid var(--ufv-border);
+    display: inline-block;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+.ufv-bulb.ufv-bulb-on {
+    background: var(--bulb-color, #888);
+    border-color: var(--bulb-color, #888);
+    box-shadow: 0 0 5px 1px var(--bulb-color, #888);
+}
+
+/* ── PTM–Variant Proximity section ──────────────────────────────────────── */
+.ufv-prox-tier-hdr {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 6px;
+    border-radius: 3px;
+    margin: 6px 0 2px;
+}
+.ufv-prox-var-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 4px;
+    font-size: 11.5px;
+    flex-wrap: wrap;
+}
+.ufv-prox-dist {
+    color: var(--ufv-text-secondary);
+    font-size: 10.5px;
+    white-space: nowrap;
+}
+.ufv-prox-clin {
+    color: var(--ufv-text-secondary);
+    font-size: 10.5px;
+    font-style: italic;
+}
+.ufv-prox-lines-btn {
+    display: block;
+    width: 100%;
+    margin: 4px 0 8px;
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid var(--ufv-border);
+    background: transparent;
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s, color 0.12s;
+}
+.ufv-prox-lines-btn:hover { background: var(--ufv-hover); }
+.ufv-prox-lines-btn.active {
+    background: #00897b22;
+    color: #00897b;
+    border-color: #00897b66;
+}

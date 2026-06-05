@@ -608,5 +608,95 @@ const UFVAnalysis = (() => {
         return flagged;
     }
 
-    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden };
+    /**
+     * PTM–Variant Proximity analysis.
+     * For each PTM site that is modelled in the current structure, finds variant-containing
+     * residues within 12 Å Cα distance and assigns a tier:
+     *   Tier 1 — variant on the same residue as the PTM
+     *   Tier 2 — pathogenic/deleterious variant within 8 Å
+     *   Tier 3 — any variant within 8–12 Å (or same residue, non-pathogenic)
+     *
+     * Returns Map<ptmUniPos, {
+     *   tier:          number (1|2|3|null),
+     *   tier1:         [{variant}],
+     *   tier2:         [{variant, dist}],
+     *   tier3:         [{variant, dist}],
+     *   nearbyCount8A: number,
+     *   pathCount8A:   number,
+     *   nearestDist:   number|null,
+     *   nearestVariant: string|null,
+     * }>
+     *
+     * geometry: array from StructureViewer.residueGeometry() — {uniPos, chain, resi, ca:{x,y,z}}
+     */
+    function computePtmVariantProximity(ptms, variants, geometry) {
+        // Build uniPos → Cα position map (first modelled copy per UniProt position)
+        const caByUni = new Map();
+        for (const g of geometry) {
+            if (g.uniPos != null && !caByUni.has(g.uniPos)) caByUni.set(g.uniPos, g.ca);
+        }
+
+        // Index variants by position for fast lookup
+        const varsByPos = new Map();
+        variants.forEach(v => {
+            if (!varsByPos.has(v.position)) varsByPos.set(v.position, []);
+            varsByPos.get(v.position).push(v);
+        });
+
+        const isPathogenic = v => /pathogenic|deleterious/i.test(v.consequence || v.clinVarSignificance || '');
+
+        const result = new Map();
+        const seenPtmPos = new Set();
+
+        ptms.forEach(ptm => {
+            const ptmPos = ptm.position;
+            if (seenPtmPos.has(ptmPos)) return;
+            seenPtmPos.add(ptmPos);
+            const ptmCa = caByUni.get(ptmPos);
+            if (!ptmCa) return; // not modelled in this structure
+
+            const tier1 = [], tier2 = [], tier3 = [];
+            let nearestDist = Infinity, nearestVariant = null;
+
+            // Tier 1 — same residue
+            (varsByPos.get(ptmPos) || []).forEach(v => tier1.push(v));
+
+            // Tiers 2 & 3 — spatial neighbours
+            caByUni.forEach((ca, uniPos) => {
+                if (uniPos === ptmPos) return;
+                const dx = ca.x - ptmCa.x, dy = ca.y - ptmCa.y, dz = ca.z - ptmCa.z;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (dist > 12) return;
+                const varsHere = varsByPos.get(uniPos) || [];
+                if (!varsHere.length) return;
+                varsHere.forEach(v => {
+                    const label = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
+                    if (dist <= 8) {
+                        (isPathogenic(v) ? tier2 : tier3).push({ variant: v, dist });
+                    } else {
+                        tier3.push({ variant: v, dist });
+                    }
+                    if (dist < nearestDist) { nearestDist = dist; nearestVariant = label; }
+                });
+            });
+            // Nearest for tier1 is 0 Å
+            if (tier1.length && nearestDist > 0) { nearestDist = 0; nearestVariant = `${tier1[0].wildType || ''}${ptmPos}${tier1[0].mutant || ''}`; }
+
+            const pathCount8A = tier2.length;
+            const nearbyCount8A = tier1.length + tier2.length + tier3.filter(t => t.dist !== undefined && t.dist <= 8).length;
+            const tier = tier1.length ? 1 : tier2.length ? 2 : tier3.length ? 3 : null;
+
+            if (tier !== null) {
+                result.set(ptmPos, {
+                    tier, tier1, tier2, tier3,
+                    nearbyCount8A, pathCount8A,
+                    nearestDist: nearestDist === Infinity ? null : nearestDist,
+                    nearestVariant,
+                });
+            }
+        });
+        return result;
+    }
+
+    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity };
 })();

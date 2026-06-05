@@ -769,9 +769,45 @@ const StructureViewer = {
         } catch (_) { /* viewer may not be initialised yet */ }
     },
 
+    _proximityShapes: [],  // shape handles for PTM–variant dashed lines
+
+    /**
+     * Draw dashed lines from a PTM Cα to the Cα of each nearby variant residue.
+     * geometry: from residueGeometry() — {uniPos, ca:{x,y,z}}
+     * pairs: [{variantPos, dist, tier}] — what to draw lines to
+     * tierColors: {1:'#...', 2:'#...', 3:'#...'}
+     */
+    showProximityLines(ptmPos, pairs, geometry) {
+        this.clearProximityLines();
+        if (!this.viewer || !pairs.length || !geometry.length) return;
+        const caByUni = new Map();
+        geometry.forEach(g => { if (g.uniPos != null && !caByUni.has(g.uniPos)) caByUni.set(g.uniPos, g.ca); });
+        const ptmCa = caByUni.get(ptmPos);
+        if (!ptmCa) return;
+        const tierColors = { 1: '#ef5350', 2: '#ff7043', 3: '#ffa726' };
+        pairs.forEach(({ variantPos, tier }) => {
+            const ca = caByUni.get(variantPos);
+            if (!ca) return;
+            const color = tierColors[tier] || '#ffa726';
+            const shape = this.viewer.addLine({
+                start: { x: ptmCa.x, y: ptmCa.y, z: ptmCa.z },
+                end: { x: ca.x, y: ca.y, z: ca.z },
+                color, dashed: true, dashLength: 0.4, gapLength: 0.3, lineWidth: 2,
+            });
+            this._proximityShapes.push(shape);
+        });
+        this.viewer.render();
+    },
+
+    clearProximityLines() {
+        this._proximityShapes.forEach(s => { try { this.viewer?.removeShape(s); } catch (_) {} });
+        this._proximityShapes = [];
+    },
+
     resetView(animated = false) {
         this._selectedResi = null;
         this._inFocusMode = false;
+        this.clearProximityLines();
         this.viewer?.removeAllShapes();
         this.viewer?.removeAllLabels();
         this.viewer?.zoomTo({}, animated ? 600 : 0);
