@@ -252,7 +252,9 @@ const UFVModal = (() => {
         byId('ufv-sphere-chk').addEventListener('change', e => {
             _showOtherSpheres = e.target.checked;
             const s = UFVState.state;
-            if (s.selectedResidue != null && StructureViewer.currentStructure) {
+            if (s.selectedLigand && StructureViewer.currentStructure) {
+                s.nearbyResidues = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
+            } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
                 // rezoom:false — keep the current camera so toggling spheres doesn't zoom.
                 s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
                 // focusResidue clears shapes — re-draw proximity lines if they were on.
@@ -656,7 +658,7 @@ const UFVModal = (() => {
         // Preserve an active focus across coloring changes: re-enter focus on the selected
         // ligand or residue instead of dropping back to the full sphere view.
         if (s.selectedLigand && StructureViewer.currentStructure) {
-            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain);
+            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres });
             if (nb) s.nearbyResidues = nb;
         } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
             const nearby = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() });
@@ -1397,7 +1399,7 @@ const UFVModal = (() => {
         s.selectedResidue = null;
         s.selectedChain = null;
         s.selectedLigand = lig;
-        s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain) || new Set();
+        s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain, { showOtherSpheres: _showOtherSpheres }) || new Set();
         renderLigandPanel(lig);
         renderSequence();
     }
@@ -1412,6 +1414,69 @@ const UFVModal = (() => {
             if (ok) { const prev = chip.textContent; chip.textContent = 'Copied'; chip.classList.add('copied'); setTimeout(() => { chip.textContent = prev; chip.classList.remove('copied'); }, 1000); }
         });
         return chip;
+    }
+
+    // Lightweight, library-free structural fingerprint: the set of 2- and 3-character n-grams of
+    // the canonical SMILES. Crude (it's a SMILES-string similarity, not a true circular/ECFP
+    // fingerprint) but dependency-free and fine for ranking the handful of ligands in one model.
+    function ligandFingerprint(smiles) {
+        const s = (smiles || '').replace(/\s+/g, '');
+        const fp = new Map(); // n-gram → count (multiset, so e.g. ATP's extra phosphate counts)
+        for (const n of [2, 3]) for (let i = 0; i + n <= s.length; i++) {
+            const g = n + s.slice(i, i + n);
+            fp.set(g, (fp.get(g) || 0) + 1);
+        }
+        return fp;
+    }
+    function tanimoto(a, b) {
+        if (!a.size || !b.size) return 0;
+        let inter = 0, union = 0;
+        new Set([...a.keys(), ...b.keys()]).forEach(k => {
+            const ca = a.get(k) || 0, cb = b.get(k) || 0;
+            inter += Math.min(ca, cb); union += Math.max(ca, cb);
+        });
+        return union ? inter / union : 0;
+    }
+
+    // Rank the OTHER ligands loaded in the model by Tanimoto similarity to the focused ligand and
+    // show them as a collapsible 3-column grid (like AlphaMissense); clicking one focuses it.
+    async function renderSimilarLigands(lig, focusSmiles, sectionEl) {
+        const s = UFVState.state;
+        const others = new Map(); // CCD → representative instance
+        s.ligands.forEach(l => { if (l.resn !== lig.resn && !others.has(l.resn)) others.set(l.resn, l); });
+        if (!others.size || !focusSmiles) { sectionEl.classList.add('ufv-hidden'); return; }
+        const focusFp = ligandFingerprint(focusSmiles);
+        const ranked = (await Promise.all([...others.values()].map(async inst => {
+            const m = await UFVApi.getLigandInfo(inst.resn);
+            return { inst, score: tanimoto(focusFp, ligandFingerprint(m?.smiles)) };
+        }))).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
+        if (UFVState.state.selectedLigand !== lig) return;       // user moved on
+        if (!ranked.length) { sectionEl.classList.add('ufv-hidden'); return; }
+
+        sectionEl.className = 'ufv-am-section';
+        const toggle = document.createElement('button');
+        toggle.className = 'ufv-am-toggle';
+        toggle.innerHTML = `<span class="ufv-am-hdr-left">Similar ligands</span><span class="ufv-am-hdr-right"><span class="ufv-am-ratio">${ranked.length}</span><span class="ufv-am-arrow">▾</span></span>`;
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'ufv-am-body show';
+        const grid = document.createElement('div');
+        grid.className = 'ufv-am-grid';
+        ranked.forEach(({ inst, score }) => {
+            const cell = document.createElement('button');
+            cell.className = 'ufv-am-cell ufv-sim-cell';
+            cell.title = `Tanimoto ${score.toFixed(2)} — click to focus`;
+            cell.innerHTML = `<span class="ufv-am-cell-mut" style="color:#fbc02d">${_esc(inst.resn)}</span><span class="ufv-am-cell-sc">${score.toFixed(2)}</span>`;
+            cell.addEventListener('click', () => onLigandClick({ resn: inst.resn, resi: inst.resi, chain: inst.chain }));
+            grid.appendChild(cell);
+        });
+        bodyEl.appendChild(grid);
+        toggle.addEventListener('click', () => {
+            const open = bodyEl.classList.toggle('show');
+            toggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
+        });
+        sectionEl.textContent = '';
+        toggle.querySelector('.ufv-am-arrow').textContent = '▴';
+        sectionEl.append(toggle, bodyEl);
     }
 
     function renderLigandPanel(lig) {
@@ -1436,6 +1501,10 @@ const UFVModal = (() => {
         info.innerHTML = `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Loading chemistry…</span></div>`;
         body.appendChild(info);
 
+        const simSection = document.createElement('div'); // populated async by renderSimilarLigands
+        simSection.className = 'ufv-am-section ufv-hidden';
+        body.appendChild(simSection);
+
         byId('ufv-details').classList.add('show');
         renderLegend(getColorMode());
 
@@ -1443,6 +1512,7 @@ const UFVModal = (() => {
             // Bail if the user moved on to a different ligand/residue meanwhile.
             if (UFVState.state.selectedLigand !== lig) return;
             info.textContent = '';
+            renderSimilarLigands(lig, meta?.smiles, simSection);
             const addRow = (label, valueNode) => {
                 const r = document.createElement('div');
                 r.className = 'ufv-detail-row';
@@ -1607,6 +1677,9 @@ const UFVModal = (() => {
         if (!s.analysis.prism && s.amMap?.size && StructureViewer.viewer) {
             try { await ensurePocketAnalysis(); } catch (_) {}
         }
+        // Per-residue ligand contacts (CCD codes within 5 Å) for the loaded structure.
+        s.analysis.ligandContacts = (s.ligands?.length && StructureViewer.ligandContactsByResidue)
+            ? StructureViewer.ligandContactsByResidue(5) : null;
         const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure());
         UFVExport.downloadText(`${s.uniprotId}_residue_annotations.csv`, text, 'text/csv');
     }

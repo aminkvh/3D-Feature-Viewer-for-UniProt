@@ -1537,6 +1537,10 @@
 .ufv-ligand-ccd { font-family: 'Courier New', monospace; font-weight: 700; color: #fbc02d; }
 .ufv-ligand-loc { font-size: 10.5px; color: var(--ufv-text-secondary); }
 
+/* Similar-ligand cells (clickable, reuse the AlphaMissense cell look) */
+.ufv-sim-cell { cursor: pointer; border: 1px solid transparent; }
+.ufv-sim-cell:hover { border-color: #fbc02d66; }
+
 /* --- Hidden utility --- */
 .ufv-hidden { display: none !important; }
 

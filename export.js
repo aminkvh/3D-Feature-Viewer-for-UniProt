@@ -165,6 +165,13 @@ const UFVExport = (() => {
 
         // PTM–Variant Proximity columns (structure-dependent, PTM positions only).
         // For residue-centric CSV, nearby variants are serialised as a semicolon-delimited list.
+        // Per-residue ligand contacts (CCD codes within 5 Å), structure-dependent.
+        const ligandContacts = analysis.ligandContacts instanceof Map ? analysis.ligandContacts : null;
+        const ligandCol = pos => {
+            const set = ligandContacts?.get(pos);
+            return set && set.size ? [...set].sort().join(';') : '';
+        };
+
         const proxMap = analysis.ptmVariantProximity instanceof Map ? analysis.ptmVariantProximity : null;
         const proxCols = pos => {
             const p = proxMap?.get(pos);
@@ -214,6 +221,7 @@ const UFVExport = (() => {
                 'constraint_pocket_q',
                 'constraint_pocket_class',
                 ...proxHeaders,
+                'nearby_ligands',
                 ...chains.flatMap(c => [`pdb_residue_${c}`, `hotspot_tier_${c}`, `contact_hub_tier_${c}`]),
             ]
             : [
@@ -229,6 +237,7 @@ const UFVExport = (() => {
                 'constraint_pocket_q',
                 'constraint_pocket_class',
                 ...proxHeaders,
+                'nearby_ligands',
             ];
         const rows = [headers.join(',')];
         sequence.split('').forEach((aa, i) => {
@@ -258,12 +267,12 @@ const UFVExport = (() => {
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos), ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos)].join(','));
             }
         });
         return rows.join('\n');

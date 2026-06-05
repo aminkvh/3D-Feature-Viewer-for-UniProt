@@ -736,16 +736,46 @@ const StructureViewer = {
     },
 
     /**
+     * Map each protein residue (UniProt position) to the set of ligand CCD codes whose atoms lie
+     * within maxDist Å of it. Used to add a "nearby_ligands" column to the CSV export.
+     */
+    ligandContactsByResidue(maxDist = 5) {
+        const model = this.viewer?.getModel?.();
+        if (!model) return new Map();
+        const ligAtoms = (model.selectedAtoms({ hetflag: true }) || []).filter(a => a.resn !== 'HOH' && a.resn !== 'WAT');
+        if (!ligAtoms.length) return new Map();
+        const d2 = maxDist * maxDist;
+        const reverseCache = new Map();
+        const toUni = (c, r) => { if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c)); return reverseCache.get(c).get(r); };
+        const out = new Map(); // uniPos → Set<CCD>
+        (model.selectedAtoms({}) || []).forEach(a => {
+            if (a.hetflag) return;
+            let uni, computed = false;
+            for (const la of ligAtoms) {
+                const dx = a.x - la.x, dy = a.y - la.y, dz = a.z - la.z;
+                if (dx * dx + dy * dy + dz * dz <= d2) {
+                    if (!computed) { uni = toUni(a.chain ?? null, a.resi); computed = true; }
+                    if (uni == null) break;
+                    if (!out.has(uni)) out.set(uni, new Set());
+                    out.get(uni).add(la.resn);
+                }
+            }
+        });
+        return out;
+    },
+
+    /**
      * Focus a ligand: dim the cartoon, HIDE all other hetero groups, show the selected ligand as
      * prominent licorice, draw its nearby protein residues as sticks, and zoom to it. Returns the
      * set of nearby protein residues as UniProt positions (for the detail panel's "Nearby" list).
      */
-    focusLigand(resn, resi, chain = null) {
+    focusLigand(resn, resi, chain = null, opts = {}) {
         if (!this.viewer) return new Set();
         this.viewer.removeAllShapes();
         this.viewer.removeAllLabels();
         this.clearProximityLines();
         this._selectedResi = null;
+        const prevActive = this._activeSpheres || new Map(); // PTM/variant/site spheres to optionally keep
         const model = this.viewer.getModel();
         const ligSel = { resn, resi, ...(chain != null ? { chain } : {}) };
         const ligAtoms = (model.selectedAtoms(ligSel) || []).filter(a => a.hetflag);
@@ -779,12 +809,22 @@ const StructureViewer = {
         const reverseCache = new Map();
         const toUni = (c, r) => { if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c)); return reverseCache.get(c).get(r) || r; };
         const nearbyUni = new Set([...nearby.values()].map(n => toUni(n.chain, n.resi)));
+
+        // Keep the other PTM/variant/site annotation spheres visible (toggleable), exactly like
+        // residue focus — so the header sphere toggle does something during ligand focus too.
+        if (opts.showOtherSpheres !== false) {
+            prevActive.forEach((color, uniPos) => {
+                if (nearbyUni.has(uniPos)) return;
+                this.allChainsAddStyle(uniPos, { sphere: { radius: 1.8, color, opacity: 0.92 } }, { atom: 'CA' });
+            });
+        }
+        this._activeSpheres = prevActive; // retain so toggling re-draws them
+
         const focusHoverMap = new Map();
         nearby.forEach(({ chain: nc, resi: nr }) => { const u = toUni(nc, nr); focusHoverMap.set(u, { position: u }); });
-        this._activeSpheres = new Map();
         this._bindHover(focusHoverMap, 'focus');
 
-        this.viewer.zoomTo(ligSel, 600);
+        if (opts.rezoom !== false) this.viewer.zoomTo(ligSel, 600);
         this.viewer.render();
         return nearbyUni;
     },
