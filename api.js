@@ -16,6 +16,14 @@ const UFVApi = (() => {
     const PDBe_RESIDUES = (pdb) => `https://www.ebi.ac.uk/pdbe/api/pdb/entry/residue_listing/${pdb.toLowerCase()}`;
     const PDBe_PDB = (pdb) => `https://www.ebi.ac.uk/pdbe/entry-files/download/pdb${pdb.toLowerCase()}.ent`;
     const PDBe_CIF = (pdb) => `https://www.ebi.ac.uk/pdbe/entry-files/download/${pdb.toLowerCase()}.cif`;
+    // 3D-Beacons (PDBe-KB) aggregates computed/predicted models (SWISS-MODEL, ModelArchive,
+    // AlphaFold, PED, …) for a UniProt accession alongside experimental structures.
+    const BEACONS_SUMMARY = (id) => `https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/${id}.json`;
+    // Hosts we will actually fetch a computed model file from (reputable model providers only).
+    const BEACON_ALLOWED_HOSTS = new Set([
+        'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
+        'www.modelarchive.org', 'modelarchive.org', 'proteinensemble.org', 'pdb-ihm.org',
+    ]);
     const RCSB_ENTRY_INSTANCES = (pdbId) =>
         'https://data.rcsb.org/graphql?query=' + encodeURIComponent(
             `{entry(entry_id:"${pdbId.toUpperCase()}"){polymer_entities{polymer_entity_instances{rcsb_polymer_entity_instance_container_identifiers{auth_asym_id}rcsb_polymer_instance_info{modeled_residue_count}}}}}`);
@@ -539,13 +547,73 @@ const UFVApi = (() => {
         return p;
     }
 
+    /**
+     * Computed / predicted models from the 3D-Beacons network (SWISS-MODEL, ModelArchive, PED,
+     * isoform models, …).  Experimental entries (already covered by PDBe best_structures) and
+     * AlphaFold DB (already loaded as our primary model) are skipped, as are formats the viewer
+     * can't parse (BCIF) and providers we don't allowlist.  Residue numbering for these models is
+     * assumed to follow UniProt positions (true for SWISS-MODEL / AlphaFold-derived models).
+     */
+    async function get3DBeaconsModels(id, sequenceLength) {
+        const data = await fetchOptionalJson(BEACONS_SUMMARY(id));
+        const list = data?.structures || [];
+        const seen = new Set();
+        const out = [];
+        for (const entry of list) {
+            const sm = entry?.summary || entry;
+            if (!sm?.model_url) continue;
+            const category = String(sm.model_category || '').toUpperCase();
+            const provider = sm.provider || 'Computed model';
+            if (category.includes('EXPERIMENTAL')) continue;   // covered by best_structures
+            if (/alphafold/i.test(provider)) continue;          // covered by our AlphaFold model
+            const fmt = String(sm.model_format || '').toUpperCase();
+            if (fmt !== 'PDB' && fmt !== 'MMCIF') continue;     // skip BCIF / unknown
+            let host;
+            try { host = new URL(sm.model_url).hostname; } catch (_) { continue; }
+            if (!BEACON_ALLOWED_HOSTS.has(host)) continue;
+            const mid = sm.model_identifier || sm.model_url;
+            if (seen.has(mid)) continue;
+            seen.add(mid);
+            const uStart = parseInt(sm.uniprot_start || 1, 10);
+            const uEnd = parseInt(sm.uniprot_end || sequenceLength || 0, 10);
+            const cov = sm.coverage != null
+                ? Math.round(sm.coverage * 1000) / 10
+                : (sequenceLength && uEnd ? Math.round(((uEnd - uStart + 1) / sequenceLength) * 1000) / 10 : null);
+            out.push({
+                id: `BCN-${mid}`,
+                label: provider,
+                source: 'Computed',
+                provider,
+                modelCategory: sm.model_category || '',
+                pdbId: null,
+                chainId: null,
+                url: sm.model_url,
+                cifUrl: fmt === 'MMCIF' ? sm.model_url : null,
+                format: fmt === 'MMCIF' ? 'mmcif' : 'pdb',
+                method: `${provider} model`,
+                resolution: sm.resolution || null,
+                coverage: cov,
+                rangeText: (uStart && uEnd) ? `${uStart}-${uEnd}` : (sequenceLength ? `1-${sequenceLength}` : ''),
+                mappedRanges: (uStart && uEnd) ? [{ uniprotStart: uStart, uniprotEnd: uEnd, pdbStart: uStart, pdbEnd: uEnd, chainId: null }] : [],
+                otherChains: false,
+                mappingStatus: `${provider} computed model — residue numbering assumed to follow UniProt positions.`,
+                modelPageUrl: sm.model_page_url || '',
+                confidence: sm.confidence_avg_local_score ?? null,
+            });
+        }
+        return out.slice(0, 25); // cap so the structure selector isn't flooded
+    }
+
     async function getStructures(id, sequenceLength) {
-        const [alphaFold, pdbs] = await Promise.all([
+        const [alphaFold, pdbs, beacons] = await Promise.all([
             getAlphaFoldStructure(id, sequenceLength),
             getExperimentalStructures(id, sequenceLength),
+            get3DBeaconsModels(id, sequenceLength),
         ]);
-        return [alphaFold, ...pdbs].filter(Boolean).sort((a, b) => {
-            if (a.source !== b.source) return a.source === 'AlphaFold' ? -1 : 1;
+        // Order: AlphaFold first, then experimental, then computed models; by coverage within group.
+        const rank = s => s.source === 'AlphaFold' ? 0 : s.source === 'Computed' ? 2 : 1;
+        return [alphaFold, ...pdbs, ...beacons].filter(Boolean).sort((a, b) => {
+            if (rank(a) !== rank(b)) return rank(a) - rank(b);
             return (b.coverage || 0) - (a.coverage || 0);
         });
     }

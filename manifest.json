@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "3D Feature Viewer for UniProt",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
   "permissions": ["storage"],
   "host_permissions": [
@@ -9,7 +9,10 @@
     "https://rest.uniprot.org/*",
     "https://www.ebi.ac.uk/*",
     "https://alphafold.ebi.ac.uk/*",
-    "https://data.rcsb.org/*"
+    "https://data.rcsb.org/*",
+    "https://files.rcsb.org/*",
+    "https://swissmodel.expasy.org/*",
+    "https://www.modelarchive.org/*"
   ],
   "content_scripts": [
     {

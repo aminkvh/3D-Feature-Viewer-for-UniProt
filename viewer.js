@@ -79,8 +79,11 @@ const StructureViewer = {
     },
 
     async loadStructure(pdbUrl, structure = null) {
-        // Validate URL — only allow HTTPS from trusted structure hosts.
-        const ALLOWED_HOSTS = ['alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org'];
+        // Validate URL — only allow HTTPS from trusted structure hosts (experimental + the
+        // computed-model providers surfaced via 3D-Beacons).
+        const ALLOWED_HOSTS = ['alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org',
+            'swissmodel.expasy.org', 'www.modelarchive.org', 'modelarchive.org',
+            'proteinensemble.org', 'pdb-ihm.org'];
         let parsed;
         try {
             parsed = new URL(pdbUrl);
@@ -111,7 +114,9 @@ const StructureViewer = {
             throw new Error(`PDB data too large: ${pdb.length} chars`);
         }
         this.currentPdbText = pdb;
-        this.currentFormat = pdbUrl.toLowerCase().endsWith('.cif') ? 'mmcif' : 'pdb';
+        // Prefer an explicit format from the structure record (computed models carry one); else
+        // infer from the URL. Use includes('.cif') so query strings on model URLs don't break it.
+        this.currentFormat = structure?.format || (pdbUrl.toLowerCase().includes('.cif') ? 'mmcif' : 'pdb');
         this.currentStructure = structure;
 
         this.viewer.removeAllModels();

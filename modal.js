@@ -493,6 +493,9 @@ const UFVModal = (() => {
 
     function stLabel(st) {
         if (!st || st.source === 'AlphaFold') return 'AlphaFold';
+        if (st.source === 'Computed') {
+            return `${st.provider}${st.coverage ? ` (model, ${st.coverage}%)` : ' (model)'}`;
+        }
         const chains = st.chainIds?.length > 1 ? st.chainIds.join(',') : (st.chainId || '?');
         const parts = [];
         if (st.method) parts.push(shortMethod(st.method));
@@ -1076,8 +1079,8 @@ const UFVModal = (() => {
             bulb.title = b.active() ? `${b.label}: flagged` : `${b.label}: not flagged`;
             bulbRow.appendChild(bulb);
         });
-        titleEl.appendChild(bulbRow);
         titleEl.appendChild(document.createTextNode((AA1TO3[wt] || wt) + ' ' + pos));
+        titleEl.appendChild(bulbRow);
 
         // ── Position | Nearby grid ──────────────────────────────────────────────
         const topGrid = document.createElement('div');
@@ -1166,14 +1169,14 @@ const UFVModal = (() => {
             const proxToggle = document.createElement('button');
             proxToggle.className = 'ufv-am-toggle';
             const proxHdrLeft = document.createElement('span');
-            proxHdrLeft.className = 'ufv-am-hdr-left ufv-hdr-center';
-            proxHdrLeft.append(linesToggleLbl, document.createTextNode(' PTM–Variant Proximity'));
+            proxHdrLeft.className = 'ufv-am-hdr-left';
+            proxHdrLeft.appendChild(document.createTextNode('PTM–Variant Proximity'));
             const proxArrow = document.createElement('span');
             proxArrow.className = 'ufv-am-arrow';
             proxArrow.textContent = '▾';
             const proxHdrRight = document.createElement('span');
             proxHdrRight.className = 'ufv-am-hdr-right';
-            proxHdrRight.appendChild(proxArrow);
+            proxHdrRight.append(linesToggleLbl, proxArrow);
             proxToggle.append(proxHdrLeft, proxHdrRight);
 
             const proxBody = document.createElement('div');
