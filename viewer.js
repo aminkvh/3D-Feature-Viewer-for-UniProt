@@ -461,6 +461,20 @@ const StructureViewer = {
         } else if (mode === 'residueBurden') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             (context.residueBurden || new Set()).forEach(pos => this.allChainsAddStyle(pos, { cartoon: { ...base, color: '#e65100' } }));
+        } else if (mode === 'topology') {
+            // Colour the cartoon by membrane-topology segment (TM / cytoplasmic / extracellular …).
+            const posColor = context.topologyByPos instanceof Map ? context.topologyByPos : new Map();
+            const s = this.currentStructure;
+            const isAF = !s || s.source === 'AlphaFold' || !s.mappedRanges?.length;
+            const reverseCache = new Map();
+            const toUni = (chain, resi) => {
+                if (!reverseCache.has(chain)) reverseCache.set(chain, this._reverseResidueMapForChain(chain));
+                return reverseCache.get(chain).get(resi);
+            };
+            this.viewer.setStyle({}, { cartoon: { ...base, colorfunc: atom => {
+                const uni = isAF ? atom.resi : toUni(atom.chain, atom.resi);
+                return posColor.get(uni) || '#b9c2cf';
+            } } });
         } else if (mode === 'prism') {
             // Constraint-pocket mode: colour candidate residues by geometric class.
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });

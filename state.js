@@ -26,6 +26,7 @@ const UFVState = (() => {
         variants: [],
         sites: [],
         sitesVisible: false, // "Site" annotation spheres — off by default (opt-in overlay)
+        topology: [],        // membrane topology segments (TOPO_DOM / TRANSMEM / INTRAMEM)
         sequence: '',
         structures: [],
         selectedStructureIndex: 0,
@@ -58,6 +59,7 @@ const UFVState = (() => {
         state.variants = [];
         state.sites = [];
         state.sitesVisible = false;
+        state.topology = [];
         state.sequence = '';
         state.structures = [];
         state.selectedStructureIndex = 0;

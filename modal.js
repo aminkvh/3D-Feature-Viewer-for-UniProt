@@ -101,6 +101,7 @@ const UFVModal = (() => {
                                 <div class="ufv-cm-opt selected" data-value="default">Default cyan</div>
                                 <div class="ufv-cm-opt" data-value="plddt">pLDDT confidence</div>
                                 <div class="ufv-cm-opt" data-value="bfactor">Experimental B-factor</div>
+                                <div class="ufv-cm-opt ufv-hidden" data-value="topology">Membrane topology</div>
                                 <div class="ufv-cm-opt" data-value="hotspots">3D variant enrichment</div>
                                 <div class="ufv-cm-opt" data-value="distantContacts">Long-range contact hub</div>
                                 <div class="ufv-cm-opt" data-value="alphaMissense">AlphaMissense score</div>
@@ -608,8 +609,11 @@ const UFVModal = (() => {
         if (cmDrop) {
             cmDrop.querySelector('[data-value="bfactor"]').style.display = isAlphaFold ? 'none' : '';
             cmDrop.querySelector('[data-value="plddt"]').style.display = isAlphaFold ? '' : 'none';
+            // Membrane-topology mode only when the entry has topology features.
+            const hasTopology = UFVState.state.topology?.length > 0;
+            cmDrop.querySelector('[data-value="topology"]').classList.toggle('ufv-hidden', !hasTopology);
             const cur = getColorMode();
-            if ((cur === 'bfactor' && isAlphaFold) || (cur === 'plddt' && !isAlphaFold)) {
+            if ((cur === 'bfactor' && isAlphaFold) || (cur === 'plddt' && !isAlphaFold) || (cur === 'topology' && !hasTopology)) {
                 setColorMode('default');
             }
         }
@@ -653,6 +657,7 @@ const UFVModal = (() => {
             alphaMissense: s.analysis.alphaMissense,
             residueBurden: s.analysis.residueBurden,
             pocketByPos: mode === 'prism' ? filteredPocketByPos() : null,
+            topologyByPos: mode === 'topology' ? topologyByPos() : null,
         }, true);
         const rangeNote = getMappedRangeNote();
         const siteList = activeSites();
@@ -675,10 +680,13 @@ const UFVModal = (() => {
         // Preserve an active focus across coloring changes: re-enter focus on the selected
         // ligand or residue instead of dropping back to the full sphere view.
         if (s.selectedLigand && StructureViewer.currentStructure) {
-            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres });
+            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false });
             if (nb) s.nearbyResidues = nb;
         } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
-            const nearby = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() });
+            // rezoom:false — re-applying focus after a filter/colour change must not yank the
+            // camera; showOtherSpheres respects the header toggle (so co-displayed PTM spheres
+            // appear/disappear correctly while a residue is focused).
+            const nearby = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres, rezoom: false });
             if (nearby) s.nearbyResidues = nearby;
         }
         renderLegend(mode);
@@ -705,6 +713,15 @@ const UFVModal = (() => {
     function activePtms() {
         const s = UFVState.state;
         return s.ptms.filter(p => s.ptmGroups[p.category]?.visible && p.visible !== false);
+    }
+
+    // UniProt position → topology colour, built from the membrane-topology segments.
+    function topologyByPos() {
+        const map = new Map();
+        (UFVState.state.topology || []).forEach(seg => {
+            for (let p = seg.start; p <= seg.end; p++) map.set(p, seg.color);
+        });
+        return map;
     }
 
     /**
@@ -1086,6 +1103,13 @@ const UFVModal = (() => {
             row.append(swatch, label);
             legend.appendChild(row);
         };
+
+        // Topology legend is built from the entry's actual segments (one swatch per colour).
+        if (mode === 'topology') {
+            const seen = new Map();
+            (UFVState.state.topology || []).forEach(seg => { if (!seen.has(seg.color)) seen.set(seg.color, seg.label); });
+            seen.forEach((label, color) => appendLegendItem(color, label));
+        }
 
         // Only show items for explicit coloring modes; default cyan needs no legend unless zoomed in
         (modeItems[mode] || []).forEach(([color, label]) => appendLegendItem(color, label));
@@ -1613,6 +1637,7 @@ const UFVModal = (() => {
     function buildAnnotationMap() {
         const map = new Map();
         activePtms().forEach(p => map.set(p.position, { color: p.color }));
+        activeCoDisplayPtms().forEach(p => map.set(p.position, { color: p.color })); // variant-view co-PTMs
         UFVState.state.variants.forEach(v => map.set(v.position, { color: v.consequenceColor }));
         return map;
     }

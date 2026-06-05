@@ -162,6 +162,43 @@ const DataProcessor = {
 
     SITE_COLOR: '#fbc02d', // amber — distinct from PTM and variant palettes
 
+    TOPOLOGY_COLORS: {
+        transmembrane: '#f9a825', intramembrane: '#ef6c00',
+        cytoplasmic: '#1e88e5', extracellular: '#e53935', lumenal: '#43a047',
+        periplasmic: '#26a69a', nuclear: '#8e24aa', mitochondrial: '#00897b', other: '#7e57c2',
+    },
+
+    /**
+     * Extract membrane topology features (TOPO_DOM, TRANSMEM, INTRAMEM) as coloured sequence
+     * segments. Returns [{ start, end, type, label, color }] (empty when the entry has none).
+     */
+    extractTopology(featuresData) {
+        if (!featuresData || !featuresData.features) return [];
+        const C = this.TOPOLOGY_COLORS;
+        const out = [];
+        featuresData.features.forEach(f => {
+            if (!['TOPO_DOM', 'TRANSMEM', 'INTRAMEM'].includes(f.type)) return;
+            const start = parseInt(f.begin), end = parseInt(f.end) || start;
+            if (isNaN(start)) return;
+            let label, color;
+            if (f.type === 'TRANSMEM') { label = 'Transmembrane' + (f.description ? ` (${f.description})` : ''); color = C.transmembrane; }
+            else if (f.type === 'INTRAMEM') { label = 'Intramembrane' + (f.description ? ` (${f.description})` : ''); color = C.intramembrane; }
+            else {
+                const d = (f.description || '').toLowerCase();
+                label = f.description || 'Topological domain';
+                color = d.includes('cytoplasm') ? C.cytoplasmic
+                    : d.includes('extracellular') ? C.extracellular
+                    : d.includes('lumen') ? C.lumenal
+                    : d.includes('periplasm') ? C.periplasmic
+                    : d.includes('nuclear') ? C.nuclear
+                    : d.includes('mitochond') ? C.mitochondrial
+                    : C.other;
+            }
+            out.push({ start, end, type: f.type, label, color });
+        });
+        return out;
+    },
+
     _categorizePTM(desc, type) {
         const d = desc.toLowerCase();
         if (type === 'DISULFID') return 'Disulfide bond';
