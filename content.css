@@ -1236,8 +1236,11 @@
     border-bottom: 1px solid var(--ufv-border);
     position: sticky;
     top: 0;
-    background: var(--ufv-bg-tertiary);
+    z-index: 2;
+    /* Solid, opaque header so the (sticky) title doesn't show the scrolling body behind it. */
+    background: var(--ufv-bg-tertiary, #141b2d);
 }
+.ufv-light .ufv-details-hdr, :root:not(.ufv-dark) .ufv-details-hdr { background: var(--ufv-bg-tertiary, #eef1f5); }
 
 .ufv-details-hdr h4 {
     font-size: 12.5px;
@@ -1548,6 +1551,8 @@
 .ufv-ions-toggle { transform: scale(0.82); margin-right: 1px; }
 
 /* Similar-ligand cells (clickable, reuse the AlphaMissense cell look) */
+.ufv-prox-clickable { cursor: pointer; border: 1px solid transparent; }
+.ufv-prox-clickable:hover { border-color: var(--ufv-accent); }
 .ufv-sim-cell { cursor: pointer; border: 1px solid transparent; }
 .ufv-sim-cell:hover { border-color: var(--ufv-ligand-color); }
 .ufv-sim-cell .ufv-am-cell-mut { color: var(--ufv-ligand-color); }

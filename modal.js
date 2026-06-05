@@ -527,6 +527,7 @@ const UFVModal = (() => {
     }
 
     function stLabel(st) {
+        if (st?.source === 'AlphaFold' && st.isoform) return `AlphaFold ${st.isoform}`;
         if (!st || st.source === 'AlphaFold') return 'AlphaFold';
         if (st.source === 'Computed') {
             return `${st.provider}${st.coverage ? ` (model, ${st.coverage}%)` : ' (model)'}`;
@@ -1384,9 +1385,9 @@ const UFVModal = (() => {
                 items.forEach(item => {
                     const v = item.variant || item;
                     const distStr = item.dist !== undefined ? item.dist.toFixed(1) + ' Å' : '0.0 Å';
-                    const cell = document.createElement('div');
-                    cell.className = 'ufv-am-cell';
-                    cell.title = (v.clinVarSignificance || v.consequence || '').trim();
+                    const cell = document.createElement('button');
+                    cell.className = 'ufv-am-cell ufv-prox-clickable';
+                    cell.title = (v.clinVarSignificance || v.consequence || '').trim() + ' (click to focus)';
                     const mutSpan = document.createElement('span');
                     mutSpan.className = 'ufv-am-cell-mut';
                     mutSpan.style.color = v.consequenceColor || tierFg[t];
@@ -1395,6 +1396,7 @@ const UFVModal = (() => {
                     distSpan.className = 'ufv-am-cell-sc';
                     distSpan.textContent = distStr;
                     cell.append(mutSpan, distSpan);
+                    cell.addEventListener('click', () => onClick({ position: v.position }, 'focus', s.selectedChain));
                     grid.appendChild(cell);
                 });
                 proxBody.appendChild(grid);
@@ -1512,7 +1514,7 @@ const UFVModal = (() => {
         sectionEl.className = 'ufv-am-section';
         const toggle = document.createElement('button');
         toggle.className = 'ufv-am-toggle';
-        toggle.innerHTML = `<span class="ufv-am-hdr-left">Similar ligands</span><span class="ufv-am-hdr-right"><span class="ufv-am-ratio">${ranked.length}</span><span class="ufv-am-arrow">▾</span></span>`;
+        toggle.innerHTML = `<span class="ufv-am-hdr-left">Similar ligands in structure</span><span class="ufv-am-hdr-right"><span class="ufv-am-ratio">${ranked.length}</span><span class="ufv-am-arrow">▾</span></span>`;
         const bodyEl = document.createElement('div');
         bodyEl.className = 'ufv-am-body show';
         const grid = document.createElement('div');

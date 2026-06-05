@@ -613,15 +613,53 @@ const UFVApi = (() => {
         return out.slice(0, 25); // cap so the structure selector isn't flooded
     }
 
+    /**
+     * AlphaFold models for the protein's NON-canonical isoforms (e.g. AF-P35498-2-F1). These are
+     * not listed in the 3D-Beacons summary of the canonical accession, so we read the isoform IDs
+     * from the UniProt entry and probe AlphaFold DB for each. Residue numbering follows the
+     * isoform sequence, so canonical PTM/variant positions may be offset on these models.
+     */
+    async function getIsoformAlphaFoldStructures(id, sequenceLength) {
+        const base = String(id).split('-')[0];
+        const u = await fetchOptionalJson(UNIPROT_URL(base));
+        const isoIds = new Set();
+        (u?.comments || []).forEach(c => {
+            if (c.commentType === 'ALTERNATIVE PRODUCTS') (c.isoforms || []).forEach(iso => (iso.isoformIds || []).forEach(iid => isoIds.add(iid)));
+        });
+        const targets = [...isoIds].filter(iid => iid && iid !== base && iid !== `${base}-1`);
+        const out = [];
+        await Promise.all(targets.map(async iid => {
+            for (const ver of [6, 5, 4]) {
+                const url = `https://alphafold.ebi.ac.uk/files/AF-${iid}-F1-model_v${ver}.cif`;
+                let ok = false;
+                try { ok = (await fetch(url, { method: 'HEAD' })).ok; } catch (_) { ok = false; }
+                if (!ok) continue;
+                out.push({
+                    id: `AF-${iid}`, label: `AlphaFold ${iid}`, source: 'AlphaFold', isoform: iid,
+                    pdbId: null, chainId: null, url, format: 'mmcif',
+                    method: 'Predicted model (isoform)', resolution: null, coverage: null,
+                    rangeText: `isoform ${iid}`,
+                    mappedRanges: sequenceLength ? [{ uniprotStart: 1, uniprotEnd: sequenceLength, pdbStart: 1, pdbEnd: sequenceLength, chainId: null }] : [],
+                    otherChains: false,
+                    mappingStatus: 'AlphaFold isoform model — residue numbering follows the isoform sequence; canonical annotations may be offset.',
+                    version: ver,
+                });
+                break;
+            }
+        }));
+        return out;
+    }
+
     async function getStructures(id, sequenceLength) {
-        const [alphaFold, pdbs, beacons] = await Promise.all([
+        const [alphaFold, isoforms, pdbs, beacons] = await Promise.all([
             getAlphaFoldStructure(id, sequenceLength),
+            getIsoformAlphaFoldStructures(id, sequenceLength),
             getExperimentalStructures(id, sequenceLength),
             get3DBeaconsModels(id, sequenceLength),
         ]);
-        // Order: AlphaFold first, then experimental, then computed models; by coverage within group.
-        const rank = s => s.source === 'AlphaFold' ? 0 : s.source === 'Computed' ? 2 : 1;
-        return [alphaFold, ...pdbs, ...beacons].filter(Boolean).sort((a, b) => {
+        // Order: canonical AlphaFold, then isoform AlphaFold, then experimental, then computed.
+        const rank = s => s.source === 'AlphaFold' ? (s.isoform ? 0.5 : 0) : s.source === 'Computed' ? 2 : 1;
+        return [alphaFold, ...isoforms, ...pdbs, ...beacons].filter(Boolean).sort((a, b) => {
             if (rank(a) !== rank(b)) return rank(a) - rank(b);
             return (b.coverage || 0) - (a.coverage || 0);
         });

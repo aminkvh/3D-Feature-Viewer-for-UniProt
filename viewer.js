@@ -30,6 +30,8 @@ const StructureViewer = {
             antialias: true,
             cartoonQuality: 8,
         });
+        // Fire hover near-instantly (3Dmol default is 500 ms) so ligand highlight feels immediate.
+        try { this.viewer.setHoverDuration(60); } catch (_) {}
         if (!this._resizeBound) {
             window.addEventListener('resize', () => { if (this.viewer) this.viewer.resize(); });
             this._resizeBound = true;
@@ -391,6 +393,8 @@ const StructureViewer = {
             this._hoverLabel = this.viewer.addLabel(atom.resn, {
                 position: { x: atom.x, y: atom.y, z: atom.z },
                 backgroundColor: '#11161f', backgroundOpacity: 0.9, fontColor: '#ffeb3b', fontSize: 13, borderThickness: 0,
+                screenOffset: { x: 16, y: -16 }, // nudge off the cursor so it isn't hidden by it
+                inFront: true,
             });
         } catch (_) {}
         this.viewer.render();
@@ -793,7 +797,7 @@ const StructureViewer = {
             const zoomResis = Array.from(nearby.values())
                 .filter(n => n.chain === selChain)
                 .map(n => n.resi);
-            this.viewer.zoomTo(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis }, 600);
+            this._zoomToWithMargin(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis });
         }
         this.viewer.render();
 
@@ -905,7 +909,7 @@ const StructureViewer = {
         nearby.forEach(({ chain: nc, resi: nr }) => { const u = toUni(nc, nr); focusHoverMap.set(u, { position: u }); });
         this._bindHover(focusHoverMap, 'focus');
 
-        if (opts.rezoom !== false) this.viewer.zoomTo(ligSel, 600);
+        if (opts.rezoom !== false) this._zoomToWithMargin(ligSel);
         this.viewer.render();
         return nearbyUni;
     },
@@ -1017,6 +1021,13 @@ const StructureViewer = {
             this.viewer?.removeAllShapes();
             this.viewer?.render();
         } catch (_) { /* viewer may not be initialised yet */ }
+    },
+
+    // Zoom to a selection but ease out slightly so the pocket isn't uncomfortably tight.
+    _zoomToWithMargin(sel) {
+        this.viewer.zoomTo(sel, 500);
+        clearTimeout(this._zoomOutT);
+        this._zoomOutT = setTimeout(() => { try { this.viewer.zoom(0.78, 350); } catch (_) {} }, 520);
     },
 
     _proximityShapes: [],  // shape handles for PTM–variant dashed lines
