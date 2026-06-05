@@ -1556,16 +1556,6 @@
 .ufv-toggle-switch input:checked + .ufv-toggle-slider::before { transform: translateX(11px); }
 
 /* ── PTM–Variant Proximity section ──────────────────────────────────────── */
-.ufv-prox-toggle-row {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 11px;
-    color: var(--ufv-text-secondary);
-    padding: 2px 0 6px;
-    border-bottom: 1px solid var(--ufv-border);
-    margin-bottom: 4px;
-}
 .ufv-prox-tier-hdr {
     font-size: 10px;
     font-weight: 700;
@@ -1573,11 +1563,11 @@
     text-transform: uppercase;
     margin: 6px 0 2px;
 }
-/* Two-column grid: mutation label | distance */
+/* Two variants per row: (mutation | distance) × 2 */
 .ufv-prox-grid {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 1px 10px;
+    grid-template-columns: 1fr auto 1fr auto;
+    gap: 1px 12px;
     padding: 2px 0 4px;
 }
 .ufv-prox-dist {
@@ -1586,4 +1576,20 @@
     white-space: nowrap;
     text-align: right;
     align-self: center;
+}
+
+/* Detail-panel header actions (sphere toggle + close button, right side) */
+.ufv-details-hdr-actions {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+/* Center-align a collapsible header-left (toggle switch + label) */
+.ufv-am-hdr-left.ufv-hdr-center { align-items: center; }
+/* Keep the count ratio (e.g. 3/4) as one unit so the flex gap doesn't split it */
+.ufv-am-ratio {
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--ufv-text-secondary);
 }

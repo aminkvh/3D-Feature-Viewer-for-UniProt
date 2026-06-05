@@ -124,7 +124,7 @@ const UFVModal = (() => {
                         <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
-                    <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
+                    <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show other PTM / variant spheres while zoomed into a residue"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
                 </div>
             </div>
         </div>`;
@@ -235,6 +235,17 @@ const UFVModal = (() => {
         byId('ufv-vptm-all').addEventListener('click', () => variantPtmSetAll(true));
         byId('ufv-vptm-none').addEventListener('click', () => variantPtmSetAll(false));
         byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
+        // Header sphere-visibility toggle: controls whether other annotation spheres stay visible
+        // while zoomed into a residue.  Always available (PTM / variant / disease views).
+        byId('ufv-sphere-chk').addEventListener('change', e => {
+            _showOtherSpheres = e.target.checked;
+            const s = UFVState.state;
+            if (s.selectedResidue != null && StructureViewer.currentStructure) {
+                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres }) || s.nearbyResidues;
+                // focusResidue clears shapes — re-draw proximity lines if they were on.
+                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
+            }
+        });
         byId('ufv-cs-btn').addEventListener('click', e => { e.stopPropagation(); byId('ufv-cs').classList.toggle('open'); });
         byId('ufv-cm-btn').addEventListener('click', e => { e.stopPropagation(); byId('ufv-cm').classList.toggle('open'); });
         byId('ufv-cm-drop').querySelectorAll('.ufv-cm-opt').forEach(opt => {
@@ -1095,8 +1106,8 @@ const UFVModal = (() => {
             const topColor = topConsequence ? (variants.find(v => v.consequence === topConsequence)?.consequenceColor || '#b9c2cf') : '#b9c2cf';
             const topCount = topConsequence ? variants.filter(v => v.consequence === topConsequence).length : 0;
             const countLabel = topCount > 0
-                ? `<span style="color:${topColor}">${topCount}</span>/${variants.length}`
-                : String(variants.length);
+                ? `<span class="ufv-am-ratio"><span style="color:${topColor}">${topCount}</span>/${variants.length}</span>`
+                : `<span class="ufv-am-ratio">${variants.length}</span>`;
             const varSection = document.createElement('div');
             varSection.className = 'ufv-am-section';
             const varToggle = document.createElement('button');
@@ -1154,27 +1165,20 @@ const UFVModal = (() => {
             const proxToggle = document.createElement('button');
             proxToggle.className = 'ufv-am-toggle';
             const proxHdrLeft = document.createElement('span');
-            proxHdrLeft.className = 'ufv-am-hdr-left';
+            proxHdrLeft.className = 'ufv-am-hdr-left ufv-hdr-center';
             proxHdrLeft.append(linesToggleLbl, document.createTextNode(' PTM–Variant Proximity'));
             const proxArrow = document.createElement('span');
             proxArrow.className = 'ufv-am-arrow';
             proxArrow.textContent = '▾';
-            proxToggle.append(proxHdrLeft, proxArrow);
+            const proxHdrRight = document.createElement('span');
+            proxHdrRight.className = 'ufv-am-hdr-right';
+            proxHdrRight.appendChild(proxArrow);
+            proxToggle.append(proxHdrLeft, proxHdrRight);
 
             const proxBody = document.createElement('div');
             proxBody.className = 'ufv-am-body';
 
-            // Sphere visibility toggle (inside body).
-            const { lbl: sphereLbl, chk: sphereChk } = makeToggle(_showOtherSpheres, 'Show/hide other annotation spheres while zoomed in');
-            sphereChk.addEventListener('change', () => {
-                _showOtherSpheres = sphereChk.checked;
-                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres }) || s.nearbyResidues;
-                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
-            });
-            const sphereRow = document.createElement('div');
-            sphereRow.className = 'ufv-prox-toggle-row';
-            sphereRow.append(sphereLbl, document.createTextNode(' Show annotation spheres'));
-            proxBody.appendChild(sphereRow);
+            // (sphere-visibility toggle lives in the panel header, applies to all residues)
 
             // Summary rows.
             proxBody.insertAdjacentHTML('beforeend',
@@ -1472,15 +1476,15 @@ const UFVModal = (() => {
     // Re-render the 3Dmol canvas whenever the user returns to this browser tab.
     // WebGL contexts can be discarded by the browser while the tab is backgrounded;
     // resize() re-calculates canvas dimensions and render() redraws the scene.
-    // Also resets the camera to a full-structure view so the user sees a clean
-    // starting position rather than wherever the model was when they switched away.
+    // The camera is deliberately NOT reset here — if the user was zoomed into a residue,
+    // switching windows and back should preserve that view (a full WebGL context loss is
+    // handled separately by the webglcontextrestored handler, which rebuilds the scene).
     document.addEventListener('visibilitychange', () => {
         if (document.hidden || !overlayEl || overlayEl.style.display === 'none') return;
         const v = StructureViewer.viewer;
         if (!v) return;
         try {
             v.resize();
-            v.zoomTo({}, 0); // instant reset (0 ms animation) to full-structure view
             v.render();
         } catch (_) { /* WebGL context may be in the process of being restored */ }
     });

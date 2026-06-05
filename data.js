@@ -191,7 +191,10 @@ const DataProcessor = {
             if (f.type !== 'VARIANT') return;
             const pos = parseInt(f.begin);
             if (isNaN(pos)) return;
-            if (!f.alternativeSequence || f.alternativeSequence === '*') return;
+            // Keep stop-gain / nonsense variants (alternativeSequence === '*'); only skip
+            // entries with no substituted residue at all. AlphaMissense lookups for '*' simply
+            // return null (it scores missense only), which the impact extractor handles.
+            if (!f.alternativeSequence) return;
 
             const consequence = this._classifyConsequence(f);
             const provenance  = this._classifyProvenance(f);
