@@ -126,6 +126,33 @@ const DataProcessor = {
         return ptms;
     },
 
+    /**
+     * Extract UniProt "Site" annotations (feature type SITE) — interesting single residues or
+     * peptide bonds not covered by other subsections: cleavage sites, protease-inhibitory sites,
+     * fusion-protein breakpoints, etc. A site may be one residue (begin === end) or a peptide bond
+     * represented by its two flanking residues (begin, end).
+     */
+    extractSites(featuresData) {
+        if (!featuresData || !featuresData.features) return [];
+        const out = [];
+        featuresData.features.forEach(f => {
+            if (f.type !== 'SITE') return;
+            const pos = parseInt(f.begin);
+            if (isNaN(pos)) return;
+            out.push({
+                position: pos,
+                endPosition: parseInt(f.end) || pos,
+                description: f.description || 'Site',
+                category: 'Site',
+                color: this.SITE_COLOR,
+                evidences: f.evidences || [],
+            });
+        });
+        return out;
+    },
+
+    SITE_COLOR: '#fbc02d', // amber — distinct from PTM and variant palettes
+
     _categorizePTM(desc, type) {
         const d = desc.toLowerCase();
         if (type === 'DISULFID') return 'Disulfide bond';

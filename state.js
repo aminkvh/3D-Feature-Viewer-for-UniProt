@@ -24,6 +24,8 @@ const UFVState = (() => {
         ptms: [],
         ptmGroups: {},
         variants: [],
+        sites: [],
+        sitesVisible: false, // "Site" annotation spheres — off by default (opt-in overlay)
         sequence: '',
         structures: [],
         selectedStructureIndex: 0,
@@ -52,6 +54,8 @@ const UFVState = (() => {
         state.ptms = [];
         state.ptmGroups = {};
         state.variants = [];
+        state.sites = [];
+        state.sitesVisible = false;
         state.sequence = '';
         state.structures = [];
         state.selectedStructureIndex = 0;

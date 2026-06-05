@@ -406,9 +406,28 @@ const StructureViewer = {
      * Render PTM residues as Cα VDW spheres.
      * For disulfide bonds, both begin and end positions are rendered.
      */
-    showPTMs(ptms, ptmGroups) {
+    /**
+     * Draw "Site" annotation spheres (amber) for the given sites at positions not already
+     * occupied by a PTM/variant sphere. Adds them to the active + hover maps so they persist in
+     * focus mode and show their annotation on hover/click.
+     */
+    _drawSiteSpheres(sites, hoverMap, active) {
+        if (!sites || !sites.length) return;
+        sites.forEach(site => {
+            const positions = [site.position, site.endPosition].filter((p, i, a) => p && a.indexOf(p) === i);
+            positions.forEach(pos => {
+                if (hoverMap.has(pos)) return; // PTM/variant sphere already here
+                const placed = this.allChainsAddStyle(pos, { sphere: { radius: 1.7, color: site.color, opacity: 0.95 } }, { atom: 'CA' });
+                if (!placed) return;
+                hoverMap.set(pos, { position: pos, color: site.color, isSite: true, description: site.description, category: 'Site' });
+                active.set(pos, site.color);
+            });
+        });
+    },
+
+    showPTMs(ptms, ptmGroups, sites = []) {
         this._selectedResi = null;
-        this._lastRender = () => this.showPTMs(ptms, ptmGroups);
+        this._lastRender = () => this.showPTMs(ptms, ptmGroups, sites);
         const hoverMap = new Map();
         const active = new Map(); // uniProtPos → color, for zoom-mode sphere persistence
         let count = 0;
@@ -444,6 +463,7 @@ const StructureViewer = {
             }
         });
 
+        this._drawSiteSpheres(sites, hoverMap, active);
         this._activeSpheres = active;
         this._bindHover(hoverMap, 'ptm');
         this.viewer.render();
@@ -455,7 +475,7 @@ const StructureViewer = {
      * then re-renders only the currently visible PTM spheres.
      * Returns false when in focus mode so the caller can do a full applyMode() instead.
      */
-    refreshPTMDisplay(ptms, ptmGroups) {
+    refreshPTMDisplay(ptms, ptmGroups, sites = []) {
         if (!this.viewer || this._inFocusMode) return false;
         this.viewer.removeAllLabels();
         // Re-apply the base cartoon styles to clear any accumulated addStyle sphere layers
@@ -463,7 +483,7 @@ const StructureViewer = {
         // objects (addSphere/addCylinder), not addStyle layers, so they must be reset here.
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext || {}, base);
-        return this.showPTMs(ptms, ptmGroups);
+        return this.showPTMs(ptms, ptmGroups, sites);
     },
 
     /**
@@ -472,9 +492,9 @@ const StructureViewer = {
      * Where a residue carries both, the variant sphere wins (its severity colour is kept) but
      * the PTM still shows in that residue's hover/details.
      */
-    showVariants(filtered, coPtms = []) {
+    showVariants(filtered, coPtms = [], sites = []) {
         this._selectedResi = null;
-        this._lastRender = () => this.showVariants(filtered, coPtms);
+        this._lastRender = () => this.showVariants(filtered, coPtms, sites);
         const severity = [
             'Likely pathogenic or pathogenic',
             'Predicted deleterious',
@@ -527,6 +547,7 @@ const StructureViewer = {
             }
         });
 
+        this._drawSiteSpheres(sites, hoverMap, active);
         this._activeSpheres = active;
         this._bindHover(hoverMap, 'variant');
         this.viewer.render();

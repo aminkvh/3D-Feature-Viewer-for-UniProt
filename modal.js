@@ -116,12 +116,14 @@ const UFVModal = (() => {
                     <div id="ufv-ptm-panel" class="ufv-filter-scroll">
                         <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button></div></div>
                         <div id="ufv-ptm-list"></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-sites-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-ptm-all">All</button><button class="ufv-section-btn" id="ufv-sites-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-ptm-body"><div id="ufv-sites-ptm-list"></div></div></div>
                     </div>
                     <div id="ufv-var-panel" class="ufv-filter-scroll ufv-hidden">
                         <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button></div></div><div id="ufv-dis-list"></div></div>
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-prov-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Provenance</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-prov-all">All</button><button class="ufv-section-btn" id="ufv-prov-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-prov-body"><div id="ufv-prov-list"></div></div></div>
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
                     <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show/hide annotation spheres"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
@@ -234,6 +236,12 @@ const UFVModal = (() => {
         byId('ufv-vptm-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-vptm-body', 'ufv-vptm-toggle'); });
         byId('ufv-vptm-all').addEventListener('click', () => variantPtmSetAll(true));
         byId('ufv-vptm-none').addEventListener('click', () => variantPtmSetAll(false));
+        byId('ufv-sites-ptm-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-sites-ptm-body', 'ufv-sites-ptm-toggle'); });
+        byId('ufv-sites-ptm-all').addEventListener('click', () => sitesSetAll(true));
+        byId('ufv-sites-ptm-none').addEventListener('click', () => sitesSetAll(false));
+        byId('ufv-sites-var-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-sites-var-body', 'ufv-sites-var-toggle'); });
+        byId('ufv-sites-var-all').addEventListener('click', () => sitesSetAll(true));
+        byId('ufv-sites-var-none').addEventListener('click', () => sitesSetAll(false));
         byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
         // Header sphere-visibility toggle: controls whether other annotation spheres stay visible
         // while zoomed into a residue.  Always available (PTM / variant / disease views).
@@ -618,16 +626,19 @@ const UFVModal = (() => {
             pocketByPos: mode === 'prism' ? filteredPocketByPos() : null,
         }, true);
         const rangeNote = getMappedRangeNote();
+        const siteList = activeSites();
+        const sitePositions = siteList.flatMap(x => x.endPosition && x.endPosition !== x.position ? [x.position, x.endPosition] : [x.position]);
         if (s.currentMode === 'ptm') {
-            const n = StructureViewer.showPTMs(s.ptms, s.ptmGroups);
-            s.displayedPositions = activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]);
+            const n = StructureViewer.showPTMs(s.ptms, s.ptmGroups, siteList);
+            s.displayedPositions = [...new Set([...activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]), ...sitePositions])];
             byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${rangeNote}`;
         } else {
             const coPtms = activeCoDisplayPtms();
-            const r = StructureViewer.showVariants(filteredVariants, coPtms);
+            const r = StructureViewer.showVariants(filteredVariants, coPtms, siteList);
             s.displayedPositions = Array.from(new Set([
                 ...filteredVariants.map(v => v.position),
                 ...coPtms.flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]),
+                ...sitePositions,
             ]));
             const ptmNote = r.ptmCount ? `, ${r.ptmCount} PTM site${r.ptmCount === 1 ? '' : 's'}` : '';
             byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${ptmNote}${rangeNote}`;
@@ -647,13 +658,14 @@ const UFVModal = (() => {
     function applyPTMMode() {
         const s = UFVState.state;
         if (!StructureViewer.viewer) return;
-        const n = StructureViewer.refreshPTMDisplay(s.ptms, s.ptmGroups);
+        const n = StructureViewer.refreshPTMDisplay(s.ptms, s.ptmGroups, activeSites());
         if (n === false) {
             // Focus mode active — need a full rebuild to restore sticks
             applyMode();
             return;
         }
-        s.displayedPositions = activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]);
+        const sitePositions = activeSites().flatMap(x => x.endPosition && x.endPosition !== x.position ? [x.position, x.endPosition] : [x.position]);
+        s.displayedPositions = [...new Set([...activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]), ...sitePositions])];
         byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${getMappedRangeNote()}`;
         renderLegend(getColorMode());
         renderSequence();
@@ -740,6 +752,42 @@ const UFVModal = (() => {
     function buildFilters() {
         buildPTMFilters();
         buildVariantFilters();
+        buildSiteFilters();
+    }
+
+    // "Site" annotations — rendered as a collapsible group in BOTH the PTM and the variant
+    // panels (the same s.sites list, with one shared per-site visibility flag). Off by default.
+    function activeSites() {
+        return UFVState.state.sites.filter(x => x.visible);
+    }
+
+    function buildSiteFilters() {
+        const s = UFVState.state;
+        [['ufv-sites-section-ptm', 'ufv-sites-ptm-list'], ['ufv-sites-section-var', 'ufv-sites-var-list']].forEach(([secId, listId]) => {
+            const section = byId(secId), list = byId(listId);
+            if (!section || !list) return;
+            list.textContent = '';
+            if (!s.sites.length) { section.classList.add('ufv-hidden'); return; }
+            section.classList.remove('ufv-hidden');
+            s.sites.forEach(site => {
+                const range = site.endPosition && site.endPosition !== site.position ? `${site.position}–${site.endPosition}` : `${site.position}`;
+                list.appendChild(makeFilterItem(`Residue ${range}: ${site.description}`, site.color, '', !!site.visible, checked => {
+                    site.visible = checked;
+                    applySiteChange();
+                }));
+            });
+        });
+    }
+
+    function sitesSetAll(select) {
+        UFVState.state.sites.forEach(site => site.visible = select);
+        buildSiteFilters(); // rebuild both lists so their checkboxes reflect the new state
+        applySiteChange();
+    }
+
+    function applySiteChange() {
+        if (UFVState.state.currentMode === 'ptm') applyPTMMode();
+        else applyMode();
     }
 
     function buildPTMFilters() {
@@ -1118,6 +1166,10 @@ const UFVModal = (() => {
         // ── PTM annotations ─────────────────────────────────────────────────────
         const ptmsAtPos = s.ptms.filter(p => p.position === pos || p.endPosition === pos);
         ptmsAtPos.forEach(p => body.appendChild(row('PTM', `${p.category}: ${p.description}`, p.color)));
+
+        // ── Site annotations ────────────────────────────────────────────────────
+        s.sites.filter(x => x.position === pos || x.endPosition === pos)
+            .forEach(x => body.appendChild(row('Site', x.description, x.color)));
 
         // ── Variants — collapsible ───────────────────────────────────────────────
         const variants = s.variants.filter(v => v.position === pos).slice(0, 12);
