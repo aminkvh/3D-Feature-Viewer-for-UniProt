@@ -563,7 +563,7 @@ const StructureViewer = {
      * and its 5Å neighbors as ball-and-stick overlay.
      * No interaction lines. No residue label.
      */
-    focusResidue(resi, chain = null, annotations = {}) {
+    focusResidue(resi, chain = null, annotations = {}, opts = {}) {
         if (!this.viewer) return;
         this.viewer.removeAllShapes();
         this.viewer.removeAllLabels();
@@ -616,11 +616,13 @@ const StructureViewer = {
         const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
 
-        // Keep every OTHER annotation sphere visible (everything not in the focused pocket).
-        (this._activeSpheres || new Map()).forEach((color, uniPos) => {
-            if (nearbyUni.has(uniPos)) return; // shown as a stick instead
-            this.allChainsAddStyle(uniPos, { sphere: { radius: 1.8, color, opacity: 0.92 } }, { atom: 'CA' });
-        });
+        // Keep every OTHER annotation sphere visible — controlled by opts.showOtherSpheres (default true).
+        if (opts.showOtherSpheres !== false) {
+            (this._activeSpheres || new Map()).forEach((color, uniPos) => {
+                if (nearbyUni.has(uniPos)) return; // shown as a stick instead
+                this.allChainsAddStyle(uniPos, { sphere: { radius: 1.8, color, opacity: 0.92 } }, { atom: 'CA' });
+            });
+        }
 
         // Show nearby residues as thin sticks (each on its own chain's copy)
         nearby.forEach(({ chain: nc, resi: nr }) => {

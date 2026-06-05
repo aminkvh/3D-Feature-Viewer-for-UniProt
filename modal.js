@@ -1002,12 +1002,29 @@ const UFVModal = (() => {
         tip.classList.add('show');
     }
 
-    // One-letter → three-letter amino acid code for the residue title.
-    const AA1TO3 = { A:'Ala',C:'Cys',D:'Asp',E:'Glu',F:'Phe',G:'Gly',H:'His',I:'Ile',K:'Lys',L:'Leu',M:'Met',N:'Asn',P:'Pro',Q:'Gln',R:'Arg',S:'Ser',T:'Thr',V:'Val',W:'Trp',Y:'Tyr' };
+    // One-letter → three-letter amino acid code (all caps) for the residue title.
+    const AA1TO3 = { A:'ALA',C:'CYS',D:'ASP',E:'GLU',F:'PHE',G:'GLY',H:'HIS',I:'ILE',K:'LYS',L:'LEU',M:'MET',N:'ASN',P:'PRO',Q:'GLN',R:'ARG',S:'SER',T:'THR',V:'VAL',W:'TRP',Y:'TYR' };
 
-    // Whether proximity dashed lines are currently shown.
+    // Session-persistent toggles for proximity lines and sphere visibility in focus mode.
     let _proximityLinesOn = false;
-    let _lastProximityArgs = null; // {ptmPos, pairs, geometry} for re-draw on toggle
+    let _showOtherSpheres = true;
+    let _lastProximityArgs = null;
+
+    // Helper: make a small CSS toggle switch (<label> wrapping hidden <input> + slider span).
+    function makeToggle(checked, title) {
+        const lbl = document.createElement('label');
+        lbl.className = 'ufv-toggle-switch';
+        lbl.title = title || '';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = checked;
+        const sl = document.createElement('span');
+        sl.className = 'ufv-toggle-slider';
+        lbl.append(chk, sl);
+        // Prevent toggle click from bubbling to parent button (collapsible header).
+        lbl.addEventListener('click', e => e.stopPropagation());
+        return { lbl, chk };
+    }
 
     function onClick(data, _mode, chain = null) {
         const s = UFVState.state;
@@ -1015,32 +1032,28 @@ const UFVModal = (() => {
         s.selectedResidue = pos;
         s.selectedChain = chain;
         const annotations = buildAnnotationMap();
-        s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }) || new Set([pos]);
+        s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }, { showOtherSpheres: _showOtherSpheres }) || new Set([pos]);
 
-        // Lazy-compute PTM–variant proximity when the first click occurs after a structure load.
+        // Lazy-compute PTM–variant proximity on first click after a structure load.
         if (!s.analysis.ptmVariantProximity && s.ptms.length && s.variants.length && StructureViewer.viewer) {
-            const geo = StructureViewer.residueGeometry();
-            s.analysis.ptmVariantProximity = UFVAnalysis.computePtmVariantProximity(s.ptms, s.variants, geo);
+            s.analysis.ptmVariantProximity = UFVAnalysis.computePtmVariantProximity(s.ptms, s.variants, StructureViewer.residueGeometry());
         }
 
-        // Clear old proximity lines on every new click.
         StructureViewer.clearProximityLines();
         _lastProximityArgs = null;
 
         const body = byId('ufv-details-body');
         body.textContent = '';
 
-        // ── Title with algorithm bulbs ──────────────────────────────────────────
+        // ── Title: bulbs + "ALA 421" ────────────────────────────────────────────
         const wt = s.sequence?.[pos - 1] || '';
-        const aaLabel = (AA1TO3[wt] || wt) + pos;
         const titleEl = byId('ufv-details-title');
         titleEl.textContent = '';
-        // Algorithm status bulbs: hotspot | burden | contact hub | constraint pocket
         const bulbDefs = [
-            { key: 'hs',  label: 'Hotspot',          color: '#e53935', active: () => s.analysis.hotspots instanceof Map && s.analysis.hotspots.has(pos) },
-            { key: 'bu',  label: 'Variant burden',    color: '#e65100', active: () => s.analysis.residueBurden instanceof Set && s.analysis.residueBurden.has(pos) },
-            { key: 'hub', label: 'Contact hub',       color: '#6a1b9a', active: () => s.analysis.distantContacts instanceof Map && s.analysis.distantContacts.has(pos) },
-            { key: 'cp',  label: 'Constraint pocket', color: '#00897b', active: () => s.analysis.prism?.byPos instanceof Map && s.analysis.prism.byPos.has(pos) },
+            { label: 'Hotspot',          color: '#e53935', active: () => s.analysis.hotspots instanceof Map && s.analysis.hotspots.has(pos) },
+            { label: 'Variant burden',    color: '#e65100', active: () => s.analysis.residueBurden instanceof Set && s.analysis.residueBurden.has(pos) },
+            { label: 'Contact hub',       color: '#6a1b9a', active: () => s.analysis.distantContacts instanceof Map && s.analysis.distantContacts.has(pos) },
+            { label: 'Constraint pocket', color: '#00897b', active: () => s.analysis.prism?.byPos instanceof Map && s.analysis.prism.byPos.has(pos) },
         ];
         const bulbRow = document.createElement('span');
         bulbRow.className = 'ufv-bulb-row';
@@ -1052,7 +1065,7 @@ const UFVModal = (() => {
             bulbRow.appendChild(bulb);
         });
         titleEl.appendChild(bulbRow);
-        titleEl.appendChild(document.createTextNode(aaLabel));
+        titleEl.appendChild(document.createTextNode((AA1TO3[wt] || wt) + ' ' + pos));
 
         // ── Position | Nearby grid ──────────────────────────────────────────────
         const topGrid = document.createElement('div');
@@ -1070,19 +1083,25 @@ const UFVModal = (() => {
         const ptmsAtPos = s.ptms.filter(p => p.position === pos || p.endPosition === pos);
         ptmsAtPos.forEach(p => body.appendChild(row('PTM', `${p.category}: ${p.description}`, p.color)));
 
-        // ── Variants — collapsible, same style as AlphaMissense ─────────────────
+        // ── Variants — collapsible ───────────────────────────────────────────────
         const variants = s.variants.filter(v => v.position === pos).slice(0, 12);
         if (variants.length > 0) {
             if (ptmsAtPos.length > 0) {
                 const sep = document.createElement('div'); sep.className = 'ufv-variant-divider'; body.appendChild(sep);
             }
+            // Determine top-severity count and color for the collapsed header badge.
+            const sevOrder = ['Likely pathogenic or pathogenic', 'Predicted deleterious', 'Uncertain significance', 'Likely benign or benign'];
+            const topConsequence = sevOrder.find(sev => variants.some(v => v.consequence === sev));
+            const topColor = topConsequence ? (variants.find(v => v.consequence === topConsequence)?.consequenceColor || '#b9c2cf') : '#b9c2cf';
+            const topCount = topConsequence ? variants.filter(v => v.consequence === topConsequence).length : 0;
+            const countLabel = topCount > 0
+                ? `<span style="color:${topColor}">${topCount}</span>/${variants.length}`
+                : String(variants.length);
             const varSection = document.createElement('div');
             varSection.className = 'ufv-am-section';
             const varToggle = document.createElement('button');
             varToggle.className = 'ufv-am-toggle';
-            const pathCount = variants.filter(v => /pathogenic/i.test(v.consequence || v.clinVarSignificance || '')).length;
-            const countLabel = pathCount > 0 ? `<span style="color:#ef5350">${pathCount} path.</span>/${variants.length}` : `${variants.length}`;
-            varToggle.innerHTML = `<span class="ufv-am-hdr-left">Variants <small class="ufv-am-wt">${wt}${pos}</small></span><span class="ufv-am-hdr-right">${countLabel}<span class="ufv-am-arrow">▾</span></span>`;
+            varToggle.innerHTML = `<span class="ufv-am-hdr-left">Variants<small class="ufv-am-wt">${wt}${pos}</small></span><span class="ufv-am-hdr-right">${countLabel}<span class="ufv-am-arrow">▾</span></span>`;
             const varBody = document.createElement('div');
             varBody.className = 'ufv-am-body';
             variants.forEach((v, i) => {
@@ -1110,89 +1129,89 @@ const UFVModal = (() => {
         // ── PTM–Variant Proximity ────────────────────────────────────────────────
         const proximity = s.analysis.ptmVariantProximity?.get(pos);
         if (proximity) {
-            const tierLabel = ['', 'Tier 1 — same residue', 'Tier 2 — pathogenic within 8 Å', 'Tier 3 — within 12 Å'];
-            const tierBg = { 1: '#b71c1c22', 2: '#ff704322', 3: '#ffa72622' };
             const tierFg = { 1: '#ef5350', 2: '#ff7043', 3: '#ffa726' };
+            const tierLabel = ['', 'Same residue', 'Pathogenic within 8 Å', 'Within 12 Å'];
 
             const proxSection = document.createElement('div');
             proxSection.className = 'ufv-am-section';
-            const proxToggle = document.createElement('button');
-            proxToggle.className = 'ufv-am-toggle';
 
-            // Build the pairs list for line-drawing (deduplicated by variantPos)
+            // Lines toggle (inline in header, Tier 1+2 only).
+            const geo = StructureViewer.residueGeometry();
             const linePairs = [];
             const addPair = (variantPos, tier) => { if (!linePairs.find(p => p.variantPos === variantPos)) linePairs.push({ variantPos, tier }); };
-            proximity.tier2.forEach(({ variant, dist }) => addPair(variant.position, 2));
-            proximity.tier3.forEach(({ variant, dist }) => addPair(variant.position, 3));
-
-            const tierBadge = proximity.tier ? `<span style="color:${tierFg[proximity.tier]};font-size:10px">Tier ${proximity.tier}</span>` : '';
-            proxToggle.innerHTML = `<span class="ufv-am-hdr-left">PTM–Variant Proximity</span><span class="ufv-am-hdr-right">${tierBadge}<span class="ufv-am-arrow">▾</span></span>`;
-            const proxBody = document.createElement('div');
-            proxBody.className = 'ufv-am-body';
-
-            // Lines toggle button
-            const linesBtn = document.createElement('button');
-            linesBtn.className = 'ufv-prox-lines-btn' + (_proximityLinesOn ? ' active' : '');
-            linesBtn.textContent = _proximityLinesOn ? 'Hide distance lines' : 'Show distance lines';
-            const geo = StructureViewer.residueGeometry();
+            proximity.tier1.forEach(v => addPair(v.position, 1));
+            proximity.tier2.forEach(({ variant }) => addPair(variant.position, 2));
             _lastProximityArgs = { ptmPos: pos, pairs: linePairs, geometry: geo };
             if (_proximityLinesOn && linePairs.length) StructureViewer.showProximityLines(pos, linePairs, geo);
 
-            linesBtn.addEventListener('click', () => {
-                _proximityLinesOn = !_proximityLinesOn;
-                linesBtn.textContent = _proximityLinesOn ? 'Hide distance lines' : 'Show distance lines';
-                linesBtn.classList.toggle('active', _proximityLinesOn);
-                if (_proximityLinesOn && _lastProximityArgs) {
-                    StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
-                } else {
-                    StructureViewer.clearProximityLines();
-                }
+            const { lbl: linesToggleLbl, chk: linesChk } = makeToggle(_proximityLinesOn, 'Show/hide distance lines to nearby variants');
+            linesChk.addEventListener('change', () => {
+                _proximityLinesOn = linesChk.checked;
+                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
+                else StructureViewer.clearProximityLines();
             });
-            proxBody.appendChild(linesBtn);
 
-            // Summary row
-            const sumRow = document.createElement('div');
-            sumRow.className = 'ufv-detail-row';
-            sumRow.innerHTML = `<span class="ufv-detail-lbl">Nearby variants</span><span class="ufv-detail-val">${proximity.nearbyCount8A} within 8 Å (${proximity.pathCount8A} pathogenic)</span>`;
-            proxBody.appendChild(sumRow);
+            const proxToggle = document.createElement('button');
+            proxToggle.className = 'ufv-am-toggle';
+            const proxHdrLeft = document.createElement('span');
+            proxHdrLeft.className = 'ufv-am-hdr-left';
+            proxHdrLeft.append(linesToggleLbl, document.createTextNode(' PTM–Variant Proximity'));
+            const proxArrow = document.createElement('span');
+            proxArrow.className = 'ufv-am-arrow';
+            proxArrow.textContent = '▾';
+            proxToggle.append(proxHdrLeft, proxArrow);
+
+            const proxBody = document.createElement('div');
+            proxBody.className = 'ufv-am-body';
+
+            // Sphere visibility toggle (inside body).
+            const { lbl: sphereLbl, chk: sphereChk } = makeToggle(_showOtherSpheres, 'Show/hide other annotation spheres while zoomed in');
+            sphereChk.addEventListener('change', () => {
+                _showOtherSpheres = sphereChk.checked;
+                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres }) || s.nearbyResidues;
+                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
+            });
+            const sphereRow = document.createElement('div');
+            sphereRow.className = 'ufv-prox-toggle-row';
+            sphereRow.append(sphereLbl, document.createTextNode(' Show annotation spheres'));
+            proxBody.appendChild(sphereRow);
+
+            // Summary rows.
+            proxBody.insertAdjacentHTML('beforeend',
+                `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearby variants</span><span class="ufv-detail-val">${proximity.nearbyCount8A} within 8 Å (${proximity.pathCount8A} pathogenic)</span></div>`);
             if (proximity.nearestDist !== null) {
-                const nearRow = document.createElement('div');
-                nearRow.className = 'ufv-detail-row';
-                nearRow.innerHTML = `<span class="ufv-detail-lbl">Nearest</span><span class="ufv-detail-val">${proximity.nearestVariant} — ${proximity.nearestDist === 0 ? 'same residue' : proximity.nearestDist.toFixed(1) + ' Å'}</span>`;
-                proxBody.appendChild(nearRow);
+                proxBody.insertAdjacentHTML('beforeend',
+                    `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearest</span><span class="ufv-detail-val">${proximity.nearestVariant} — ${proximity.nearestDist === 0 ? 'same residue' : proximity.nearestDist.toFixed(1) + ' Å'}</span></div>`);
             }
 
-            // Tier groups
+            // Tier groups — two-column grid (mutation | distance), no ClinVar text.
             [[proximity.tier1, 1], [proximity.tier2, 2], [proximity.tier3, 3]].forEach(([items, t]) => {
                 if (!items.length) return;
                 const hdr = document.createElement('div');
                 hdr.className = 'ufv-prox-tier-hdr';
-                hdr.style.cssText = `background:${tierBg[t]};color:${tierFg[t]}`;
+                hdr.style.color = tierFg[t];
                 hdr.textContent = tierLabel[t];
                 proxBody.appendChild(hdr);
+                const grid = document.createElement('div');
+                grid.className = 'ufv-prox-grid';
                 items.forEach(item => {
-                    const v = item.variant || item; // tier1 entries are bare variants
-                    const dist = item.dist !== undefined ? ` — ${item.dist.toFixed(1)} Å` : ' — same residue';
-                    const vrow = document.createElement('div');
-                    vrow.className = 'ufv-prox-var-row';
-                    const vtag = document.createElement('span');
-                    vtag.className = 'ufv-vtag';
-                    vtag.style.color = v.consequenceColor || tierFg[t];
-                    vtag.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
-                    const vdist = document.createElement('span');
-                    vdist.className = 'ufv-prox-dist';
-                    vdist.textContent = dist;
-                    const vclin = document.createElement('span');
-                    vclin.className = 'ufv-prox-clin';
-                    vclin.textContent = v.clinVarSignificance || v.consequence || '';
-                    vrow.append(vtag, vdist, vclin);
-                    proxBody.appendChild(vrow);
+                    const v = item.variant || item;
+                    const distStr = item.dist !== undefined ? item.dist.toFixed(1) + ' Å' : '0.0 Å';
+                    const mutCell = document.createElement('span');
+                    mutCell.className = 'ufv-vtag';
+                    mutCell.style.color = v.consequenceColor || tierFg[t];
+                    mutCell.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
+                    const distCell = document.createElement('span');
+                    distCell.className = 'ufv-prox-dist';
+                    distCell.textContent = distStr;
+                    grid.append(mutCell, distCell);
                 });
+                proxBody.appendChild(grid);
             });
 
             proxToggle.addEventListener('click', () => {
                 const open = proxBody.classList.toggle('show');
-                proxToggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
+                proxArrow.textContent = open ? '▴' : '▾';
             });
             proxSection.append(proxToggle, proxBody);
             body.appendChild(proxSection);
