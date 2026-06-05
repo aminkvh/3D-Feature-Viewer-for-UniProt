@@ -1444,13 +1444,13 @@
 .ufv-am-cell-mut {
     font-family: 'Courier New', monospace;
     font-weight: 700;
-    font-size: 10.5px;
+    font-size: 12px;
     flex-shrink: 0;
 }
 
 .ufv-am-cell-sc {
     font-weight: 600;
-    font-size: 9.5px;
+    font-size: 10.5px;
     font-variant-numeric: tabular-nums;
     opacity: 0.9;
     margin-left: auto;
@@ -1563,21 +1563,6 @@
     text-transform: uppercase;
     margin: 6px 0 2px;
 }
-/* Two variants per row: (mutation | distance) × 2 */
-.ufv-prox-grid {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr auto;
-    gap: 1px 12px;
-    padding: 2px 0 4px;
-}
-.ufv-prox-dist {
-    color: var(--ufv-text-secondary);
-    font-size: 10.5px;
-    white-space: nowrap;
-    text-align: right;
-    align-self: center;
-}
-
 /* Detail-panel header actions (sphere toggle + close button, right side) */
 .ufv-details-hdr-actions {
     display: flex;

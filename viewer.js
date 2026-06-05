@@ -653,10 +653,14 @@ const StructureViewer = {
         this._bindHover(focusHoverMap, 'focus');
 
         // Zoom to the local pocket on the selected chain (frame the clicked subunit).
-        const zoomResis = Array.from(nearby.values())
-            .filter(n => n.chain === selChain)
-            .map(n => n.resi);
-        this.viewer.zoomTo(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis }, 600);
+        // opts.rezoom === false keeps the current camera (e.g. when only toggling sphere
+        // visibility) so the view doesn't perform a distracting zoom animation.
+        if (opts.rezoom !== false) {
+            const zoomResis = Array.from(nearby.values())
+                .filter(n => n.chain === selChain)
+                .map(n => n.resi);
+            this.viewer.zoomTo(selChain != null ? { chain: selChain, resi: zoomResis } : { resi: zoomResis }, 600);
+        }
         this.viewer.render();
 
         return nearbyUni;
@@ -802,8 +806,10 @@ const StructureViewer = {
     },
 
     clearProximityLines() {
+        if (!this._proximityShapes.length) return;
         this._proximityShapes.forEach(s => { try { this.viewer?.removeShape(s); } catch (_) {} });
         this._proximityShapes = [];
+        this.viewer?.render(); // re-draw so the removed lines actually disappear
     },
 
     resetView(animated = false) {

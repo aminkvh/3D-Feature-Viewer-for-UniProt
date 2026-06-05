@@ -241,7 +241,8 @@ const UFVModal = (() => {
             _showOtherSpheres = e.target.checked;
             const s = UFVState.state;
             if (s.selectedResidue != null && StructureViewer.currentStructure) {
-                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres }) || s.nearbyResidues;
+                // rezoom:false — keep the current camera so toggling spheres doesn't zoom.
+                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
                 // focusResidue clears shapes — re-draw proximity lines if they were on.
                 if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
             }
@@ -1112,7 +1113,7 @@ const UFVModal = (() => {
             varSection.className = 'ufv-am-section';
             const varToggle = document.createElement('button');
             varToggle.className = 'ufv-am-toggle';
-            varToggle.innerHTML = `<span class="ufv-am-hdr-left">Variants<small class="ufv-am-wt">${wt}${pos}</small></span><span class="ufv-am-hdr-right">${countLabel}<span class="ufv-am-arrow">▾</span></span>`;
+            varToggle.innerHTML = `<span class="ufv-am-hdr-left">Variants</span><span class="ufv-am-hdr-right">${countLabel}<span class="ufv-am-arrow">▾</span></span>`;
             const varBody = document.createElement('div');
             varBody.className = 'ufv-am-body';
             variants.forEach((v, i) => {
@@ -1197,18 +1198,22 @@ const UFVModal = (() => {
                 hdr.textContent = tierLabel[t];
                 proxBody.appendChild(hdr);
                 const grid = document.createElement('div');
-                grid.className = 'ufv-prox-grid';
+                grid.className = 'ufv-am-grid';
                 items.forEach(item => {
                     const v = item.variant || item;
                     const distStr = item.dist !== undefined ? item.dist.toFixed(1) + ' Å' : '0.0 Å';
-                    const mutCell = document.createElement('span');
-                    mutCell.className = 'ufv-vtag';
-                    mutCell.style.color = v.consequenceColor || tierFg[t];
-                    mutCell.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
-                    const distCell = document.createElement('span');
-                    distCell.className = 'ufv-prox-dist';
-                    distCell.textContent = distStr;
-                    grid.append(mutCell, distCell);
+                    const cell = document.createElement('div');
+                    cell.className = 'ufv-am-cell';
+                    cell.title = (v.clinVarSignificance || v.consequence || '').trim();
+                    const mutSpan = document.createElement('span');
+                    mutSpan.className = 'ufv-am-cell-mut';
+                    mutSpan.style.color = v.consequenceColor || tierFg[t];
+                    mutSpan.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
+                    const distSpan = document.createElement('span');
+                    distSpan.className = 'ufv-am-cell-sc';
+                    distSpan.textContent = distStr;
+                    cell.append(mutSpan, distSpan);
+                    grid.appendChild(cell);
                 });
                 proxBody.appendChild(grid);
             });
@@ -1240,7 +1245,7 @@ const UFVModal = (() => {
             amToggle.className = 'ufv-am-toggle';
             const avgScore = amProfileEntries.reduce((sum, e) => sum + e.score, 0) / amProfileEntries.length;
             const avgColor = avgScore >= 0.564 ? '#ef5350' : avgScore >= 0.34 ? '#ffa726' : '#66bb6a';
-            amToggle.innerHTML = `<span class="ufv-am-hdr-left">AlphaMissense<small class="ufv-am-wt">${wt}${pos}</small></span><span class="ufv-am-hdr-right"><span class="ufv-am-avg" style="color:${avgColor}">${avgScore.toFixed(3)}</span><span class="ufv-am-arrow">▾</span></span>`;
+            amToggle.innerHTML = `<span class="ufv-am-hdr-left">AlphaMissense</span><span class="ufv-am-hdr-right"><span class="ufv-am-avg" style="color:${avgColor}">${avgScore.toFixed(3)}</span><span class="ufv-am-arrow">▾</span></span>`;
             const amBody = document.createElement('div');
             amBody.className = 'ufv-am-body';
             const grid = document.createElement('div');
