@@ -127,6 +127,7 @@ const StructureViewer = {
         this.viewer.addModel(pdb, this.currentFormat);
         // Build SIFTS-validated residue index: find which PDB residues are actually modeled
         this._buildObservedResiCache();
+        this._sanitizeLigandBonds();
         this.applyCartoonColoring('default');
         this.viewer.zoomTo();
         this.viewer.render();
@@ -329,16 +330,80 @@ const StructureViewer = {
      * be called AFTER it on every (re)style.
      */
     showLigands: true, // global "show all ligands" toggle (Ligands list All/None)
+    excludeIons: false, // when true, hide monatomic ions (and water) — Ligands header toggle
+
+    // Common monatomic-ion CCD codes (so they can be drawn as spheres / optionally hidden).
+    ION_CODES: new Set(['NA', 'K', 'LI', 'RB', 'CS', 'MG', 'CA', 'SR', 'BA', 'ZN', 'FE', 'FE2',
+        'MN', 'MN3', 'CU', 'CU1', 'CO', 'NI', 'CD', 'HG', 'CL', 'BR', 'IOD', 'FLO', 'F', 'AL',
+        'PT', 'AU', 'AG', 'PB', 'SO4', 'PO4']),
+
+    /**
+     * Remove spurious bonds that 3Dmol's distance-based bond assignment creates BETWEEN distinct
+     * hetero groups (and between a ligand and protein). AlphaFill transplants many alternative
+     * ligands into the same site, so their atoms overlap and get cross-bonded — making everything
+     * look covalently joined (e.g. a sodium "bonded" to a ligand). We keep only intra-group bonds.
+     */
+    _sanitizeLigandBonds() {
+        const model = this.viewer?.getModel?.();
+        const atoms = model?.selectedAtoms?.({}) || [];
+        if (!atoms.length) return;
+        const byIdx = new Map(atoms.map(a => [a.index, a]));
+        for (const a of atoms) {
+            if (!a.bonds || !a.bonds.length) continue;
+            const keepB = [], keepO = [];
+            for (let k = 0; k < a.bonds.length; k++) {
+                const b = byIdx.get(a.bonds[k]);
+                if (!b) continue;
+                const sameGroup = a.chain === b.chain && a.resi === b.resi && a.resn === b.resn;
+                // Drop any bond involving a hetero atom that crosses groups (ligand↔ligand,
+                // ligand↔protein, ligand↔ion); keep protein backbone and intra-ligand bonds.
+                if (((a.hetflag || b.hetflag) && !sameGroup)) continue;
+                keepB.push(a.bonds[k]); keepO.push(a.bondOrder ? a.bondOrder[k] : 1);
+            }
+            a.bonds = keepB; a.bondOrder = keepO;
+        }
+    },
 
     /**
      * Show ligands/cofactors (HETATM) as licorice for ANY structure that has them — AlphaFill
-     * transplanted cofactors, experimental-structure ligands, etc. Bulk water is hidden. Called
-     * after every cartoon (re)style (setStyle replaces per-atom styles, so this re-adds them).
+     * transplanted cofactors, experimental-structure ligands, etc. Bulk water is always hidden;
+     * monatomic ions are hidden when excludeIons is set. Called after every cartoon (re)style.
      */
     _drawLigands() {
         if (this.showLigands === false || !this.viewer) return;
         this.viewer.addStyle({ hetflag: true }, { stick: { radius: 0.18, colorscheme: 'Jmol' }, sphere: { radius: 0.35, colorscheme: 'Jmol' } });
-        this.viewer.setStyle({ resn: ['HOH', 'WAT', 'DOD'] }, {}); // hide water / heavy water
+        const hide = ['HOH', 'WAT', 'DOD'];
+        if (this.excludeIons) hide.push(...this.ION_CODES);
+        this.viewer.setStyle({ resn: hide }, {});
+    },
+
+    // Brighten the hovered ligand and label it with its CCD code (cleared on hover-out / move).
+    _hoverLigand(atom) {
+        if (this._inFocusMode || this.showLigands === false) return;
+        if (this.excludeIons && this.ION_CODES.has(atom.resn)) return; // hidden ion
+        const key = `${atom.chain ?? ''}|${atom.resi}|${atom.resn}`;
+        if (this._hoverLigKey === key) return;
+        this._clearLigandHover();
+        this._hoverLigKey = key;
+        const sel = { resn: atom.resn, resi: atom.resi, ...(atom.chain != null ? { chain: atom.chain } : {}) };
+        this.viewer.setStyle(sel, { stick: { radius: 0.32, color: '#ffeb3b' }, sphere: { radius: 0.5, color: '#ffeb3b' } });
+        try {
+            this._hoverLabel = this.viewer.addLabel(atom.resn, {
+                position: { x: atom.x, y: atom.y, z: atom.z },
+                backgroundColor: '#11161f', backgroundOpacity: 0.9, fontColor: '#ffeb3b', fontSize: 13, borderThickness: 0,
+            });
+        } catch (_) {}
+        this.viewer.render();
+    },
+
+    _clearLigandHover() {
+        if (!this._hoverLigKey) return;
+        const [chain, resi, resn] = this._hoverLigKey.split('|');
+        this.viewer.setStyle({ resn, resi: parseInt(resi, 10), ...(chain ? { chain } : {}) },
+            { stick: { radius: 0.18, colorscheme: 'Jmol' }, sphere: { radius: 0.35, colorscheme: 'Jmol' } });
+        if (this._hoverLabel) { try { this.viewer.removeLabel(this._hoverLabel); } catch (_) {} this._hoverLabel = null; }
+        this._hoverLigKey = null;
+        this.viewer.render();
     },
 
     /** Shared helper: apply cartoon color styles for a given mode (used by applyCartoonColoring and focusResidue). */
@@ -591,11 +656,18 @@ const StructureViewer = {
         this.viewer.setHoverable({}, true,
             (atom, _v, ev) => {
                 if (!atom?.resi) return;
+                // Ligand hover: brighten that ligand and label it with its CCD code.
+                if (atom.hetflag && atom.resn !== 'HOH' && atom.resn !== 'WAT') {
+                    self._hoverLigand(atom);
+                    if (self.hoverCb) self.hoverCb(null, mode, null);
+                    return;
+                }
+                if (self._hoverLigKey) self._clearLigandHover();
                 const uniResi = resolveUni(atom);
                 const d = map.get(uniResi);
                 if (d && self.hoverCb) self.hoverCb(d, mode, ev, atom.chain);
             },
-            () => { if (self.hoverCb) self.hoverCb(null, mode, null); }
+            () => { self._clearLigandHover(); if (self.hoverCb) self.hoverCb(null, mode, null); }
         );
         // Click is bound on the WHOLE model ({}) so EVERY residue is clickable — not just
         // annotated ones.  Unannotated residues fall back to a bare { position } payload so the

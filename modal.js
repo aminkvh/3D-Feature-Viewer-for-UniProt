@@ -117,7 +117,7 @@ const UFVModal = (() => {
                         <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button></div></div>
                         <div id="ufv-ptm-list"></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-sites-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-ptm-all">All</button><button class="ufv-section-btn" id="ufv-sites-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-ptm-body"><div id="ufv-sites-ptm-list"></div></div></div>
-                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-ligands-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-ligands-ptm-all">All</button><button class="ufv-section-btn" id="ufv-ligands-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-ptm-body"><div id="ufv-ligands-ptm-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-ligands-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><label class="ufv-toggle-switch ufv-ions-toggle" title="Exclude water &amp; ions"><input type="checkbox" id="ufv-ligands-ions-ptm"><span class="ufv-toggle-slider"></span></label><button class="ufv-section-btn" id="ufv-ligands-ptm-all">All</button><button class="ufv-section-btn" id="ufv-ligands-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-ptm-body"><div id="ufv-ligands-ptm-list"></div></div></div>
                     </div>
                     <div id="ufv-var-panel" class="ufv-filter-scroll ufv-hidden">
                         <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button></div></div><div id="ufv-dis-list"></div></div>
@@ -125,7 +125,7 @@ const UFVModal = (() => {
                         <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
-                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-var"><div class="ufv-collapsible-hdr" id="ufv-ligands-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-ligands-var-all">All</button><button class="ufv-section-btn" id="ufv-ligands-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-var-body"><div id="ufv-ligands-var-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-var"><div class="ufv-collapsible-hdr" id="ufv-ligands-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><label class="ufv-toggle-switch ufv-ions-toggle" title="Exclude water &amp; ions"><input type="checkbox" id="ufv-ligands-ions-var"><span class="ufv-toggle-slider"></span></label><button class="ufv-section-btn" id="ufv-ligands-var-all">All</button><button class="ufv-section-btn" id="ufv-ligands-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-var-body"><div id="ufv-ligands-var-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
                     <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show/hide annotation spheres"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
@@ -244,12 +244,23 @@ const UFVModal = (() => {
         byId('ufv-sites-var-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-sites-var-body', 'ufv-sites-var-toggle'); });
         byId('ufv-sites-var-all').addEventListener('click', () => sitesSetAll(true));
         byId('ufv-sites-var-none').addEventListener('click', () => sitesSetAll(false));
-        byId('ufv-ligands-ptm-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-ligands-ptm-body', 'ufv-ligands-ptm-toggle'); });
-        byId('ufv-ligands-var-toggle').addEventListener('click', e => { if (!e.target.closest('button')) toggleCollapsible('ufv-ligands-var-body', 'ufv-ligands-var-toggle'); });
+        const ligHdrClick = (body, tog) => e => { if (!e.target.closest('button') && !e.target.closest('.ufv-toggle-switch')) toggleCollapsible(body, tog); };
+        byId('ufv-ligands-ptm-toggle').addEventListener('click', ligHdrClick('ufv-ligands-ptm-body', 'ufv-ligands-ptm-toggle'));
+        byId('ufv-ligands-var-toggle').addEventListener('click', ligHdrClick('ufv-ligands-var-body', 'ufv-ligands-var-toggle'));
         byId('ufv-ligands-ptm-all').addEventListener('click', () => ligandsSetAll(true));
         byId('ufv-ligands-ptm-none').addEventListener('click', () => ligandsSetAll(false));
         byId('ufv-ligands-var-all').addEventListener('click', () => ligandsSetAll(true));
         byId('ufv-ligands-var-none').addEventListener('click', () => ligandsSetAll(false));
+        // Exclude water & ions — synced between the two panels' toggles.
+        const onIonsToggle = checked => {
+            StructureViewer.excludeIons = checked;
+            byId('ufv-ligands-ions-ptm').checked = checked;
+            byId('ufv-ligands-ions-var').checked = checked;
+            buildLigandFilters();
+            applyMode();
+        };
+        byId('ufv-ligands-ions-ptm').addEventListener('change', e => onIonsToggle(e.target.checked));
+        byId('ufv-ligands-ions-var').addEventListener('change', e => onIonsToggle(e.target.checked));
         byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
         // Header sphere-visibility toggle: controls whether other annotation spheres stay visible
         // while zoomed into a residue.  Always available (PTM / variant / disease views).
@@ -824,19 +835,28 @@ const UFVModal = (() => {
 
     function buildLigandFilters() {
         const s = UFVState.state;
+        const ions = StructureViewer.ION_CODES || new Set();
+        const excludeIons = !!StructureViewer.excludeIons;
+        const ligs = s.ligands.filter(l => !(excludeIons && ions.has(l.resn)));
+        const sel = s.selectedLigand;
+        const isSel = lig => sel && sel.resn === lig.resn && sel.resi === lig.resi && sel.chain === lig.chain;
         [['ufv-ligands-section-ptm', 'ufv-ligands-ptm-list'], ['ufv-ligands-section-var', 'ufv-ligands-var-list']].forEach(([secId, listId]) => {
             const section = byId(secId), list = byId(listId);
             if (!section || !list) return;
             list.textContent = '';
             if (!s.ligands.length) { section.classList.add('ufv-hidden'); return; }
             section.classList.remove('ufv-hidden');
-            s.ligands.forEach(lig => {
-                const item = document.createElement('button');
-                item.className = 'ufv-ligand-item';
-                item.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? lig.chain + ' ' : ''}${lig.resi}</span>`;
-                item.addEventListener('click', () => onLigandClick({ resn: lig.resn, resi: lig.resi, chain: lig.chain }));
-                list.appendChild(item);
+            const grid = document.createElement('div');
+            grid.className = 'ufv-ligand-grid';
+            ligs.forEach(lig => {
+                const cell = document.createElement('button');
+                cell.className = 'ufv-ligand-cell' + (isSel(lig) ? ' selected' : '');
+                cell.title = `${lig.resn} — chain ${lig.chain || '?'} ${lig.resi}`;
+                cell.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? lig.chain + ' ' : ''}${lig.resi}</span>`;
+                cell.addEventListener('click', () => onLigandClick({ resn: lig.resn, resi: lig.resi, chain: lig.chain }));
+                grid.appendChild(cell);
             });
+            list.appendChild(grid);
         });
     }
 
@@ -1414,6 +1434,7 @@ const UFVModal = (() => {
         s.selectedLigand = lig;
         s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain, { showOtherSpheres: _showOtherSpheres }) || new Set();
         renderLigandPanel(lig);
+        buildLigandFilters(); // refresh the list so the selected ligand is boxed
         renderSequence();
     }
 
