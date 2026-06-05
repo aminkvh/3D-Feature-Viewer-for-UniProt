@@ -13,7 +13,8 @@
     "https://files.rcsb.org/*",
     "https://swissmodel.expasy.org/*",
     "https://www.modelarchive.org/*",
-    "https://alphafill.eu/*"
+    "https://alphafill.eu/*",
+    "https://pubchem.ncbi.nlm.nih.gov/*"
   ],
   "content_scripts": [
     {

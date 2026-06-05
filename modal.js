@@ -1429,40 +1429,31 @@ const UFVModal = (() => {
         return chip;
     }
 
-    // Lightweight, library-free structural fingerprint: the set of 2- and 3-character n-grams of
-    // the canonical SMILES. Crude (it's a SMILES-string similarity, not a true circular/ECFP
-    // fingerprint) but dependency-free and fine for ranking the handful of ligands in one model.
-    function ligandFingerprint(smiles) {
-        const s = (smiles || '').replace(/\s+/g, '');
-        const fp = new Map(); // n-gram → count (multiset, so e.g. ATP's extra phosphate counts)
-        for (const n of [2, 3]) for (let i = 0; i + n <= s.length; i++) {
-            const g = n + s.slice(i, i + n);
-            fp.set(g, (fp.get(g) || 0) + 1);
-        }
-        return fp;
-    }
-    function tanimoto(a, b) {
-        if (!a.size || !b.size) return 0;
+    // Exact Tanimoto over two PubChem 881-bit substructure fingerprints.
+    function tanimoto881(a, b) {
+        if (!a || !b) return 0;
         let inter = 0, union = 0;
-        new Set([...a.keys(), ...b.keys()]).forEach(k => {
-            const ca = a.get(k) || 0, cb = b.get(k) || 0;
-            inter += Math.min(ca, cb); union += Math.max(ca, cb);
-        });
+        for (let k = 0; k < 881; k++) { inter += a[k] & b[k]; union += a[k] | b[k]; }
         return union ? inter / union : 0;
     }
 
     // Rank the OTHER ligands loaded in the model by Tanimoto similarity to the focused ligand and
     // show them as a collapsible 3-column grid (like AlphaMissense); clicking one focuses it.
-    async function renderSimilarLigands(lig, focusSmiles, sectionEl) {
+    // Similarity uses the published PubChem 2D substructure fingerprint (CACTVS 881-bit keys).
+    async function renderSimilarLigands(lig, focusMeta, sectionEl) {
         const s = UFVState.state;
         const others = new Map(); // CCD → representative instance
         s.ligands.forEach(l => { if (l.resn !== lig.resn && !others.has(l.resn)) others.set(l.resn, l); });
-        if (!others.size || !focusSmiles) { sectionEl.classList.add('ufv-hidden'); return; }
-        const focusFp = ligandFingerprint(focusSmiles);
-        // Cap the candidate set — AlphaFill models can carry dozens of transplanted ligands.
-        const ranked = (await Promise.all([...others.values()].slice(0, 30).map(async inst => {
+        if (!others.size || !focusMeta?.inchikey) { sectionEl.classList.add('ufv-hidden'); return; }
+        const focusFp = await UFVApi.getLigandFingerprint(focusMeta.inchikey);
+        if (UFVState.state.selectedLigand !== lig) return;
+        if (!focusFp) { sectionEl.classList.add('ufv-hidden'); return; }
+        // Cap the candidate set — AlphaFill models can carry dozens of transplanted ligands, and
+        // each candidate needs an RCSB + a PubChem lookup (both cached).
+        const ranked = (await Promise.all([...others.values()].slice(0, 20).map(async inst => {
             const m = await UFVApi.getLigandInfo(inst.resn);
-            return { inst, score: tanimoto(focusFp, ligandFingerprint(m?.smiles)) };
+            const fp = m?.inchikey ? await UFVApi.getLigandFingerprint(m.inchikey) : null;
+            return { inst, score: tanimoto881(focusFp, fp) };
         }))).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
         if (UFVState.state.selectedLigand !== lig) return;       // user moved on
         if (!ranked.length) { sectionEl.classList.add('ufv-hidden'); return; }
@@ -1478,8 +1469,8 @@ const UFVModal = (() => {
         ranked.forEach(({ inst, score }) => {
             const cell = document.createElement('button');
             cell.className = 'ufv-am-cell ufv-sim-cell';
-            cell.title = `Tanimoto ${score.toFixed(2)} — click to focus`;
-            cell.innerHTML = `<span class="ufv-am-cell-mut" style="color:#fbc02d">${_esc(inst.resn)}</span><span class="ufv-am-cell-sc">${score.toFixed(2)}</span>`;
+            cell.title = `PubChem 2D-fingerprint Tanimoto ${score.toFixed(2)} — click to focus`;
+            cell.innerHTML = `<span class="ufv-am-cell-mut">${_esc(inst.resn)}</span><span class="ufv-am-cell-sc">${score.toFixed(2)}</span>`;
             cell.addEventListener('click', () => onLigandClick({ resn: inst.resn, resi: inst.resi, chain: inst.chain }));
             grid.appendChild(cell);
         });
@@ -1526,7 +1517,7 @@ const UFVModal = (() => {
             // Bail if the user moved on to a different ligand/residue meanwhile.
             if (UFVState.state.selectedLigand !== lig) return;
             info.textContent = '';
-            renderSimilarLigands(lig, meta?.smiles, simSection);
+            renderSimilarLigands(lig, meta, simSection);
             const addRow = (label, valueNode) => {
                 const r = document.createElement('div');
                 r.className = 'ufv-detail-row';

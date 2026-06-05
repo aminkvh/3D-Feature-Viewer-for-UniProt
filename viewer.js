@@ -330,11 +330,15 @@ const StructureViewer = {
      */
     showLigands: true, // global "show all ligands" toggle (Ligands list All/None)
 
+    /**
+     * Show ligands/cofactors (HETATM) as licorice for ANY structure that has them — AlphaFill
+     * transplanted cofactors, experimental-structure ligands, etc. Bulk water is hidden. Called
+     * after every cartoon (re)style (setStyle replaces per-atom styles, so this re-adds them).
+     */
     _drawLigands() {
-        const st = this.currentStructure;
-        if (this.showLigands === false) return;
-        if (!st || !/alphafill/i.test(st.provider || st.label || '')) return;
+        if (this.showLigands === false || !this.viewer) return;
         this.viewer.addStyle({ hetflag: true }, { stick: { radius: 0.18, colorscheme: 'Jmol' }, sphere: { radius: 0.35, colorscheme: 'Jmol' } });
+        this.viewer.setStyle({ resn: ['HOH', 'WAT', 'DOD'] }, {}); // hide water / heavy water
     },
 
     /** Shared helper: apply cartoon color styles for a given mode (used by applyCartoonColoring and focusResidue). */
@@ -670,7 +674,9 @@ const StructureViewer = {
         this._inFocusMode = true;
         const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
-        this._drawLigands();
+        // NB: do NOT draw all ligands here — in a residue zoom view, showing every ligand clutters
+        // the pocket. Ligands that fall within the focused neighbourhood are already drawn as
+        // sticks below (via the `nearby` set).
 
         // Keep every OTHER annotation sphere visible — controlled by opts.showOtherSpheres (default true).
         if (opts.showOtherSpheres !== false) {

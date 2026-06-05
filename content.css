@@ -25,6 +25,7 @@
     --ufv-viewer-bg: #0c111b;
     --ufv-tooltip-bg: rgba(17,24,39,0.92);
     --ufv-filter-count-bg: rgba(255,255,255,0.04);
+    --ufv-ligand-color: #fbc02d;
 }
 
 /* Light mode via browser preference */
@@ -51,6 +52,7 @@
         --ufv-viewer-bg: #f0f2f5;
         --ufv-tooltip-bg: rgba(255,255,255,0.96);
         --ufv-filter-count-bg: rgba(0,0,0,0.06);
+        --ufv-ligand-color: #8a5a00;
     }
 }
 
@@ -77,6 +79,7 @@
     --ufv-viewer-bg: #f0f2f5 !important;
     --ufv-tooltip-bg: rgba(255,255,255,0.96) !important;
     --ufv-filter-count-bg: rgba(0,0,0,0.06) !important;
+    --ufv-ligand-color: #8a5a00 !important;
 }
 
 /* Explicit dark mode class override */
@@ -102,6 +105,7 @@
     --ufv-viewer-bg: #0c111b !important;
     --ufv-tooltip-bg: rgba(17,24,39,0.92) !important;
     --ufv-filter-count-bg: rgba(255,255,255,0.04) !important;
+    --ufv-ligand-color: #fbc02d !important;
 }
 
 /* --- 3D Viewer Button injected next to section headings --- */
@@ -1534,12 +1538,14 @@
     text-align: left;
 }
 .ufv-ligand-item:hover { background: var(--ufv-bg-hover); }
-.ufv-ligand-ccd { font-family: 'Courier New', monospace; font-weight: 700; color: #fbc02d; }
+.ufv-ligand-ccd { font-family: 'Courier New', monospace; font-weight: 700; color: var(--ufv-ligand-color); }
 .ufv-ligand-loc { font-size: 10.5px; color: var(--ufv-text-secondary); }
 
 /* Similar-ligand cells (clickable, reuse the AlphaMissense cell look) */
 .ufv-sim-cell { cursor: pointer; border: 1px solid transparent; }
-.ufv-sim-cell:hover { border-color: #fbc02d66; }
+.ufv-sim-cell:hover { border-color: var(--ufv-ligand-color); }
+.ufv-sim-cell .ufv-am-cell-mut { color: var(--ufv-ligand-color); }
+.ufv-sim-cell .ufv-am-cell-sc { color: var(--ufv-text-primary); opacity: 1; }
 
 /* --- Hidden utility --- */
 .ufv-hidden { display: none !important; }
