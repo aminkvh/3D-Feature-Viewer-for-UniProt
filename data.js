@@ -134,15 +134,24 @@ const DataProcessor = {
      */
     extractSites(featuresData) {
         if (!featuresData || !featuresData.features) return [];
+        // Point-like "interesting site" feature types. DNA_BIND is deliberately excluded — it is a
+        // region/domain, not a single site, and would render misleading endpoint spheres.
+        const SITE_LABELS = { SITE: 'Site', ACT_SITE: 'Active site', BINDING: 'Binding site', METAL: 'Metal binding' };
         const out = [];
         featuresData.features.forEach(f => {
-            if (f.type !== 'SITE') return;
+            const typeLabel = SITE_LABELS[f.type];
+            if (!typeLabel) return;
             const pos = parseInt(f.begin);
             if (isNaN(pos)) return;
+            // SITE descriptions already name the site type (e.g. "Cleavage; by thrombin"); the
+            // other types often have a terse or empty description, so prefix the type label.
+            const description = f.type === 'SITE'
+                ? (f.description || 'Site')
+                : (f.description ? `${typeLabel}: ${f.description}` : typeLabel);
             out.push({
                 position: pos,
                 endPosition: parseInt(f.end) || pos,
-                description: f.description || 'Site',
+                description,
                 category: 'Site',
                 color: this.SITE_COLOR,
                 evidences: f.evidences || [],

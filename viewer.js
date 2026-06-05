@@ -316,7 +316,20 @@ const StructureViewer = {
         this.viewer.removeAllLabels();
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(mode, context, base);
+        this._drawLigands();
         if (!defer) this.viewer.render();
+    },
+
+    /**
+     * For AlphaFill models, draw the transplanted cofactors/ligands (HETATM) as licorice —
+     * the ligands are the whole point of an AlphaFill model, so showing only the protein cartoon
+     * would hide them. setStyle() in _applyModeStyles replaces all per-atom styles, so this must
+     * be called AFTER it on every (re)style.
+     */
+    _drawLigands() {
+        const st = this.currentStructure;
+        if (!st || !/alphafill/i.test(st.provider || st.label || '')) return;
+        this.viewer.addStyle({ hetflag: true }, { stick: { radius: 0.18, colorscheme: 'Jmol' }, sphere: { radius: 0.35, colorscheme: 'Jmol' } });
     },
 
     /** Shared helper: apply cartoon color styles for a given mode (used by applyCartoonColoring and focusResidue). */
@@ -483,6 +496,7 @@ const StructureViewer = {
         // objects (addSphere/addCylinder), not addStyle layers, so they must be reset here.
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext || {}, base);
+        this._drawLigands();
         return this.showPTMs(ptms, ptmGroups, sites);
     },
 
@@ -641,6 +655,7 @@ const StructureViewer = {
         this._inFocusMode = true;
         const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
+        this._drawLigands();
 
         // Keep every OTHER annotation sphere visible — controlled by opts.showOtherSpheres (default true).
         if (opts.showOtherSpheres !== false) {
