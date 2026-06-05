@@ -12,7 +12,8 @@
     "https://data.rcsb.org/*",
     "https://files.rcsb.org/*",
     "https://swissmodel.expasy.org/*",
-    "https://www.modelarchive.org/*"
+    "https://www.modelarchive.org/*",
+    "https://alphafill.eu/*"
   ],
   "content_scripts": [
     {

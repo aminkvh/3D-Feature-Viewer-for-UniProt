@@ -23,6 +23,7 @@ const UFVApi = (() => {
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
         'www.modelarchive.org', 'modelarchive.org', 'proteinensemble.org', 'pdb-ihm.org',
+        'alphafill.eu',
     ]);
     const RCSB_ENTRY_INSTANCES = (pdbId) =>
         'https://data.rcsb.org/graphql?query=' + encodeURIComponent(

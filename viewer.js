@@ -83,7 +83,7 @@ const StructureViewer = {
         // computed-model providers surfaced via 3D-Beacons).
         const ALLOWED_HOSTS = ['alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org',
             'swissmodel.expasy.org', 'www.modelarchive.org', 'modelarchive.org',
-            'proteinensemble.org', 'pdb-ihm.org'];
+            'proteinensemble.org', 'pdb-ihm.org', 'alphafill.eu'];
         let parsed;
         try {
             parsed = new URL(pdbUrl);

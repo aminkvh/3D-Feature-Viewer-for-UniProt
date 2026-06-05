@@ -130,22 +130,29 @@ const UFVInjector = (() => {
             });
         }
         if (!runtime.entryPoll) {
+            // Poll quickly at first so the button appears promptly once the section renders,
+            // then stop once both buttons exist (the MutationObserver remains as the long-term
+            // safety net for sections that render later, e.g. on scroll).  400 ms × 40 ≈ 16 s.
             let attempts = 0;
             runtime.entryPoll = setInterval(() => {
                 tryInjectPTMButton();
                 tryInjectVariantButton();
                 attempts++;
-                if ((document.getElementById('ufv-btn-ptm') && document.getElementById('ufv-btn-variant')) || attempts > 80) {
+                if ((document.getElementById('ufv-btn-ptm') && document.getElementById('ufv-btn-variant')) || attempts > 40) {
                     clearInterval(runtime.entryPoll);
                     runtime.entryPoll = null;
                 }
-            }, 1500);
+            }, 400);
         }
         // NOTE: scroll listener removed — MutationObserver already covers lazy-loaded
         // section re-renders, and the scroll listener was racing with UniProt's
         // IntersectionObserver that drives the sidebar active-indicator.
-        tryInjectPTMButton();
-        tryInjectVariantButton();
+        // Immediate burst of attempts for a snappy first paint (covers the common case where
+        // the sections are already in the DOM at document_idle).
+        [0, 120, 300, 600, 1000].forEach(d => setTimeout(() => {
+            tryInjectPTMButton();
+            tryInjectVariantButton();
+        }, d));
     }
 
     function injectVariantViewerButton() {
@@ -158,9 +165,9 @@ const UFVInjector = (() => {
                     clearInterval(runtime.variantPoll);
                     runtime.variantPoll = null;
                 }
-            }, 1500);
+            }, 500);
         }
-        tryInjectVariantViewerButton();
+        [0, 120, 300, 600, 1000].forEach(d => setTimeout(tryInjectVariantViewerButton, d));
     }
 
     function handlePageType() {

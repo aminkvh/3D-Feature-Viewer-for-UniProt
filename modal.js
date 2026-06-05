@@ -124,7 +124,7 @@ const UFVModal = (() => {
                         <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
                     </div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
-                    <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show other PTM / variant spheres while zoomed into a residue"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
+                    <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show/hide annotation spheres"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
                 </div>
             </div>
         </div>`;
@@ -394,6 +394,7 @@ const UFVModal = (() => {
             showError('No AlphaFold or mapped PDB structure is available for this protein.');
             return;
         }
+        resetViewerTransients(); // clean slate on every structure (re)load / launch
         const alreadyLoaded = StructureViewer.currentStructure?.url === structure.url;
         if (!alreadyLoaded) {
             showLoading(`Loading ${structure.label}...`);
@@ -535,6 +536,26 @@ const UFVModal = (() => {
             opt.classList.toggle('selected', opt.dataset.value === value);
             if (opt.dataset.value === value && btn) btn.textContent = opt.textContent;
         });
+    }
+
+    // Reset transient viewer state to defaults — run on every structure (re)load and on launch
+    // so switching structures or reopening the viewer always starts clean.
+    function resetViewerTransients() {
+        const s = UFVState.state;
+        s.selectedResidue = null;
+        s.selectedChain = null;
+        s.nearbyResidues = new Set();
+        byId('ufv-details')?.classList.remove('show');
+        _proximityLinesOn = false;
+        _showOtherSpheres = true;
+        const chk = byId('ufv-sphere-chk'); if (chk) chk.checked = true;
+        StructureViewer.clearProximityLines?.();
+        s.analysis.ptmVariantProximity = null; // structure-dependent → recompute on next click
+        // Coloring resets to the configured default (cyan unless changed; never the pocket mode).
+        let mode = s.settings.coloringMode;
+        if (mode === 'prism' || mode === 'topos') mode = 'default';
+        setColorMode(mode);
+        byId('ufv-sens-wrap')?.classList.add('ufv-hidden');
     }
 
     function updateStructureMeta() {
@@ -1159,7 +1180,7 @@ const UFVModal = (() => {
             _lastProximityArgs = { ptmPos: pos, pairs: linePairs, geometry: geo };
             if (_proximityLinesOn && linePairs.length) StructureViewer.showProximityLines(pos, linePairs, geo);
 
-            const { lbl: linesToggleLbl, chk: linesChk } = makeToggle(_proximityLinesOn, 'Show/hide distance lines to nearby variants');
+            const { lbl: linesToggleLbl, chk: linesChk } = makeToggle(_proximityLinesOn, 'Show/hide distances');
             linesChk.addEventListener('change', () => {
                 _proximityLinesOn = linesChk.checked;
                 if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
