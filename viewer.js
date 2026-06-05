@@ -314,6 +314,7 @@ const StructureViewer = {
         this._inFocusMode = false; // exit focus mode on any full re-color
         this.viewer.removeAllShapes();
         this.viewer.removeAllLabels();
+        this.viewer.setStyle({}, {}); // wipe accumulated sphere/stick addStyle records
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(mode, context, base);
         this._drawLigands();
@@ -430,7 +431,7 @@ const StructureViewer = {
             const positions = [site.position, site.endPosition].filter((p, i, a) => p && a.indexOf(p) === i);
             positions.forEach(pos => {
                 if (hoverMap.has(pos)) return; // PTM/variant sphere already here
-                const placed = this.allChainsAddStyle(pos, { sphere: { radius: 1.7, color: site.color, opacity: 0.95 } }, { atom: 'CA' });
+                const placed = this.allChainsAddStyle(pos, { sphere: { radius: 1.8, color: site.color, opacity: 0.92 } }, { atom: 'CA' });
                 if (!placed) return;
                 hoverMap.set(pos, { position: pos, color: site.color, isSite: true, description: site.description, category: 'Site' });
                 active.set(pos, site.color);
@@ -491,9 +492,12 @@ const StructureViewer = {
     refreshPTMDisplay(ptms, ptmGroups, sites = []) {
         if (!this.viewer || this._inFocusMode) return false;
         this.viewer.removeAllLabels();
-        // Re-apply the base cartoon styles to clear any accumulated addStyle sphere layers
-        // from previous showPTMs() calls — 3Dmol's removeAllShapes() only removes geometry
-        // objects (addSphere/addCylinder), not addStyle layers, so they must be reset here.
+        // Hard-clear ALL per-atom style records first.  setStyle({}, {cartoon}) replaces the
+        // cartoon property but may leave sphere properties from previous addStyle calls intact
+        // in 3Dmol's internal style list, causing spheres to accumulate brightness each call.
+        // The empty setStyle({}, {}) wipes every style record from every atom before we
+        // re-apply the cartoon and then add spheres cleanly.
+        this.viewer.setStyle({}, {});
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext || {}, base);
         this._drawLigands();

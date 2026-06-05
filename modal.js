@@ -763,16 +763,23 @@ const UFVModal = (() => {
 
     function buildSiteFilters() {
         const s = UFVState.state;
-        [['ufv-sites-section-ptm', 'ufv-sites-ptm-list'], ['ufv-sites-section-var', 'ufv-sites-var-list']].forEach(([secId, listId]) => {
+        const PANEL_PAIRS = [['ufv-sites-section-ptm', 'ufv-sites-ptm-list'], ['ufv-sites-section-var', 'ufv-sites-var-list']];
+        PANEL_PAIRS.forEach(([secId, listId]) => {
             const section = byId(secId), list = byId(listId);
             if (!section || !list) return;
             list.textContent = '';
             if (!s.sites.length) { section.classList.add('ufv-hidden'); return; }
             section.classList.remove('ufv-hidden');
-            s.sites.forEach(site => {
+            s.sites.forEach((site, idx) => {
                 const range = site.endPosition && site.endPosition !== site.position ? `${site.position}–${site.endPosition}` : `${site.position}`;
                 list.appendChild(makeFilterItem(`Residue ${range}: ${site.description}`, site.color, '', !!site.visible, checked => {
                     site.visible = checked;
+                    // Mirror the change in the other panel's checkbox for this site index.
+                    PANEL_PAIRS.forEach(([, otherId]) => {
+                        if (otherId === listId) return;
+                        const cb = byId(otherId)?.querySelectorAll('input[type="checkbox"]')[idx];
+                        if (cb) cb.checked = checked;
+                    });
                     applySiteChange();
                 }));
             });
