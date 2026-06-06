@@ -1595,27 +1595,8 @@ const UFVModal = (() => {
         const posCell = document.createElement('div');
         posCell.className = 'ufv-detail-cell';
         posCell.innerHTML = `<span class="ufv-detail-lbl">Position</span><span class="ufv-detail-val">${pos}</span>`;
-        const nearCell = document.createElement('div');
-        nearCell.className = 'ufv-detail-cell';
-        // Colour each nearby residue number by its annotation (variant consequence / PTM) so a
-        // nearby disease variant stands out — same colour map used for the focus sticks. Each is
-        // clickable: clicking re-focuses that residue (same as clicking it in the 3-D view).
-        const nearLbl = document.createElement('span'); nearLbl.className = 'ufv-detail-lbl'; nearLbl.textContent = 'Nearby';
-        const nearVal = document.createElement('span'); nearVal.className = 'ufv-detail-val ufv-nearby-val';
-        const sortedNearby = Array.from(s.nearbyResidues).sort((a, b) => a - b);
-        sortedNearby.forEach((p, i) => {
-            const span = document.createElement('span');
-            span.className = 'ufv-nearby-res';
-            span.textContent = p;
-            const c = annotations.get(p)?.color;
-            if (c) span.style.color = c;
-            span.title = `Focus residue ${p}`;
-            span.addEventListener('click', () => onClick({ position: p }, null, s.selectedChain));
-            nearVal.appendChild(span);
-            if (i < sortedNearby.length - 1) nearVal.appendChild(document.createTextNode(', '));
-        });
-        nearCell.append(nearLbl, nearVal);
-        topGrid.append(posCell, nearCell);
+        // Nearby residues — clickable; clicking re-focuses that residue (same as clicking in 3-D).
+        topGrid.append(posCell, makeNearbyCell(s.selectedChain));
         body.appendChild(topGrid);
 
         // ── PTM annotations ─────────────────────────────────────────────────────
@@ -1917,12 +1898,13 @@ const UFVModal = (() => {
         const titleEl = byId('ufv-details-title');
         titleEl.textContent = lig.resn;
 
-        // CCD | Nearby grid.
+        // CCD | Nearby grid. Nearby residues are clickable (focus that residue).
         const topGrid = document.createElement('div');
         topGrid.className = 'ufv-detail-grid';
-        topGrid.innerHTML =
-            `<div class="ufv-detail-cell"><span class="ufv-detail-lbl">Ligand</span><span class="ufv-detail-val">${_esc(lig.resn)} (CCD)</span></div>` +
-            `<div class="ufv-detail-cell"><span class="ufv-detail-lbl">Nearby</span><span class="ufv-detail-val ufv-nearby-val">${Array.from(s.nearbyResidues).sort((a, b) => a - b).join(', ') || '—'}</span></div>`;
+        const ligCell = document.createElement('div');
+        ligCell.className = 'ufv-detail-cell';
+        ligCell.innerHTML = `<span class="ufv-detail-lbl">Ligand</span><span class="ufv-detail-val">${_esc(lig.resn)} (CCD)</span>`;
+        topGrid.append(ligCell, makeNearbyCell(lig.chain));
         body.appendChild(topGrid);
 
         // Chemistry rows — populated asynchronously from the RCSB chemical component dictionary.
@@ -1994,6 +1976,32 @@ const UFVModal = (() => {
             for (let p = x.position; p <= end; p++) map.set(p, { color: x.color });
         });
         return map;
+    }
+
+    // Build a "Nearby" detail-cell whose residue numbers are clickable (clicking re-focuses that
+    // residue, in any window). Used by both the residue and ligand detail panels.
+    function makeNearbyCell(chain) {
+        const s = UFVState.state;
+        const annotations = buildAnnotationMap();
+        const cell = document.createElement('div');
+        cell.className = 'ufv-detail-cell';
+        const lbl = document.createElement('span'); lbl.className = 'ufv-detail-lbl'; lbl.textContent = 'Nearby';
+        const val = document.createElement('span'); val.className = 'ufv-detail-val ufv-nearby-val';
+        const sorted = Array.from(s.nearbyResidues).sort((a, b) => a - b);
+        if (!sorted.length) val.textContent = '—';
+        sorted.forEach((p, i) => {
+            const span = document.createElement('span');
+            span.className = 'ufv-nearby-res';
+            span.textContent = p;
+            const c = annotations.get(p)?.color;
+            if (c) span.style.color = c;
+            span.title = `Focus residue ${p}`;
+            span.addEventListener('click', () => onClick({ position: p }, null, chain ?? null));
+            val.appendChild(span);
+            if (i < sorted.length - 1) val.appendChild(document.createTextNode(', '));
+        });
+        cell.append(lbl, val);
+        return cell;
     }
 
     function makeFilterItem(label, color, count, checked, onChange) {
