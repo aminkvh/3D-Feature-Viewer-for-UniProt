@@ -63,12 +63,25 @@ const UFVInjector = (() => {
     }
 
     // Place the button inline, right after the section title text (inside the heading element),
-    // so it sits "by the title" yet stays on the heading's existing line box — it does not add
-    // height or reflow the sections below it, which would otherwise disturb UniProt's
-    // scroll/IntersectionObserver-driven left-nav active slider.
+    // so it sits "by the title" yet stays on the heading's existing line box.
     function placeAnchoredButton(heading, btn) {
         btn.classList.add('ufv-3d-btn--inline');
         heading.appendChild(btn);
+        // Injecting the button can nudge section offsets, and UniProt's left-nav active indicator
+        // caches those offsets — so e.g. the PTM section's nav link wouldn't highlight until a
+        // later section forced a recalc. Fire a debounced resize/scroll so the page recomputes its
+        // scroll-spy after we've (re)placed a button. Only runs when a button is actually added.
+        nudgeScrollSpy();
+    }
+
+    let _nudgeTimer = null;
+    function nudgeScrollSpy() {
+        if (_nudgeTimer) return;
+        _nudgeTimer = setTimeout(() => {
+            _nudgeTimer = null;
+            window.dispatchEvent(new Event('resize'));
+            window.dispatchEvent(new Event('scroll'));
+        }, 80);
     }
 
     function tryInjectPTMButton() {
@@ -179,9 +192,21 @@ const UFVInjector = (() => {
             // Cleared only when navigating to a non-entry page (handlePageType).
             runtime.entryPoll = setInterval(injectAllEntryButtons, 1000);
         }
-        // NOTE: scroll listener removed — MutationObserver already covers lazy-loaded
-        // section re-renders, and the scroll listener was racing with UniProt's
-        // IntersectionObserver that drives the sidebar active-indicator.
+        // Throttled scroll re-inject: UniProt virtualizes/unmounts off-screen sections on scroll,
+        // dropping our buttons; this re-adds them the moment a section scrolls back into view
+        // (faster than the 1 s keepalive). Safe vs. the sidebar indicator because it only mutates
+        // the DOM when a button is actually MISSING — when all are present it's a no-op, so it
+        // never reflows during normal scrolling.
+        if (!runtime.scrollBound) {
+            runtime.scrollBound = true;
+            let _lastScrollInject = 0;
+            window.addEventListener('scroll', () => {
+                const now = Date.now();
+                if (now - _lastScrollInject < 250) return;
+                _lastScrollInject = now;
+                if (!allEntryButtonsPresent()) injectAllEntryButtons();
+            }, { passive: true });
+        }
         // Immediate burst of attempts for a snappy first paint (covers the common case where
         // the sections are already in the DOM at document_idle).
         [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(injectAllEntryButtons, d));
