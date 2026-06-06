@@ -71,6 +71,8 @@ const UFVModal = (() => {
                         <div class="ufv-dl-menu" id="ufv-dl-menu">
                             <button class="ufv-dl-opt" id="ufv-dl-pdb">PDB file</button>
                             <button class="ufv-dl-opt" id="ufv-dl-csv">CSV annotation table</button>
+                            <button class="ufv-dl-opt" id="ufv-dl-pymol">PyMOL session (.pml)</button>
+                            <button class="ufv-dl-opt" id="ufv-dl-vmd">VMD session (.tcl)</button>
                         </div>
                     </div>
                     <button class="ufv-icon-btn" id="ufv-btn-screenshot" title="Screenshot">${ICON_CAMERA}</button>
@@ -232,6 +234,14 @@ const UFVModal = (() => {
         byId('ufv-dl-csv').addEventListener('click', () => {
             byId('ufv-dl-menu').classList.remove('open');
             exportCsv();
+        });
+        byId('ufv-dl-pymol').addEventListener('click', () => {
+            byId('ufv-dl-menu').classList.remove('open');
+            exportSession('pymol');
+        });
+        byId('ufv-dl-vmd').addEventListener('click', () => {
+            byId('ufv-dl-menu').classList.remove('open');
+            exportSession('vmd');
         });
         byId('ufv-ptm-all').addEventListener('click', () => ptmSetAll(true));
         byId('ufv-ptm-none').addEventListener('click', () => ptmSetAll(false));
@@ -2156,6 +2166,22 @@ const UFVModal = (() => {
             ? StructureViewer.ligandContactsByResidue(5) : null;
         const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure());
         UFVExport.downloadText(`${s.uniprotId}_residue_annotations.csv`, text, 'text/csv');
+    }
+
+    // Download a self-contained PyMOL/VMD script that recreates the current 3-D view (cartoon
+    // colours, annotation spheres, ligands) so the user can keep working from it in that program.
+    function exportSession(format) {
+        const s = UFVState.state;
+        const scene = StructureViewer.getSceneState?.();
+        if (!scene) return;
+        const st = UFVState.selectedStructure();
+        const objName = (st?.id || st?.pdbId || 'structure').toString().replace(/[^A-Za-z0-9_-]/g, '_');
+        const stem = `${s.uniprotId}_${objName}`;
+        if (format === 'vmd') {
+            UFVExport.downloadText(`${stem}.tcl`, UFVExport.buildVmdSession(scene, objName), 'text/plain');
+        } else {
+            UFVExport.downloadText(`${stem}.pml`, UFVExport.buildPymolSession(scene, objName), 'text/plain');
+        }
     }
 
     async function cycleStructure(delta) {

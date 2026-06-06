@@ -278,5 +278,175 @@ const UFVExport = (() => {
         return rows.join('\n');
     }
 
-    return { formatSelection, rewritePdbBeta, buildResidueMatrix, downloadText, copyText };
+    // ── Session export (PyMOL / VMD) ─────────────────────────────────────────────────────────────
+    // Parse '#rrggbb' or 'rgb(r,g,b)' into [r,g,b] floats in 0–1 (the form PyMOL/VMD want).
+    function colorToUnit(c) {
+        if (!c) return [0.5, 0.5, 0.5];
+        const m = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i.exec(c.trim());
+        if (m) return [(+m[1]) / 255, (+m[2]) / 255, (+m[3]) / 255];
+        const h = c.replace('#', '');
+        const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16);
+        return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+    }
+    const fix = n => n.toFixed(3);
+
+    // Group [{chain,resi,color}] by colour, then by chain → sorted resi list.
+    function groupByColor(items) {
+        const byColor = new Map(); // color → Map<chain, number[]>
+        items.forEach(({ chain, resi, color }) => {
+            if (!byColor.has(color)) byColor.set(color, new Map());
+            const byChain = byColor.get(color);
+            if (!byChain.has(chain)) byChain.set(chain, []);
+            byChain.get(chain).push(resi);
+        });
+        return byColor;
+    }
+
+    /**
+     * Build a self-contained PyMOL script (.pml) that reproduces the current view: it embeds the
+     * structure coordinates, loads them, then re-applies the cartoon colours, annotation spheres,
+     * and ligand sticks exactly as shown. Camera is auto-framed (orient) — orientation may differ.
+     */
+    function buildPymolSession(scene, objName = 'structure') {
+        if (!scene) return '';
+        const L = [];
+        L.push('# 3D Feature Viewer for UniProt — PyMOL session');
+        L.push(`# Coloring mode: ${scene.coloringMode}`);
+        L.push('from pymol import cmd, util');
+        L.push('python');
+        L.push('import tempfile, os');
+        L.push('_data = r"""');
+        L.push(scene.coordinates.replace(/\r\n/g, '\n').replace(/\s+$/,''));
+        L.push('"""');
+        L.push(`_fd, _p = tempfile.mkstemp(suffix=".${scene.format}")`);
+        L.push('with os.fdopen(_fd, "w") as _fh: _fh.write(_data)');
+        L.push(`cmd.load(_p, "${objName}")`);
+        L.push('os.remove(_p)');
+        L.push('python end');
+        L.push('');
+        L.push('hide everything');
+        L.push('bg_color white');
+        L.push('show cartoon, polymer');
+        L.push(`set cartoon_transparency, ${fix(1 - scene.cartoonOpacity)}`);
+        // Base cartoon colour.
+        const [br, bg, bb] = colorToUnit(scene.cartoonBase);
+        L.push(`set_color ufv_base, [${fix(br)}, ${fix(bg)}, ${fix(bb)}]`);
+        L.push('color ufv_base, polymer');
+        // Per-residue cartoon overrides.
+        let ci = 0;
+        groupByColor(scene.cartoon).forEach((byChain, color) => {
+            const name = `ufv_c${ci++}`;
+            const [r, g, b] = colorToUnit(color);
+            L.push(`set_color ${name}, [${fix(r)}, ${fix(g)}, ${fix(b)}]`);
+            L.push(`color ${name}, (${pymolSel(byChain)})`);
+        });
+        // Annotation Cα spheres.
+        if (scene.spheres.length) {
+            const sphereSels = [];
+            let si = 0;
+            groupByColor(scene.spheres).forEach((byChain, color) => {
+                const name = `ufv_s${si++}`;
+                const [r, g, b] = colorToUnit(color);
+                const sel = `(${pymolSel(byChain)}) and name CA`;
+                sphereSels.push(sel);
+                L.push(`set_color ${name}, [${fix(r)}, ${fix(g)}, ${fix(b)}]`);
+                L.push(`show spheres, ${sel}`);
+                L.push(`color ${name}, ${sel}`);
+            });
+            L.push(`select ufv_spheres, (${sphereSels.join(') or (')})`);
+            L.push(`alter ufv_spheres, vdw=${fix(scene.sphereRadius)}`);
+            L.push('set sphere_scale, 1.0, ufv_spheres');
+            L.push(`set sphere_transparency, ${fix(1 - scene.sphereOpacity)}, ufv_spheres`);
+            L.push('rebuild');
+            L.push('deselect');
+        }
+        // Ligands / cofactors: sticks coloured by element; ions as small spheres.
+        if (scene.ligands.length) {
+            L.push('show sticks, (not polymer and not solvent)');
+            L.push('util.cnc (not polymer and not solvent)');
+            const ions = scene.ligands.filter(l => l.ion);
+            if (ions.length) {
+                const byChain = new Map();
+                ions.forEach(({ chain, resi }) => { if (!byChain.has(chain)) byChain.set(chain, []); byChain.get(chain).push(resi); });
+                L.push(`show spheres, (${pymolSel(byChain)})`);
+            }
+        }
+        L.push('orient');
+        return L.join('\n') + '\n';
+    }
+
+    // PyMOL selection from Map<chain, resi[]>: '(chain A and resi 1+2+3) or (resi 9+10)'.
+    function pymolSel(byChain) {
+        const parts = [];
+        byChain.forEach((resis, chain) => {
+            const list = [...new Set(resis)].sort((a, b) => a - b).join('+');
+            parts.push(chain ? `chain ${chain} and resi ${list}` : `resi ${list}`);
+        });
+        return parts.join(') or (');
+    }
+
+    // VMD resid list (space-separated) per chain.
+    function vmdSelParts(byChain) {
+        const parts = [];
+        byChain.forEach((resis, chain) => {
+            const list = [...new Set(resis)].sort((a, b) => a - b).join(' ');
+            parts.push(chain ? `(chain ${chain} and resid ${list})` : `(resid ${list})`);
+        });
+        return parts.join(' or ');
+    }
+
+    /**
+     * Build a self-contained VMD script (.tcl/.vmd): writes the embedded coordinates to a file in
+     * the current directory, loads it, then adds one representation per colour group (cartoon,
+     * VDW spheres, licorice ligands). Custom colours are registered from ColorID 33 upward.
+     */
+    function buildVmdSession(scene, objName = 'structure') {
+        if (!scene) return '';
+        const L = [];
+        L.push('# 3D Feature Viewer for UniProt — VMD session');
+        L.push(`# Coloring mode: ${scene.coloringMode}`);
+        L.push(`set _data {${scene.coordinates.replace(/\r\n/g, '\n')}}`);
+        L.push(`set _p [file join [pwd] "ufv_${objName}.${scene.format}"]`);
+        L.push('set _fh [open $_p w]');
+        L.push('puts -nonewline $_fh $_data');
+        L.push('close $_fh');
+        L.push('mol new $_p waitfor all');
+        L.push('mol delrep 0 top');
+        let cid = 33; // first user-definable ColorID
+        const defColor = c => { const [r, g, b] = colorToUnit(c); L.push(`color change rgb ${cid} ${fix(r)} ${fix(g)} ${fix(b)}`); return cid++; };
+        // Base cartoon.
+        const baseId = defColor(scene.cartoonBase);
+        L.push('mol representation NewCartoon');
+        L.push(`mol color ColorID ${baseId}`);
+        L.push('mol selection {protein}');
+        L.push('mol material Opaque');
+        L.push('mol addrep top');
+        // Cartoon overrides.
+        groupByColor(scene.cartoon).forEach((byChain, color) => {
+            const id = defColor(color);
+            L.push('mol representation NewCartoon');
+            L.push(`mol color ColorID ${id}`);
+            L.push(`mol selection {protein and (${vmdSelParts(byChain)})}`);
+            L.push('mol addrep top');
+        });
+        // Annotation spheres (VDW on CA).
+        groupByColor(scene.spheres).forEach((byChain, color) => {
+            const id = defColor(color);
+            L.push('mol representation VDW 1.0 16');
+            L.push(`mol color ColorID ${id}`);
+            L.push(`mol selection {name CA and (${vmdSelParts(byChain)})}`);
+            L.push('mol addrep top');
+        });
+        // Ligands: licorice, coloured by element name.
+        if (scene.ligands.length) {
+            L.push('mol representation Licorice 0.3 12');
+            L.push('mol color Name');
+            L.push('mol selection {not protein and not water}');
+            L.push('mol addrep top');
+        }
+        L.push('display resetview');
+        return L.join('\n') + '\n';
+    }
+
+    return { formatSelection, rewritePdbBeta, buildResidueMatrix, buildPymolSession, buildVmdSession, downloadText, copyText };
 })();

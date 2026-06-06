@@ -1076,6 +1076,128 @@ const StructureViewer = {
         return count;
     },
 
+    // ── Session export ─────────────────────────────────────────────────────────────────────────
+    // The cartoon background colour shared by every "highlight a subset" mode.
+    _BG_COLOR: '#b9c2cf',
+
+    // Tier colour for a residue, matching _applyTierColoring: per-chain map for multi-chain
+    // structures, merged map otherwise.
+    _tierForAtom(merged, byChain, chain, uni) {
+        const s = this.currentStructure;
+        if (s?.chainIds?.length > 1 && byChain) {
+            const m = byChain.get(chain);
+            return m ? m.get(uni) : undefined;
+        }
+        return (merged || new Map()).get(uni);
+    },
+
+    // The exact cartoon colour the viewer paints a given CA atom, mirroring _applyModeStyles.
+    _cartoonColorForAtom(atom, mode, ctx, isAF, ourChains, toUni) {
+        const BG = this._BG_COLOR;
+        if (mode === 'plddt') {
+            const b = atom.b;
+            return b >= 90 ? '#0053d6' : b >= 70 ? '#65cbf3' : b >= 50 ? '#ffdb13' : '#ff7d45';
+        }
+        if (mode === 'bfactor') {
+            const v = Math.max(0, Math.min(100, atom.b));
+            if (v <= 50) { const t = v / 50; return `rgb(${Math.round(49 + (247 - 49) * t)},${Math.round(54 + (247 - 54) * t)},${Math.round(149 + (247 - 149) * t)})`; }
+            const t = (v - 50) / 50; return `rgb(${Math.round(247 + (215 - 247) * t)},${Math.round(247 + (48 - 247) * t)},${Math.round(247 + (39 - 247) * t)})`;
+        }
+        const uni = isAF ? atom.resi : toUni(atom.chain, atom.resi);
+        if (mode === 'hotspots') {
+            const tc = { strong: '#b71c1c', moderate: '#e64a19', weak: '#ffa726' };
+            return tc[this._tierForAtom(ctx.hotspots, ctx.hotspotsByChain, atom.chain, uni)] || BG;
+        }
+        if (mode === 'distantContacts') {
+            const dc = { strong: '#6a1b9a', moderate: '#ab47bc' };
+            return dc[this._tierForAtom(ctx.distantContacts, ctx.distantContactsByChain, atom.chain, uni)] || BG;
+        }
+        if (mode === 'alphaMissense') {
+            const d = (ctx.alphaMissense || new Map()).get(uni);
+            if (!d) return BG;
+            return d.avg >= 0.78 ? '#b71c1c' : d.avg >= 0.564 ? '#e06666' : d.avg >= 0.34 ? BG : '#3d85c8';
+        }
+        if (mode === 'residueBurden') return (ctx.residueBurden instanceof Set && ctx.residueBurden.has(uni)) ? '#e65100' : BG;
+        if (mode === 'prism') {
+            const cc = { pocket: '#00897b', exposed: '#8e24aa' };
+            const info = ctx.pocketByPos instanceof Map ? ctx.pocketByPos.get(uni) : null;
+            return info ? (cc[info.cat] || '#00897b') : BG;
+        }
+        if (mode === 'topology' || mode === 'domains') {
+            if (!isAF && ourChains && atom.chain != null && !ourChains.has(atom.chain)) return BG;
+            const posColor = ctx.topologyByPos instanceof Map ? ctx.topologyByPos
+                : ctx.domainByPos instanceof Map ? ctx.domainByPos : new Map();
+            return posColor.get(uni) || BG;
+        }
+        return '#00bcd4';
+    },
+
+    /**
+     * Capture the on-screen scene as a plain, serialisable object so it can be reproduced in
+     * PyMOL/VMD: per-residue cartoon colours, annotation Cα spheres, and ligand groups — all in
+     * author (PDB) chain+residue numbering, which is what PyMOL/VMD selections use. Reproduces the
+     * annotated overview (cartoon + every visible PTM/variant/site/domain sphere + ligands); when
+     * zoomed into a residue the same full overview is exported.
+     */
+    getSceneState() {
+        if (!this.viewer || !this.currentPdbText) return null;
+        const model = this.viewer.getModel?.();
+        if (!model) return null;
+        const s = this.currentStructure;
+        const isAF = !s || (s.source === 'AlphaFold' && !s.isoform) || !s.mappedRanges?.length;
+        const ourChains = s?.chainIds?.length ? new Set(s.chainIds) : (s?.chainId ? new Set([s.chainId]) : null);
+        const reverseCache = new Map();
+        const toUni = (chain, resi) => {
+            if (isAF) return resi;
+            if (!reverseCache.has(chain)) reverseCache.set(chain, this._reverseResidueMapForChain(chain));
+            return reverseCache.get(chain).get(resi);
+        };
+
+        const mode = this.activeColoringMode || 'default';
+        const ctx = this._lastColoringContext || {};
+        const base = mode === 'default' ? '#00bcd4' : this._BG_COLOR;
+
+        const caAtoms = (model.selectedAtoms({ atom: 'CA' }) || []).filter(a => !a.hetflag);
+        // Cartoon: only residues whose colour differs from `base` (keeps the script compact).
+        const cartoon = [];
+        caAtoms.forEach(a => {
+            const color = this._cartoonColorForAtom(a, mode, ctx, isAF, ourChains, toUni);
+            if (color && color.toLowerCase() !== base.toLowerCase()) cartoon.push({ chain: a.chain || '', resi: a.resi, color });
+        });
+
+        // Annotation Cα spheres: _activeSpheres is uniProt→colour, drawn on every chain.
+        const spheres = [];
+        const activeSph = this._activeSpheres || new Map();
+        if (activeSph.size) {
+            caAtoms.forEach(a => {
+                const uni = toUni(a.chain, a.resi);
+                if (uni != null && activeSph.has(uni)) spheres.push({ chain: a.chain || '', resi: a.resi, color: activeSph.get(uni) });
+            });
+        }
+
+        // Ligands / cofactors (non-water HETATM), one entry per chain+resi+resn.
+        const ligands = [];
+        const seen = new Set();
+        (model.selectedAtoms({ hetflag: true }) || []).forEach(a => {
+            if (a.resn === 'HOH' || a.resn === 'WAT') return;
+            const key = `${a.chain || ''}|${a.resi}|${a.resn}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            ligands.push({ chain: a.chain || '', resi: a.resi, resn: a.resn, ion: this.ION_CODES.has(a.resn) });
+        });
+
+        return {
+            format: this.currentFormat === 'mmcif' ? 'cif' : 'pdb',
+            coordinates: this.currentPdbText,
+            coloringMode: mode,
+            cartoonBase: base,
+            cartoonOpacity: this._inFocusMode ? 0.42 : 0.82,
+            sphereRadius: 1.8,
+            sphereOpacity: 0.92,
+            cartoon, spheres, ligands,
+        };
+    },
+
     /**
      * Tear down the currently-loaded model and per-structure caches without destroying the
      * 3Dmol viewer/WebGL context (recreating the context risks hitting the browser's live
