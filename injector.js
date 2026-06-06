@@ -73,7 +73,9 @@ const UFVInjector = (() => {
     function tryInjectPTMButton() {
         const existing = document.getElementById('ufv-btn-ptm');
         if (existing?.isConnected) return;
-        const h = findSectionHeading('ptm_processing');
+        // Anchor to the <h3>Features</h3> inside PTM/Processing; fall back to the <h2> if absent.
+        const h = findSectionSubHeading('ptm_processing', ['ptm/processing', 'ptm / processing'], ['features'])
+               || findSectionHeading('ptm_processing');
         if (!h) return;
         placeButton(h, UFVModal.createButton('ufv-btn-ptm', 'View PTMs in 3D', () => UFVModal.open('ptm')));
     }
@@ -81,7 +83,9 @@ const UFVInjector = (() => {
     function tryInjectVariantButton() {
         const existing = document.getElementById('ufv-btn-variant');
         if (existing?.isConnected) return;
-        const h = findSectionHeading('disease_variants');
+        // Anchor to the <h3>Involvement in disease</h3>; fall back to the <h2> if absent.
+        const h = findSectionSubHeading('disease_variants', ['disease & variants', 'disease and variants'], ['involvement in disease'])
+               || findSectionHeading('disease_variants');
         if (!h) return;
         UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(h);
         placeButton(h, UFVModal.createButton('ufv-btn-variant', 'View Variants in 3D', () => UFVModal.open('variant')));
@@ -90,7 +94,7 @@ const UFVInjector = (() => {
     function tryInjectFeaturesButton() {
         const existing = document.getElementById('ufv-btn-features');
         if (existing?.isConnected) return;
-        const h = findSectionFeaturesHeading('function', 'function');
+        const h = findSectionSubHeading('function', ['function'], ['features']);
         if (!h) return;
         placeButton(h, UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('sites')));
     }
@@ -98,8 +102,8 @@ const UFVInjector = (() => {
     function tryInjectDomainsButton() {
         const existing = document.getElementById('ufv-btn-domains');
         if (existing?.isConnected) return;
-        const h = findSectionFeaturesHeading('family_and_domains', 'family & domains')
-               || findSectionFeaturesHeading('family_&_domains', 'family & domains');
+        const h = findSectionSubHeading('family_and_domains', ['family & domains'], ['features'])
+               || findSectionSubHeading('family_&_domains', ['family & domains'], ['features']);
         if (!h) return;
         placeButton(h, UFVModal.createButton('ufv-btn-domains', 'View Domains in 3D', () => UFVModal.open('domains')));
     }
@@ -116,16 +120,20 @@ const UFVInjector = (() => {
             .every(id => document.getElementById(id)?.isConnected);
     }
 
-    // The "Features" sub-viewer inside a section (Function, Family & Domains, …) is where that
-    // section's features are tabulated, so the button belongs next to that <h3>Features</h3> —
-    // not the section's top-level <h2>.
-    function findSectionFeaturesHeading(sectionId, sectionText) {
-        const section = document.getElementById(sectionId)
-            || [...(document.querySelector('main') || document.body).querySelectorAll('h2')]
-                .find(h => h.textContent.trim().toLowerCase() === sectionText)?.closest('section');
+    // Find an <h3> sub-heading (matching one of h3Texts) inside a section. We anchor buttons to the
+    // <h3> rather than the section's <h2> on purpose: UniProt's left-nav scroll-spy tracks the
+    // <h2>, so injecting a child into the <h2> disturbs the active-section indicator. The <h3> is
+    // safe. Returns null when the sub-heading isn't present (caller can fall back to the <h2>).
+    function findSectionSubHeading(sectionId, sectionTexts, h3Texts) {
+        let section = document.getElementById(sectionId);
+        if (!section) {
+            const main = document.querySelector('main') || document.body;
+            section = [...main.querySelectorAll('h2')]
+                .find(h => sectionTexts.includes(h.textContent.trim().toLowerCase()))?.closest('section') || null;
+        }
         if (!section) return null;
         for (const h of section.querySelectorAll('h3')) {
-            if (h.textContent.trim().toLowerCase() === 'features') return h;
+            if (h3Texts.includes(h.textContent.trim().toLowerCase())) return h;
         }
         return null;
     }
