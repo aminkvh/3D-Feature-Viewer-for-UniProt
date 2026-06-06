@@ -808,5 +808,7 @@ const UFVApi = (() => {
         return p;
     }
 
-    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint };
+    // getPrimaryStructure: just the canonical AlphaFold model, fetched fast so the viewer can paint
+    // immediately while getStructures streams in the experimental/isoform/computed list behind it.
+    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint };
 })();

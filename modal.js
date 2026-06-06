@@ -403,16 +403,58 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const requestedId = s.uniprotId;
         showLoading('Finding structures…');
+        let shown = false;
+        // Fast path: paint the canonical AlphaFold model immediately, before the (slower)
+        // experimental/isoform/computed discovery finishes. Skip it when the user prefers a
+        // different default (experimental / best-coverage) — that needs the full list first.
+        const prefersAlphaFold = !s.settings.defaultStructure || s.settings.defaultStructure === 'alphafold';
         try {
-            const structures = await UFVApi.getStructures(requestedId, s.sequence.length);
+            const primary = prefersAlphaFold ? await UFVApi.getPrimaryStructure(requestedId, s.sequence.length) : null;
             if (UFVState.state.uniprotId !== requestedId) return;
-            s.structures = structures;
-            chooseDefaultStructure();
-            s.loaded = true;
-            renderStructureSelector();
-            await loadSelectedStructure();
+            if (primary) {
+                s.structures = [primary];
+                s.selectedStructureIndex = 0;
+                s.loaded = true;
+                renderStructureSelector();
+                await loadSelectedStructure();
+                shown = true;
+            }
+        } catch (_) { /* fall through to full discovery */ }
+        // Full discovery streams in behind the AlphaFold model (or becomes the first display when
+        // the protein has no AlphaFold model).
+        try {
+            const all = await UFVApi.getStructures(requestedId, s.sequence.length);
+            if (UFVState.state.uniprotId !== requestedId) return;
+            mergeStreamedStructures(all || [], shown);
         } catch (err) {
-            showError(err.message || 'Unable to load structures.');
+            if (!shown) showError(err.message || 'Unable to load structures.');
+        }
+    }
+
+    /**
+     * Fold the full structure list in once discovery completes. If the AlphaFold model is already
+     * on screen we keep it shown and just grow the selector (no reload, no flash). If nothing was
+     * shown yet (no AlphaFold model) we pick the default and load it now.
+     */
+    function mergeStreamedStructures(all, alreadyShown) {
+        const s = UFVState.state;
+        if (!all.length) {
+            if (!alreadyShown) showError('No 3D structures found for this protein.');
+            return;
+        }
+        // Preserve whatever the user is currently viewing by URL, so its index stays correct even
+        // though the list grew (and even if the user switched structures meanwhile).
+        const currentUrl = alreadyShown ? UFVState.selectedStructure()?.url : null;
+        s.structures = all;
+        s.loaded = true;
+        if (alreadyShown) {
+            const keep = all.findIndex(st => st.url === currentUrl);
+            s.selectedStructureIndex = keep >= 0 ? keep : 0;
+            renderStructureSelector(); // model already painted — just refresh the list
+        } else {
+            chooseDefaultStructure();
+            renderStructureSelector();
+            loadSelectedStructure();
         }
     }
 
@@ -1699,9 +1741,15 @@ const UFVModal = (() => {
 
     function buildAnnotationMap() {
         const map = new Map();
+        UFVState.state.variants.forEach(v => map.set(v.position, { color: v.consequenceColor }));
         activePtms().forEach(p => map.set(p.position, { color: p.color }));
         activeCoDisplayPtms().forEach(p => map.set(p.position, { color: p.color })); // variant-view co-PTMs
-        UFVState.state.variants.forEach(v => map.set(v.position, { color: v.consequenceColor }));
+        // Active sites (incl. ranges) so a focused ligand's neighbouring binding/active/metal-site
+        // residues are coloured by their site colour, not left grey.
+        activeSites().forEach(x => {
+            const end = x.endPosition && x.endPosition !== x.position ? x.endPosition : x.position;
+            for (let p = x.position; p <= end; p++) map.set(p, { color: x.color });
+        });
         return map;
     }
 

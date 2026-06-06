@@ -132,6 +132,7 @@ const StructureViewer = {
         this._sanitizeLigandBonds();
         this.applyCartoonColoring('default');
         this.viewer.zoomTo();
+        this.viewer.zoom(1.15); // slightly tighter default framing than zoomTo's exact fit
         this.viewer.render();
     },
 
@@ -465,12 +466,19 @@ const StructureViewer = {
             const posColor = context.topologyByPos instanceof Map ? context.topologyByPos : new Map();
             const s = this.currentStructure;
             const isAF = !s || (s.source === 'AlphaFold' && !s.isoform) || !s.mappedRanges?.length;
+            // Restrict colouring to chains that actually belong to THIS protein. In a hetero-complex
+            // the partner chains aren't in chainMappings, so _reverseResidueMapForChain would fall
+            // back to our primary mappedRanges and mis-map their residues onto our topology — paint
+            // them neutral instead. (Homo-oligomers list every copy in chainIds, so they're kept.)
+            const ourChains = s?.chainIds?.length ? new Set(s.chainIds)
+                            : (s?.chainId ? new Set([s.chainId]) : null);
             const reverseCache = new Map();
             const toUni = (chain, resi) => {
                 if (!reverseCache.has(chain)) reverseCache.set(chain, this._reverseResidueMapForChain(chain));
                 return reverseCache.get(chain).get(resi);
             };
             this.viewer.setStyle({}, { cartoon: { ...base, colorfunc: atom => {
+                if (!isAF && ourChains && atom.chain != null && !ourChains.has(atom.chain)) return '#b9c2cf';
                 const uni = isAF ? atom.resi : toUni(atom.chain, atom.resi);
                 return posColor.get(uni) || '#b9c2cf';
             } } });
@@ -1053,7 +1061,7 @@ const StructureViewer = {
     // the distracting "zoom in then pull back" of a delayed second animation.
     _zoomToWithMargin(sel) {
         this.viewer.zoomTo(sel, 450);
-        this.viewer.zoom(0.88, 450);
+        this.viewer.zoom(0.95, 450); // small breathing room, a touch tighter than before
     },
 
     _proximityShapes: [],  // shape handles for PTM–variant dashed lines
