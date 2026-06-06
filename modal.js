@@ -1896,7 +1896,7 @@ const UFVModal = (() => {
         sectionEl.className = 'ufv-am-section';
         const toggle = document.createElement('button');
         toggle.className = 'ufv-am-toggle';
-        toggle.innerHTML = `<span class="ufv-am-hdr-left">Similar ligands in structure</span><span class="ufv-am-hdr-right"><span class="ufv-am-ratio">${ranked.length}</span><span class="ufv-am-arrow">▾</span></span>`;
+        toggle.innerHTML = `<span class="ufv-am-hdr-left">Ligand similarity within structure</span><span class="ufv-am-hdr-right"><span class="ufv-am-ratio">${ranked.length}</span><span class="ufv-am-arrow">▾</span></span>`;
         const bodyEl = document.createElement('div');
         bodyEl.className = 'ufv-am-body show';
         const grid = document.createElement('div');

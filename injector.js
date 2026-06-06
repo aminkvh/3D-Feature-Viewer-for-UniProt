@@ -62,54 +62,58 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Entry-page buttons FLOAT on document.body, positioned over each section title — they are NOT
-    // injected into UniProt's section headings. Putting a child into a heading made React re-render
-    // that section, which both dropped our button (the "disappearing buttons" bug) and made the
-    // section lose its left-nav scroll-spy registration (the PTM active-indicator bug). Keeping the
-    // buttons out of the React-managed DOM avoids both: body children survive re-renders, and the
-    // headings are never mutated. position:absolute in document coordinates means they scroll with
-    // the page naturally; we only reposition when layout/structure changes.
-    const FLOAT_BTN_SPECS = [
-        { id: 'ufv-btn-ptm', label: 'View PTMs in 3D', open: () => UFVModal.open('ptm'),
-          find: () => findSectionHeading('ptm_processing') },
-        { id: 'ufv-btn-variant', label: 'View Variants in 3D', open: () => UFVModal.open('variant'),
-          find: () => findSectionHeading('disease_variants'),
-          onPosition: h => { try { UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(h); } catch (_) {} } },
-        { id: 'ufv-btn-features', label: 'View Sites in 3D', open: () => UFVModal.open('sites'),
-          find: () => findSectionFeaturesHeading('function', 'function') },
-        { id: 'ufv-btn-domains', label: 'View Domains in 3D', open: () => UFVModal.open('domains'),
-          find: () => findSectionFeaturesHeading('family_and_domains', 'family & domains')
-                     || findSectionFeaturesHeading('family_&_domains', 'family & domains') },
-    ];
+    // Append the button inline into the heading (after the heading's own text content).
+    // The button uses vertical-align:middle and zero top/bottom margin so it sits on the
+    // heading's existing line without adding height — the sections below don't shift.
+    function placeButton(heading, btn) {
+        btn.classList.add('ufv-3d-btn--inline');
+        heading.appendChild(btn);
+    }
 
-    // (Re)create each floating button and place it just after its section's title text. Cheap — a
-    // getBoundingClientRect per button — so it's safe to call on mutations, resize, and a keepalive.
-    function positionEntryButtons() {
-        if (isVariantViewerPage()) return; // no entry buttons on the variant-viewer page
-        FLOAT_BTN_SPECS.forEach(spec => {
-            const heading = spec.find();
-            let btn = document.getElementById(spec.id);
-            if (!heading) { if (btn) btn.style.display = 'none'; return; }
-            if (!btn) {
-                btn = UFVModal.createButton(spec.id, spec.label, spec.open);
-                btn.classList.add('ufv-3d-btn--float');
-                document.body.appendChild(btn);
-            }
-            if (spec.onPosition) spec.onPosition(heading);
-            // Measure where the title text ends so the button sits right after it (not at the far
-            // right of a full-width heading). A Range over the heading's contents gives that.
-            let tr;
-            try { const range = document.createRange(); range.selectNodeContents(heading); tr = range.getBoundingClientRect(); }
-            catch (_) { tr = heading.getBoundingClientRect(); }
-            if (tr.width === 0 && tr.height === 0) { btn.style.display = 'none'; return; }
-            btn.style.display = '';
-            const top = window.scrollY + tr.top + tr.height / 2 - btn.offsetHeight / 2;
-            let left = window.scrollX + tr.right + 12;
-            const maxLeft = window.scrollX + document.documentElement.clientWidth - btn.offsetWidth - 10;
-            if (left > maxLeft) left = Math.max(window.scrollX, maxLeft);
-            btn.style.top = Math.max(0, top) + 'px';
-            btn.style.left = Math.max(0, left) + 'px';
-        });
+    function tryInjectPTMButton() {
+        const existing = document.getElementById('ufv-btn-ptm');
+        if (existing?.isConnected) return;
+        const h = findSectionHeading('ptm_processing');
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-ptm', 'View PTMs in 3D', () => UFVModal.open('ptm')));
+    }
+
+    function tryInjectVariantButton() {
+        const existing = document.getElementById('ufv-btn-variant');
+        if (existing?.isConnected) return;
+        const h = findSectionHeading('disease_variants');
+        if (!h) return;
+        UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(h);
+        placeButton(h, UFVModal.createButton('ufv-btn-variant', 'View Variants in 3D', () => UFVModal.open('variant')));
+    }
+
+    function tryInjectFeaturesButton() {
+        const existing = document.getElementById('ufv-btn-features');
+        if (existing?.isConnected) return;
+        const h = findSectionFeaturesHeading('function', 'function');
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('sites')));
+    }
+
+    function tryInjectDomainsButton() {
+        const existing = document.getElementById('ufv-btn-domains');
+        if (existing?.isConnected) return;
+        const h = findSectionFeaturesHeading('family_and_domains', 'family & domains')
+               || findSectionFeaturesHeading('family_&_domains', 'family & domains');
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-domains', 'View Domains in 3D', () => UFVModal.open('domains')));
+    }
+
+    function injectAllEntryButtons() {
+        tryInjectPTMButton();
+        tryInjectVariantButton();
+        tryInjectFeaturesButton();
+        tryInjectDomainsButton();
+    }
+
+    function allPresent() {
+        return ['ufv-btn-ptm','ufv-btn-variant','ufv-btn-features','ufv-btn-domains']
+            .every(id => document.getElementById(id)?.isConnected);
     }
 
     // The "Features" sub-viewer inside a section (Function, Family & Domains, …) is where that
@@ -137,39 +141,38 @@ const UFVInjector = (() => {
     }
 
     function injectEntryButtons() {
-        // No MutationObserver — firing positionEntryButtons() on every React DOM mutation (including
-        // UniProt setting the active-nav CSS class) forces a layout recalculation mid-scroll-spy
-        // update, which is what caused buttons to jitter AND the PTM sidebar line to stick.
+        // MutationObserver: only re-injects when a button is MISSING (React dropped it).
+        // Short-circuits immediately when all buttons are present, so it never fires during
+        // normal scroll / nav-link highlighting updates — that was what caused the sidebar lag.
+        if (!runtime.observer) {
+            let _t = null;
+            runtime.observer = new MutationObserver(() => {
+                if (allPresent()) return;
+                if (_t) return;
+                _t = setTimeout(() => { _t = null; injectAllEntryButtons(); }, 200);
+            });
+            runtime.observer.observe(document.body, { childList: true, subtree: true });
+        }
         if (!runtime.visibilityBound) {
             runtime.visibilityBound = true;
-            document.addEventListener('visibilitychange', () => { if (!document.hidden) positionEntryButtons(); });
-        }
-        if (!runtime.scrollBound) {
-            runtime.scrollBound = true;
-            let raf = 0;
-            window.addEventListener('resize', () => {
-                if (raf) return;
-                raf = requestAnimationFrame(() => { raf = 0; positionEntryButtons(); });
-            }, { passive: true });
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) injectAllEntryButtons(); });
         }
         if (!runtime.entryPoll) {
-            // 2 s is enough to catch lazily-rendered sections without causing continuous jitter.
-            runtime.entryPoll = setInterval(positionEntryButtons, 2000);
+            runtime.entryPoll = setInterval(injectAllEntryButtons, 2000);
         }
-        // PTM sidebar fix: UniProt's scroll-spy doesn't reliably activate the PTM nav link on
-        // first approach. Use our own IntersectionObserver to nudge a scroll event when the PTM
-        // section enters the viewport, so UniProt re-evaluates which section is active.
+        // PTM nav fix: dispatch scroll when PTM section enters the viewport, nudging UniProt's
+        // scroll-spy to re-evaluate the active nav link.
         schedulePTMNavFix();
-        // Immediate burst for a snappy first paint + lazy-rendered sections.
-        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(positionEntryButtons, d));
+        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(injectAllEntryButtons, d));
     }
 
     function schedulePTMNavFix() {
         if (runtime.ptmNavObserver) return;
-        const find = () => {
+        const tryFind = () => {
+            if (runtime.ptmNavObserver) return;
             const el = document.getElementById('ptm_processing')
                 || [...document.querySelectorAll('section[id]')].find(s => s.id.toLowerCase().includes('ptm'));
-            if (!el) { setTimeout(find, 1000); return; }
+            if (!el) { setTimeout(tryFind, 1500); return; }
             runtime.ptmNavObserver = new IntersectionObserver(entries => {
                 if (entries.some(e => e.isIntersecting)) {
                     window.dispatchEvent(new Event('scroll'));
@@ -178,7 +181,7 @@ const UFVInjector = (() => {
             }, { threshold: 0.05 });
             runtime.ptmNavObserver.observe(el);
         };
-        find();
+        tryFind();
     }
 
     function injectVariantViewerButton() {
@@ -211,6 +214,7 @@ const UFVInjector = (() => {
         UFVModal.prefetchData();
         if (isVariantViewerPage()) {
             // Cancel entry-page injection machinery.
+            if (runtime.observer) { runtime.observer.disconnect(); runtime.observer = null; }
             if (runtime.entryPoll) { clearInterval(runtime.entryPoll); runtime.entryPoll = null; }
             if (runtime.ptmNavObserver) { runtime.ptmNavObserver.disconnect(); runtime.ptmNavObserver = null; }
             // Remove all extension buttons — no button on the variant-viewer page.

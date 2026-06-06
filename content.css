@@ -157,14 +157,6 @@
     margin-bottom: 0 !important;
 }
 
-/* Floating variant: positioned on document.body over a section's title (not inside the heading),
-   so UniProt's React re-renders never remove it and the headings are never mutated. Below the
-   modal overlay (z-index 100000) so the modal still covers it. */
-.ufv-3d-btn--float {
-    position: absolute;
-    z-index: 9000;
-    margin: 0 !important;
-}
 
 .ufv-3d-btn svg {
     flex-shrink: 0;
@@ -1484,6 +1476,7 @@
     font-weight: 600;
     font-size: 10.5px;
     font-variant-numeric: tabular-nums;
+    color: var(--ufv-text-primary);
     opacity: 0.9;
     margin-left: auto;
 }
