@@ -467,13 +467,15 @@ const UFVModal = (() => {
                 // Sequence-based residueBurden is identical regardless of structure.
                 // (Partner-protein disease residues are folded in afterwards, off the critical
                 // path, by augmentHotspotsWithPartners so loading a complex isn't delayed.)
-                const hotspots = UFVAnalysis.computeHotspots(StructureViewer.viewer, s.variants, structure);
-                s.analysis.hotspots = hotspots.merged;
-                s.analysis.hotspotsByChain = hotspots.byChain;
-                s.analysis.hotspotMethod = hotspots.method;
-                const contacts = UFVAnalysis.computeDistantContacts(StructureViewer.viewer, structure, s.variants);
-                s.analysis.distantContacts = contacts.merged;
-                s.analysis.distantContactsByChain = contacts.byChain;
+                // The graph analyses (3-D hotspot betweenness, long-range contact hubs) are
+                // heavy. Clear any stale results from the previous structure and compute them
+                // AFTER this structure paints (scheduleStructureAnalyses), so a large structure
+                // can't freeze the UniProt tab on load. The cheap sequence-based burden stays here.
+                s.analysis.hotspots = null;
+                s.analysis.hotspotsByChain = null;
+                s.analysis.hotspotMethod = null;
+                s.analysis.distantContacts = null;
+                s.analysis.distantContactsByChain = null;
                 s.analysis.residueBurden = UFVAnalysis.computeResidueBurden(s.variants);
                 // Constraint-pocket analysis is structure-dependent (geometry + PAE) — drop so it
                 // recomputes for the newly loaded structure on next selection.
@@ -509,9 +511,39 @@ const UFVModal = (() => {
         applyMode();
         // If the constraint-pocket mode is active, (re)compute it for this structure then recolour.
         if (getColorMode() === 'prism') ensurePocketAnalysis().then(() => applyMode());
-        // Fold neighbouring partner-protein disease residues into the hotspot test, off the
-        // critical path (network fetch) so opening a complex isn't delayed.
-        augmentHotspotsWithPartners(structure, requestedId, mySeq);
+        // Heavy graph analyses (hotspots, contact hubs) run off the critical path so the
+        // structure shows immediately; they recolour / augment when ready.
+        scheduleStructureAnalyses(structure, requestedId, mySeq);
+    }
+
+    /**
+     * Computes the structure-dependent graph analyses (3-D variant-enrichment hotspots and
+     * long-range contact hubs) after the structure has painted, so a large structure never
+     * blocks the main thread during load.  Guarded by the load sequence/accession so a stale
+     * deferred run can't overwrite a newer structure's results.  Recolours only if the active
+     * mode needs the result, then folds in partner-protein disease residues.
+     */
+    function scheduleStructureAnalyses(structure, requestedId, mySeq) {
+        if (selectedIsIsoform()) return; // overlays are hidden on isoforms — don't burn CPU on them
+        const run = () => {
+            const s = UFVState.state;
+            if (s.uniprotId !== requestedId || _loadSeq !== mySeq || !StructureViewer.viewer) return;
+            const hotspots = UFVAnalysis.computeHotspots(StructureViewer.viewer, s.variants, structure);
+            s.analysis.hotspots = hotspots.merged;
+            s.analysis.hotspotsByChain = hotspots.byChain;
+            s.analysis.hotspotMethod = hotspots.method;
+            const contacts = UFVAnalysis.computeDistantContacts(StructureViewer.viewer, structure, s.variants);
+            s.analysis.distantContacts = contacts.merged;
+            s.analysis.distantContactsByChain = contacts.byChain;
+            if (s.uniprotId !== requestedId || _loadSeq !== mySeq) return;
+            const m = getColorMode();
+            if (m === 'hotspots' || m === 'distantContacts') applyMode();
+            // Fold neighbouring partner-protein disease residues into the hotspot test
+            // (network fetch) once the base hotspots exist.
+            augmentHotspotsWithPartners(structure, requestedId, mySeq);
+        };
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1200 });
+        else setTimeout(run, 0);
     }
 
     /**
@@ -584,8 +616,13 @@ const UFVModal = (() => {
     }
 
     function setColorMode(value) {
+        const drop = byId('ufv-cm-drop');
         const btn = byId('ufv-cm-btn');
-        byId('ufv-cm-drop')?.querySelectorAll('.ufv-cm-opt').forEach(opt => {
+        // Fall back to 'default' if the requested mode isn't a real option (e.g. a stale
+        // saved preference like the long-removed 'ptmVariant') — otherwise nothing would
+        // be selected and the UI would silently show no coloring mode.
+        if (drop && !drop.querySelector(`.ufv-cm-opt[data-value="${value}"]`)) value = 'default';
+        drop?.querySelectorAll('.ufv-cm-opt').forEach(opt => {
             opt.classList.toggle('selected', opt.dataset.value === value);
             if (opt.dataset.value === value && btn) btn.textContent = opt.textContent;
         });
@@ -629,10 +666,17 @@ const UFVModal = (() => {
             // Membrane-topology mode only when the entry has topology features.
             const hasTopology = UFVState.state.topology?.length > 0;
             cmDrop.querySelector('[data-value="topology"]').classList.toggle('ufv-hidden', !hasTopology);
+            // On isoform models annotation-based colour modes are meaningless (no canonical
+            // mapping) — hide them and keep only the structural ones.
+            const isoform = selectedIsIsoform();
+            ['hotspots', 'distantContacts', 'alphaMissense', 'residueBurden', 'prism'].forEach(v => {
+                cmDrop.querySelector(`[data-value="${v}"]`)?.classList.toggle('ufv-hidden', isoform);
+            });
             const cur = getColorMode();
             if ((cur === 'bfactor' && isAlphaFold) || (cur === 'plddt' && !isAlphaFold) || (cur === 'topology' && !hasTopology)) {
                 setColorMode('default');
             }
+            if (isoform && cur !== 'plddt' && cur !== 'default') setColorMode('plddt');
         }
         byId('ufv-structure-meta') && (byId('ufv-structure-meta').textContent = '');
         renderStructureSelector();
@@ -658,9 +702,28 @@ const UFVModal = (() => {
         return ` (mapped: ${min}–${max}, ${ranges.length} segments)`;
     }
 
+    // Non-canonical isoform AlphaFold models number residues by the isoform sequence, but every
+    // annotation we hold (PTMs, variants, sites, hotspots, pockets…) is canonical-numbered with
+    // no real isoform↔canonical mapping. Overlaying them would confidently mis-place features
+    // after any indel, so on isoform models we show the structure only.
+    function selectedIsIsoform() {
+        const st = UFVState.selectedStructure();
+        return !!(st && st.source === 'AlphaFold' && st.isoform);
+    }
+
     function applyMode() {
         const s = UFVState.state;
         if (!StructureViewer.viewer) return;
+        if (selectedIsIsoform()) {
+            // Structure only — colour by pLDDT (or plain default), draw no annotation overlays.
+            let m = getColorMode();
+            if (m !== 'plddt' && m !== 'default') m = 'plddt';
+            StructureViewer.applyCartoonColoring(m, {}, true);
+            StructureViewer.showPTMs([], s.ptmGroups, []); // clear any spheres from a prior structure
+            s.displayedPositions = [];
+            byId('ufv-count-text').textContent = 'Isoform model — canonical annotations hidden (isoform numbering differs)';
+            return;
+        }
         const mode = getColorMode();
         const filteredVariants = DataProcessor.filterVariants(s.variants, s.activeConsequences, s.activeProvenances, s.activeDiseases);
         // defer=true skips the intermediate render; showPTMs/showVariants will render once
@@ -751,6 +814,7 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const st = UFVState.selectedStructure();
         if (!st || !StructureViewer.viewer) return s.analysis.prism;
+        if (selectedIsIsoform()) return s.analysis.prism; // canonical PAE/positions don't map to isoforms
         if (s.analysis.prism) return s.analysis.prism; // already computed for this structure
         const requestedId = s.uniprotId;
         showLoading('Computing constraint pockets…');
@@ -890,7 +954,7 @@ const UFVModal = (() => {
                 const cell = document.createElement('button');
                 cell.className = 'ufv-ligand-cell' + (isSel(lig) ? ' selected' : '');
                 cell.title = `${lig.resn} — chain ${lig.chain || '?'} ${lig.resi}`;
-                cell.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? lig.chain + ' ' : ''}${lig.resi}</span>`;
+                cell.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? _esc(lig.chain) + ' ' : ''}${_esc(lig.resi)}</span>`;
                 cell.addEventListener('click', () => onLigandClick({ resn: lig.resn, resi: lig.resi, chain: lig.chain }));
                 grid.appendChild(cell);
             });
@@ -1413,7 +1477,7 @@ const UFVModal = (() => {
                 `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearby variants</span><span class="ufv-detail-val">${proximity.nearbyCount8A} within 8 Å (${proximity.pathCount8A} pathogenic)</span></div>`);
             if (proximity.nearestDist !== null) {
                 proxBody.insertAdjacentHTML('beforeend',
-                    `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearest</span><span class="ufv-detail-val">${proximity.nearestVariant} — ${proximity.nearestDist === 0 ? 'same residue' : proximity.nearestDist.toFixed(1) + ' Å'}</span></div>`);
+                    `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearest</span><span class="ufv-detail-val">${_esc(proximity.nearestVariant)} — ${proximity.nearestDist === 0 ? 'same residue' : proximity.nearestDist.toFixed(1) + ' Å'}</span></div>`);
             }
 
             // Tier groups — two-column grid (mutation | distance), no ClinVar text.

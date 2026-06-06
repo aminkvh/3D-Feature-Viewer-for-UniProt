@@ -397,6 +397,12 @@ const UFVAnalysis = (() => {
     // the observed distribution, not a fixed percentile — so a featureless chain emits nothing).
     const HUB_Z_STRONG = 3.0;
     const HUB_Z_MODERATE = 2.0;
+    // Brandes' betweenness is O(V·E); for a single chain E grows with V, so cost is roughly
+    // O(V²)–O(V³). Cap the per-chain residue count so a very large chain (e.g. a giant single
+    // protein or a complex parsed as one chain) can't freeze the UniProt tab. Real single chains
+    // are almost always well under this; above it we skip the hub overlay for that chain rather
+    // than block the main thread.
+    const HUB_MAX_CA = 1600;
 
     /**
      * Identify "long-range contact hubs" as residues with high BETWEENNESS CENTRALITY in the
@@ -421,6 +427,10 @@ const UFVAnalysis = (() => {
     function betweennessHubs(caAtoms, threshold, toUni) {
         const n = caAtoms.length;
         if (n < 8) return new Map(); // too small for a meaningful network
+        if (n > HUB_MAX_CA) { // too large — skip rather than freeze the main thread (see HUB_MAX_CA)
+            console.warn(`[UniProt 3D] Skipping contact-hub analysis for a ${n}-residue chain (cap ${HUB_MAX_CA}).`);
+            return new Map();
+        }
         // Build adjacency by Cα–Cα distance.
         const th2 = threshold * threshold;
         const adj = Array.from({ length: n }, () => []);

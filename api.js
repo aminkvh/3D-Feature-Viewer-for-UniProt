@@ -207,6 +207,10 @@ const UFVApi = (() => {
     // How many distinct partner accessions we will fetch variant data for (bounds network use
     // on large hetero-complexes).
     const PARTNER_ACCESSION_CAP = 8;
+    // Most PDB chains the user could ever pick survive into the final (25-capped) selector, so
+    // decorating more than this many distinct PDB entries just burns requests. Generous enough
+    // that the best structures are never dropped, small enough to tame request storms.
+    const MAX_EXPERIMENTAL_PDBS = 30;
 
     /**
      * From the per-entry SIFTS mapping, list the OTHER proteins (different UniProt accession)
@@ -432,7 +436,23 @@ const UFVApi = (() => {
             const prev = dedupMap.get(key);
             if (!prev || (s.coverage || 0) > (prev.coverage || 0)) dedupMap.set(key, s);
         }
-        const decorated = await decoratePdbStructures([...dedupMap.values()], id, sequenceLength);
+        // Cap the candidate PDB entries BEFORE decorating. decoratePdbStructures makes
+        // per-chain network calls (summary, SIFTS/residue-listing, modeled-residue count), so a
+        // protein mapped to hundreds of PDB entries (e.g. TP53) would otherwise fan out into a
+        // request storm. Rank PDB entries by their best_structures coverage (then resolution),
+        // keep the top MAX_EXPERIMENTAL_PDBS, and decorate only those chains. The richer
+        // per-chain figures from decoration still re-rank within the kept set below.
+        const byPdbCoverage = new Map(); // pdbId → { coverage, resolution }
+        for (const s of dedupMap.values()) {
+            const cur = byPdbCoverage.get(s.pdbId);
+            if (!cur || (s.coverage || 0) > cur.coverage) byPdbCoverage.set(s.pdbId, { coverage: s.coverage || 0, resolution: s.resolution });
+        }
+        const keptPdbIds = new Set([...byPdbCoverage.entries()]
+            .sort((a, b) => (b[1].coverage - a[1].coverage) || ((a[1].resolution ?? 99) - (b[1].resolution ?? 99)))
+            .slice(0, MAX_EXPERIMENTAL_PDBS)
+            .map(([pdbId]) => pdbId));
+        const candidates = [...dedupMap.values()].filter(s => keptPdbIds.has(s.pdbId));
+        const decorated = await decoratePdbStructures(candidates, id, sequenceLength);
         // Merge all chains of the same PDB entry that map to this protein into one entry.
         // This handles homodimers / homo-oligomers: show "7QNE-A,D" instead of separate rows.
         const byPdb = new Map();

@@ -4,7 +4,6 @@
 const DEFAULTS = {
     defaultStructure: 'alphafold',
     coloringMode: 'default',
-    coVisualize: true,
     copyFormat: 'pymol',
     showOptionalTracks: false,
 };
@@ -16,7 +15,6 @@ function loadOptions() {
         const s = { ...DEFAULTS, ...stored };
         byId('opt-structure').value = s.defaultStructure;
         byId('opt-color').value = s.coloringMode;
-        byId('opt-covis').checked = s.coVisualize;
         byId('opt-copy').value = s.copyFormat;
         byId('opt-optional').checked = s.showOptionalTracks;
     };
@@ -35,7 +33,6 @@ function saveOptions() {
     const patch = {
         defaultStructure: byId('opt-structure').value,
         coloringMode: byId('opt-color').value,
-        coVisualize: byId('opt-covis').checked,
         copyFormat: byId('opt-copy').value,
         showOptionalTracks: byId('opt-optional').checked,
     };

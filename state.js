@@ -5,7 +5,6 @@ const UFVState = (() => {
         copyFormat: 'pymol',
         defaultStructure: 'alphafold',
         coloringMode: 'default',
-        coVisualize: true,
         showClinVar: true,
         showAlphaMissense: true,
         showOptionalTracks: false,
