@@ -539,6 +539,9 @@ const UFVModal = (() => {
         StructureViewer.ligandClickCb = onLigandClick;
         // Enumerate ligands present in the loaded model (AlphaFill/SwissModel cofactors etc.).
         s.ligands = StructureViewer.enumerateLigands ? StructureViewer.enumerateLigands() : [];
+        // Family & Domains window: a domain the loaded structure doesn't cover can't be drawn, so
+        // start it unselected (recomputed whenever the selected structure changes).
+        if (s.currentMode === 'domains') (s.domains || []).forEach(d => { d.visible = structureCoversRange(d.position, d.endPosition); });
         refreshLigandSections();
         StructureViewer.dblClickCb = () => {
             const s = UFVState.state;
@@ -758,6 +761,18 @@ const UFVModal = (() => {
             .slice().sort((a, b) => (b.endPosition - b.position) - (a.endPosition - a.position))
             .forEach(d => { for (let p = d.position; p <= d.endPosition; p++) map.set(p, d.color); });
         return map;
+    }
+
+    // Whether the loaded structure covers (at least partially) the UniProt range [start,end].
+    // Full-length canonical AlphaFold models cover everything; experimental / isoform / computed
+    // models only cover their mapped segments, so a domain outside them can't be shown.
+    function structureCoversRange(start, end) {
+        const st = UFVState.selectedStructure();
+        if (!st) return true;
+        if (st.source === 'AlphaFold' && !st.isoform) return true; // full-length canonical model
+        const ranges = st.mappedRanges;
+        if (!ranges || !ranges.length) return true; // unknown mapping → don't hide
+        return ranges.some(r => r.uniprotStart <= end && r.uniprotEnd >= start);
     }
 
     // Variants belonging to a disease the user selected in the secondary "Disease variants" group.
