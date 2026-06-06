@@ -143,15 +143,23 @@ const DataProcessor = {
             if (!typeLabel) return;
             const pos = parseInt(f.begin);
             if (isNaN(pos)) return;
-            // SITE descriptions already name the site type (e.g. "Cleavage; by thrombin"); the
-            // other types often have a terse or empty description, so prefix the type label.
-            const description = f.type === 'SITE'
-                ? (f.description || 'Site')
-                : (f.description ? `${typeLabel}: ${f.description}` : typeLabel);
+            // SITE descriptions already name the site type (e.g. "Cleavage; by thrombin"). For
+            // BINDING/METAL the bound molecule lives in f.ligand (description is often empty), so
+            // fold the ligand name in (e.g. "Binding site: ATP" / "Binding site: 4-aminobutanoate").
+            const ligandName = f.ligand?.name || '';
+            let description;
+            if (f.type === 'SITE') {
+                description = f.description || 'Site';
+            } else {
+                const parts = [ligandName, f.description].filter(Boolean);
+                description = parts.length ? `${typeLabel}: ${parts.join(' — ')}` : typeLabel;
+            }
             out.push({
                 position: pos,
                 endPosition: parseInt(f.end) || pos,
                 description,
+                ligand: ligandName || null,
+                ligandRef: f.ligand?.dbReference || null,
                 category: 'Site',
                 color: this.SITE_COLOR,
                 evidences: f.evidences || [],

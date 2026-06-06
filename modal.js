@@ -188,11 +188,16 @@ const UFVModal = (() => {
         byId('ufv-close').addEventListener('click', close);
         // Single overlay-level handler: stops all modal clicks from reaching UniProt's
         // page handlers (which would scroll Gsgt9), and closes dropdowns on outside-click.
+        // Only treat it as a backdrop click-to-close when the press STARTED on the backdrop too —
+        // otherwise dragging to rotate the structure and releasing outside the viewer would close.
+        let _downOnBackdrop = false;
+        overlayEl.addEventListener('mousedown', e => { _downOnBackdrop = (e.target === overlayEl); });
         overlayEl.addEventListener('click', e => {
             if (!e.target.closest('#ufv-dl-wrap')) byId('ufv-dl-menu')?.classList.remove('open');
             if (!e.target.closest('#ufv-cs')) byId('ufv-cs')?.classList.remove('open');
             if (!e.target.closest('#ufv-cm')) byId('ufv-cm')?.classList.remove('open');
-            if (e.target === overlayEl) close();
+            if (e.target === overlayEl && _downOnBackdrop) close();
+            _downOnBackdrop = false;
             e.stopPropagation();
         });
         document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
@@ -269,7 +274,7 @@ const UFVModal = (() => {
             _showOtherSpheres = e.target.checked;
             const s = UFVState.state;
             if (s.selectedLigand && StructureViewer.currentStructure) {
-                s.nearbyResidues = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
+                s.nearbyResidues = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false , annotatedResidues: buildAnnotationMap() }) || s.nearbyResidues;
             } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
                 // rezoom:false — keep the current camera so toggling spheres doesn't zoom.
                 s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
@@ -338,11 +343,16 @@ const UFVModal = (() => {
             if (g) _gsgt9SavedScrollTop = g.scrollTop;
             _gsgt9LockActive = true;
         });
-        // Reset any residue focus / detail state from a previous session
+        // Reset any residue/ligand focus + detail state from a previous session so opening a
+        // different view (e.g. PTM → Variants) starts from defaults, not a continuation.
         s.selectedResidue = null;
+        s.selectedChain = null;
+        s.selectedLigand = null;
         s.nearbyResidues = new Set();
         StructureViewer._selectedResi = null;
         StructureViewer._inFocusMode = false;
+        StructureViewer.showLigands = true;
+        StructureViewer.excludeIons = false;
         byId('ufv-details').classList.remove('show');
         // Immediately reapply the new mode coloring so the viewer doesn't flash stale state
         if (s.loaded && s.annotationsLoaded && StructureViewer.viewer) {
@@ -680,7 +690,7 @@ const UFVModal = (() => {
         // Preserve an active focus across coloring changes: re-enter focus on the selected
         // ligand or residue instead of dropping back to the full sphere view.
         if (s.selectedLigand && StructureViewer.currentStructure) {
-            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false });
+            const nb = StructureViewer.focusLigand(s.selectedLigand.resn, s.selectedLigand.resi, s.selectedLigand.chain, { showOtherSpheres: _showOtherSpheres, rezoom: false , annotatedResidues: buildAnnotationMap() });
             if (nb) s.nearbyResidues = nb;
         } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
             // rezoom:false — re-applying focus after a filter/colour change must not yank the
@@ -819,8 +829,11 @@ const UFVModal = (() => {
             if (!s.sites.length) { section.classList.add('ufv-hidden'); return; }
             section.classList.remove('ufv-hidden');
             s.sites.forEach((site, idx) => {
-                const range = site.endPosition && site.endPosition !== site.position ? `${site.position}–${site.endPosition}` : `${site.position}`;
-                list.appendChild(makeFilterItem(`Residue ${range}: ${site.description}`, site.color, '', !!site.visible, checked => {
+                // Label as "VAL 94" (three-letter AA + position), matching the residue panel title.
+                const aa = AA1TO3[s.sequence?.[site.position - 1]] || '';
+                const loc = site.endPosition && site.endPosition !== site.position
+                    ? `${aa} ${site.position}–${site.endPosition}` : `${aa} ${site.position}`.trim();
+                list.appendChild(makeFilterItem(`${loc}: ${site.description}`, site.color, '', !!site.visible, checked => {
                     site.visible = checked;
                     // Mirror the change in the other panel's checkbox for this site index.
                     PANEL_PAIRS.forEach(([, otherId]) => {
@@ -1488,7 +1501,7 @@ const UFVModal = (() => {
         s.selectedResidue = null;
         s.selectedChain = null;
         s.selectedLigand = lig;
-        s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain, { showOtherSpheres: _showOtherSpheres }) || new Set();
+        s.nearbyResidues = StructureViewer.focusLigand(lig.resn, lig.resi, lig.chain, { showOtherSpheres: _showOtherSpheres, annotatedResidues: buildAnnotationMap() }) || new Set();
         renderLigandPanel(lig);
         buildLigandFilters(); // refresh the list so the selected ligand is boxed
         renderSequence();

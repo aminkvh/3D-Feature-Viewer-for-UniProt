@@ -1164,7 +1164,9 @@
 
 /* --- Panel footer --- */
 .ufv-panel-footer {
-    padding: 8px 14px;
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 14px;
     border-top: 1px solid var(--ufv-border);
     flex-shrink: 0;
     display: flex;
@@ -1214,7 +1216,7 @@
 /* --- Details panel --- */
 .ufv-details {
     position: absolute;
-    bottom: 42px; /* just above .ufv-panel-footer */
+    bottom: 38px; /* flush on top of the fixed-height .ufv-panel-footer (no gap) */
     left: 0;
     right: 0;
     z-index: 10;

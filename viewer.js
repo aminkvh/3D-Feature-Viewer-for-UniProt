@@ -381,7 +381,6 @@ const StructureViewer = {
 
     // Brighten the hovered ligand and label it with its CCD code (cleared on hover-out / move).
     _hoverLigand(atom) {
-        if (this._inFocusMode || this.showLigands === false) return;
         if (this.excludeIons && this.ION_CODES.has(atom.resn)) return; // hidden ion
         const key = `${atom.chain ?? ''}|${atom.resi}|${atom.resn}`;
         if (this._hoverLigKey === key) return;
@@ -732,14 +731,14 @@ const StructureViewer = {
         const CONTACT_DIST = 5.0;
         // Residue numbers repeat across chains, so track neighbours by chain+resi.
         const keyOf = (c, r) => `${c ?? ''} ${r}`;
-        const nearby = new Map(); // key → { chain, resi }
-        nearby.set(keyOf(selChain, pdbResi), { chain: selChain, resi: pdbResi });
+        const nearby = new Map(); // key → { chain, resi, het }
+        nearby.set(keyOf(selChain, pdbResi), { chain: selChain, resi: pdbResi, het: false });
         allAtoms.forEach(a => {
             if (a.resi === pdbResi && a.chain === selChain) return;
             for (const sa of selAtoms) {
                 const dx = a.x - sa.x, dy = a.y - sa.y, dz = a.z - sa.z;
                 if (Math.sqrt(dx*dx + dy*dy + dz*dz) < CONTACT_DIST) {
-                    nearby.set(keyOf(a.chain, a.resi), { chain: a.chain, resi: a.resi });
+                    nearby.set(keyOf(a.chain, a.resi), { chain: a.chain, resi: a.resi, het: !!a.hetflag });
                     break;
                 }
             }
@@ -755,7 +754,7 @@ const StructureViewer = {
         // Focused neighbourhood as UniProt positions — these become sticks below, so the rest
         // of the annotation spheres should stay as spheres (the user wants other PTMs/variants
         // to remain visible while zoomed into one of them).
-        const nearbyUni = new Set(Array.from(nearby.values()).map(n => toUni(n.chain, n.resi)));
+        const nearbyUni = new Set(Array.from(nearby.values()).filter(n => !n.het).map(n => toUni(n.chain, n.resi)));
 
         // Dim the cartoon to background opacity.  Re-applied on every focus (not only the
         // first) because setStyle replaces the per-atom style layers — this clears the
@@ -777,8 +776,15 @@ const StructureViewer = {
         }
 
         // Show nearby residues as thin sticks (each on its own chain's copy)
-        nearby.forEach(({ chain: nc, resi: nr }) => {
+        nearby.forEach(({ chain: nc, resi: nr, het }) => {
             if (nc === selChain && nr === pdbResi) return;
+            if (het) {
+                // Ligand/cofactor near the residue — keep default element colours (grey C, red O,
+                // …), never an annotation colour, and add small spheres so single-atom ions show.
+                this.viewer.addStyle(nc != null ? { chain: nc, resi: nr, hetflag: true } : { resi: nr, hetflag: true },
+                    { stick: { radius: 0.15, colorscheme: 'Jmol' }, sphere: { radius: 0.3, colorscheme: 'Jmol' } });
+                return;
+            }
             const uniResi = toUni(nc, nr);
             const color = annotated.get(uniResi)?.color;
             this.viewer.addStyle(
@@ -897,17 +903,22 @@ const StructureViewer = {
         this.viewer.setStyle({}, {});
         const focusBase = { opacity: 0.42, thickness: 0.2, ribbonWidth: 0.5 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext, focusBase);
-        // Selected ligand — prominent ball-and-stick.
+        // Selected ligand — prominent ball-and-stick (default element colours).
         this.viewer.addStyle(ligSel, { stick: { radius: 0.25, colorscheme: 'Jmol' }, sphere: { radius: 0.45, colorscheme: 'Jmol' } });
-        // Nearby protein residues — thin sticks (same look as residue focus).
-        nearby.forEach(({ chain: nc, resi: nr }) => {
-            this.viewer.addStyle(nc != null ? { chain: nc, resi: nr } : { resi: nr }, { stick: { radius: 0.15, colorscheme: 'Jmol', opacity: 0.8 } });
-        });
 
-        // Map nearby protein residues to UniProt positions and keep hover/click alive.
+        // Map nearby protein residues to UniProt positions (for colouring + the "Nearby" list).
         const reverseCache = new Map();
         const toUni = (c, r) => { if (!reverseCache.has(c)) reverseCache.set(c, this._reverseResidueMapForChain(c)); return reverseCache.get(c).get(r) || r; };
         const nearbyUni = new Set([...nearby.values()].map(n => toUni(n.chain, n.resi)));
+
+        // Nearby protein residues — thin sticks, coloured by their annotation (variant/PTM) when
+        // one applies, so the pocket's disease residues stand out (same as residue focus).
+        const annotated = opts.annotatedResidues || new Map();
+        nearby.forEach(({ chain: nc, resi: nr }) => {
+            const color = annotated.get(toUni(nc, nr))?.color;
+            this.viewer.addStyle(nc != null ? { chain: nc, resi: nr } : { resi: nr },
+                { stick: color ? { radius: 0.15, color, opacity: 0.85 } : { radius: 0.15, colorscheme: 'Jmol', opacity: 0.8 } });
+        });
 
         // Keep the other PTM/variant/site annotation spheres visible (toggleable), exactly like
         // residue focus — so the header sphere toggle does something during ligand focus too.
@@ -1037,11 +1048,12 @@ const StructureViewer = {
         } catch (_) { /* viewer may not be initialised yet */ }
     },
 
-    // Zoom to a selection but ease out slightly so the pocket isn't uncomfortably tight.
+    // Zoom to a selection with a little breathing room, in a SINGLE smooth motion. zoomTo fits
+    // the selection tightly; the same-duration zoom() blends in so it eases to ~12% wider without
+    // the distracting "zoom in then pull back" of a delayed second animation.
     _zoomToWithMargin(sel) {
-        this.viewer.zoomTo(sel, 500);
-        clearTimeout(this._zoomOutT);
-        this._zoomOutT = setTimeout(() => { try { this.viewer.zoom(0.78, 350); } catch (_) {} }, 520);
+        this.viewer.zoomTo(sel, 450);
+        this.viewer.zoom(0.88, 450);
     },
 
     _proximityShapes: [],  // shape handles for PTM–variant dashed lines
