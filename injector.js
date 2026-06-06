@@ -137,37 +137,48 @@ const UFVInjector = (() => {
     }
 
     function injectEntryButtons() {
-        // Reposition (and create-if-missing) on any DOM change — covers sections rendering late and
-        // React re-renders that move a heading. The buttons live on body, so this never removes
-        // them; it only updates their position, and it never touches the headings.
-        if (!runtime.observer) {
-            let _t = null;
-            runtime.observer = new MutationObserver(() => {
-                if (_t) return;
-                _t = setTimeout(() => { _t = null; positionEntryButtons(); }, 150);
-            });
-            runtime.observer.observe(document.body, { childList: true, subtree: true });
-        }
+        // No MutationObserver — firing positionEntryButtons() on every React DOM mutation (including
+        // UniProt setting the active-nav CSS class) forces a layout recalculation mid-scroll-spy
+        // update, which is what caused buttons to jitter AND the PTM sidebar line to stick.
         if (!runtime.visibilityBound) {
             runtime.visibilityBound = true;
             document.addEventListener('visibilitychange', () => { if (!document.hidden) positionEntryButtons(); });
         }
         if (!runtime.scrollBound) {
             runtime.scrollBound = true;
-            // Reposition on resize (layout width changes move the title-text end). Scrolling needs
-            // no handler: the buttons are absolute in document coordinates, so they scroll with the
-            // page. rAF-coalesced to avoid redundant work.
             let raf = 0;
-            const reflow = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; positionEntryButtons(); }); };
-            window.addEventListener('resize', reflow, { passive: true });
+            window.addEventListener('resize', () => {
+                if (raf) return;
+                raf = requestAnimationFrame(() => { raf = 0; positionEntryButtons(); });
+            }, { passive: true });
         }
         if (!runtime.entryPoll) {
-            // Keepalive: catches headings that render later and layout shifts (lazy images/fonts)
-            // that move a heading without firing a childList mutation. Cheap and idempotent.
-            runtime.entryPoll = setInterval(positionEntryButtons, 1000);
+            // 2 s is enough to catch lazily-rendered sections without causing continuous jitter.
+            runtime.entryPoll = setInterval(positionEntryButtons, 2000);
         }
-        // Immediate burst for a snappy first paint.
+        // PTM sidebar fix: UniProt's scroll-spy doesn't reliably activate the PTM nav link on
+        // first approach. Use our own IntersectionObserver to nudge a scroll event when the PTM
+        // section enters the viewport, so UniProt re-evaluates which section is active.
+        schedulePTMNavFix();
+        // Immediate burst for a snappy first paint + lazy-rendered sections.
         [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(positionEntryButtons, d));
+    }
+
+    function schedulePTMNavFix() {
+        if (runtime.ptmNavObserver) return;
+        const find = () => {
+            const el = document.getElementById('ptm_processing')
+                || [...document.querySelectorAll('section[id]')].find(s => s.id.toLowerCase().includes('ptm'));
+            if (!el) { setTimeout(find, 1000); return; }
+            runtime.ptmNavObserver = new IntersectionObserver(entries => {
+                if (entries.some(e => e.isIntersecting)) {
+                    window.dispatchEvent(new Event('scroll'));
+                    setTimeout(() => window.dispatchEvent(new Event('scroll')), 80);
+                }
+            }, { threshold: 0.05 });
+            runtime.ptmNavObserver.observe(el);
+        };
+        find();
     }
 
     function injectVariantViewerButton() {
@@ -199,10 +210,9 @@ const UFVInjector = (() => {
         // Kick off background annotation fetch so the modal opens instantly
         UFVModal.prefetchData();
         if (isVariantViewerPage()) {
-            // Cancel any entry-page injection machinery so it can't re-inject
-            // entry buttons (or re-trigger the MutationObserver) on this page.
-            if (runtime.observer) { runtime.observer.disconnect(); runtime.observer = null; }
+            // Cancel entry-page injection machinery.
             if (runtime.entryPoll) { clearInterval(runtime.entryPoll); runtime.entryPoll = null; }
+            if (runtime.ptmNavObserver) { runtime.ptmNavObserver.disconnect(); runtime.ptmNavObserver = null; }
             // Remove all extension buttons — no button on the variant-viewer page.
             ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-domains', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
             injectVariantViewerButton();
