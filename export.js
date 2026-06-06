@@ -401,7 +401,13 @@ const UFVExport = (() => {
             L.push('rebuild');
             L.push('deselect');
         }
-        L.push('orient');
+        // Frame the view: if zoom-in is active, zoom to the selected residue; otherwise orient to fit.
+        if (scene.focus) {
+            const selSel = pymolSel(itemsByChain([{ chain: scene.focus.selChain, resi: scene.focus.pdbResi }]));
+            L.push(`zoom (${selSel})`);
+        } else {
+            L.push('orient');
+        }
         return L.join('\n') + '\n';
     }
 
@@ -496,8 +502,17 @@ const UFVExport = (() => {
             L.push('mol color Name');
             L.push(`mol selection {${vmdSelParts(itemsByChain([{ chain: f.selChain, resi: f.pdbResi }]))}}`);
             L.push('mol addrep top');
+            // Zoom to the selected residue pocket
+            L.push(`molinfo top set center_matrix [molinfo top get center_matrix]`);
+            L.push(`set sel [atomselect top {${vmdSelParts(itemsByChain([{ chain: f.selChain, resi: f.pdbResi }]))}}]`);
+            L.push('set center [measure center $sel]');
+            L.push('set matrix [trans center $center]');
+            L.push('molinfo top set center_matrix $matrix');
+            L.push('$sel delete');
+            L.push('display resetview');
+        } else {
+            L.push('display resetview');
         }
-        L.push('display resetview');
         return L.join('\n') + '\n';
     }
 

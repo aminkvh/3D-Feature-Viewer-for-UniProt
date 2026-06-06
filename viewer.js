@@ -1162,7 +1162,15 @@ const StructureViewer = {
 
         const mode = this.activeColoringMode || 'default';
         const ctx = this._lastColoringContext || {};
+        // Detect the actual base cartoon colour being rendered: for 'default' it's cyan, for
+        // other modes it's the neutral grey. For modes with per-residue colouring (hotspots,
+        // alphaMissense, etc), the base is what uncoloured residues show as.
         const base = mode === 'default' ? '#00bcd4' : this._BG_COLOR;
+        // Capture camera state (position, target, zoom) so the exported scene can be reproduced
+        // with the same framing. If zoom-in is active, the export will show the zoom-in camera.
+        let camera = null;
+        try { camera = this.viewer.getView?.(); } catch (_) {}
+
 
         const caAtoms = (model.selectedAtoms({ atom: 'CA' }) || []).filter(a => !a.hetflag);
         // Cartoon: only residues whose colour differs from `base` (keeps the script compact).
@@ -1211,6 +1219,7 @@ const StructureViewer = {
             cartoonOpacity: this._inFocusMode ? 0.42 : 0.82,
             sphereRadius: 1.8,
             sphereOpacity: 0.92,
+            camera,
             cartoon, spheres, ligands, focus,
         };
     },
