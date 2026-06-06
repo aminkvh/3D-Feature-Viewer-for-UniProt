@@ -21,8 +21,6 @@ const UFVApi = (() => {
     const BEACONS_SUMMARY = (id) => `https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/${id}.json`;
     // RCSB Chemical Component Dictionary entry for a ligand CCD code (e.g. ABU = GABA).
     const LIGAND_CCD = (ccd) => `https://data.rcsb.org/rest/v1/core/chemcomp/${encodeURIComponent(String(ccd).toUpperCase())}`;
-    // PubChem PUG-REST: the published 881-bit CACTVS 2D substructure fingerprint, by InChIKey.
-    const PUBCHEM_FP = (ikey) => `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/${encodeURIComponent(ikey)}/property/Fingerprint2D/JSON`;
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -690,30 +688,5 @@ const UFVApi = (() => {
         return p;
     }
 
-    // PubChem 2D substructure fingerprint (881-bit CACTVS keys) as a Uint8Array(881), by InChIKey.
-    // Published/standard fingerprint, decoded client-side; used for rigorous Tanimoto similarity.
-    const _fpCache = new Map();
-    function b64ToBytes(b64) {
-        const s = atob(b64);
-        const a = new Uint8Array(s.length);
-        for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
-        return a;
-    }
-    function getLigandFingerprint(inchikey) {
-        if (!inchikey) return Promise.resolve(null);
-        if (_fpCache.has(inchikey)) return _fpCache.get(inchikey);
-        const p = (async () => {
-            const j = await fetchOptionalJson(PUBCHEM_FP(inchikey));
-            const b64 = j?.PropertyTable?.Properties?.[0]?.Fingerprint2D;
-            if (!b64) return null;
-            const bin = b64ToBytes(b64); // first 4 bytes are a length prefix, then the 881 bits
-            const bits = new Uint8Array(881);
-            for (let i = 0; i < 881; i++) { const byte = bin[4 + (i >> 3)] || 0; bits[i] = (byte >> (7 - (i & 7))) & 1; }
-            return bits;
-        })();
-        _fpCache.set(inchikey, p);
-        return p;
-    }
-
-    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint };
+    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo };
 })();

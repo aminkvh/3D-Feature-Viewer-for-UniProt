@@ -1506,32 +1506,53 @@ const UFVModal = (() => {
         return chip;
     }
 
-    // Exact Tanimoto over two PubChem 881-bit substructure fingerprints.
-    function tanimoto881(a, b) {
-        if (!a || !b) return 0;
-        let inter = 0, union = 0;
-        for (let k = 0; k < 881; k++) { inter += a[k] & b[k]; union += a[k] | b[k]; }
-        return union ? inter / union : 0;
+    // ---- RDKit (ECFP/Morgan) similarity worker — created lazily, reused for the session ----
+    let _rdkitWorker = null, _rdkitSeq = 0;
+    const _rdkitPending = new Map();
+    function getRdkitWorker() {
+        if (_rdkitWorker) return _rdkitWorker;
+        if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) return null;
+        try {
+            const w = new Worker(chrome.runtime.getURL('rdkit-worker.js'));
+            w.onmessage = e => {
+                const { id, result, error } = e.data || {};
+                const p = _rdkitPending.get(id); if (!p) return;
+                _rdkitPending.delete(id);
+                error ? p.reject(new Error(error)) : p.resolve(result);
+            };
+            w.onerror = () => { _rdkitWorker = null; _rdkitPending.forEach(p => p.reject(new Error('rdkit worker error'))); _rdkitPending.clear(); };
+            _rdkitWorker = w; return w;
+        } catch (_) { return null; }
+    }
+    function rdkitSimilar(focusSmiles, others) {
+        const w = getRdkitWorker();
+        if (!w) return Promise.resolve(null);
+        return new Promise((resolve, reject) => {
+            const id = ++_rdkitSeq;
+            const timer = setTimeout(() => { _rdkitPending.delete(id); reject(new Error('rdkit timeout')); }, 30000);
+            _rdkitPending.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
+            try { w.postMessage({ id, focusSmiles, others }); } catch (e) { clearTimeout(timer); _rdkitPending.delete(id); reject(e); }
+        });
     }
 
-    // Rank the OTHER ligands loaded in the model by Tanimoto similarity to the focused ligand and
-    // show them as a collapsible 3-column grid (like AlphaMissense); clicking one focuses it.
-    // Similarity uses the published PubChem 2D substructure fingerprint (CACTVS 881-bit keys).
+    // Rank the OTHER ligands loaded in the model by ECFP/Morgan (radius 2, 2048-bit) Tanimoto to
+    // the focused ligand, computed with RDKit (WASM) in a worker; show them as a collapsible
+    // 3-column grid (like AlphaMissense). Clicking one focuses it.
     async function renderSimilarLigands(lig, focusMeta, sectionEl) {
         const s = UFVState.state;
         const others = new Map(); // CCD → representative instance
         s.ligands.forEach(l => { if (l.resn !== lig.resn && !others.has(l.resn)) others.set(l.resn, l); });
-        if (!others.size || !focusMeta?.inchikey) { sectionEl.classList.add('ufv-hidden'); return; }
-        const focusFp = await UFVApi.getLigandFingerprint(focusMeta.inchikey);
+        if (!others.size || !focusMeta?.smiles) { sectionEl.classList.add('ufv-hidden'); return; }
+        // Gather SMILES for up to 20 candidate ligands (AlphaFill models can carry dozens).
+        const cands = [...others.values()].slice(0, 20);
+        const metas = await Promise.all(cands.map(inst => UFVApi.getLigandInfo(inst.resn)));
+        const withSmiles = cands.map((inst, i) => ({ inst, ccd: inst.resn, smiles: metas[i]?.smiles })).filter(o => o.smiles);
+        if (UFVState.state.selectedLigand !== lig || !withSmiles.length) { sectionEl.classList.add('ufv-hidden'); return; }
+        const scores = await rdkitSimilar(focusMeta.smiles, withSmiles.map(o => ({ ccd: o.ccd, smiles: o.smiles })));
         if (UFVState.state.selectedLigand !== lig) return;
-        if (!focusFp) { sectionEl.classList.add('ufv-hidden'); return; }
-        // Cap the candidate set — AlphaFill models can carry dozens of transplanted ligands, and
-        // each candidate needs an RCSB + a PubChem lookup (both cached).
-        const ranked = (await Promise.all([...others.values()].slice(0, 20).map(async inst => {
-            const m = await UFVApi.getLigandInfo(inst.resn);
-            const fp = m?.inchikey ? await UFVApi.getLigandFingerprint(m.inchikey) : null;
-            return { inst, score: tanimoto881(focusFp, fp) };
-        }))).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
+        if (!scores) { sectionEl.classList.add('ufv-hidden'); return; }
+        const ranked = withSmiles.map((o, i) => ({ inst: o.inst, score: scores[i]?.score ?? 0 }))
+            .filter(e => e.score > 0).sort((a, b) => b.score - a.score);
         if (UFVState.state.selectedLigand !== lig) return;       // user moved on
         if (!ranked.length) { sectionEl.classList.add('ufv-hidden'); return; }
 
@@ -1546,7 +1567,7 @@ const UFVModal = (() => {
         ranked.forEach(({ inst, score }) => {
             const cell = document.createElement('button');
             cell.className = 'ufv-am-cell ufv-sim-cell';
-            cell.title = `PubChem 2D-fingerprint Tanimoto ${score.toFixed(2)} — click to focus`;
+            cell.title = `ECFP/Morgan Tanimoto ${score.toFixed(2)} (click to focus)`;
             cell.innerHTML = `<span class="ufv-am-cell-mut">${_esc(inst.resn)}</span><span class="ufv-am-cell-sc">${score.toFixed(2)}</span>`;
             cell.addEventListener('click', () => onLigandClick({ resn: inst.resn, resi: inst.resi, chain: inst.chain }));
             grid.appendChild(cell);
@@ -1830,6 +1851,8 @@ const UFVModal = (() => {
         if (overlayEl) overlayEl.style.display = 'none';
         document.documentElement.style.overflow = '';
         document.body.style.overflow = '';
+        // Free the RDKit WASM worker so it isn't held (and its ~30 MB) after the viewer closes.
+        if (_rdkitWorker) { try { _rdkitWorker.terminate(); } catch (_) {} _rdkitWorker = null; _rdkitPending.clear(); }
     }
 
     // Re-render the 3Dmol canvas whenever the user returns to this browser tab.
