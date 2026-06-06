@@ -44,7 +44,7 @@ The built-in residue-prioritization views are intended for exploration and hypot
 3. Click **View in 3D**.
 4. Choose a structure, filter annotations, select residues, and export any results you want to reuse.
 
-## What's new in v1.5.1
+## What's new in v1.7.3
 
 - Functional Features window 
 - Family & Domains window
@@ -53,7 +53,7 @@ The built-in residue-prioritization views are intended for exploration and hypot
 - PyMOL/VMD session export: Download menu has two new options to export a self-contained script that reproduces the exact on-screen view, so you can continue working in those programs
 - Ligand similarity by CACTVS fingerprint: Tanimoto scoring against PubChem for finding similar ligands in the structure
 
-# UX & Fixes
+## UX & Fixes
 - Buttons are anchored to subheadings instead of the main heading.
 - minor bug fixes.
 
