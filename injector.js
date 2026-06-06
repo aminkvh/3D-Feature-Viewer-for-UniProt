@@ -62,15 +62,23 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Place the button inline, right after the section title text (inside the heading element),
-    // so it sits "by the title" yet stays on the heading's existing line box.
+    // Place the button ABSOLUTELY inside the heading (top-right), so it's out of normal flow and
+    // adds NO height to the heading. Previously the in-flow button increased the heading's height
+    // and shifted every section below it; UniProt's left-nav active indicator caches section
+    // offsets, so the PTM link wouldn't highlight until a later section forced a recalc. An
+    // absolutely-positioned button leaves the heading's box untouched, so offsets stay correct.
     function placeAnchoredButton(heading, btn) {
         btn.classList.add('ufv-3d-btn--inline');
+        try { if (getComputedStyle(heading).position === 'static') heading.style.position = 'relative'; } catch (_) {}
+        btn.style.position = 'absolute';
+        btn.style.right = '0';
+        btn.style.top = '50%';
+        btn.style.transform = 'translateY(-50%)';
+        btn.style.margin = '0';
+        btn.style.zIndex = '5';
         heading.appendChild(btn);
-        // Injecting the button can nudge section offsets, and UniProt's left-nav active indicator
-        // caches those offsets — so e.g. the PTM section's nav link wouldn't highlight until a
-        // later section forced a recalc. Fire a debounced resize/scroll so the page recomputes its
-        // scroll-spy after we've (re)placed a button. Only runs when a button is actually added.
+        // Belt-and-suspenders: still nudge the scroll-spy in case the host computes offsets some
+        // other way. Cheap and only fires when a button is actually (re)placed.
         nudgeScrollSpy();
     }
 

@@ -539,9 +539,9 @@ const UFVModal = (() => {
         StructureViewer.ligandClickCb = onLigandClick;
         // Enumerate ligands present in the loaded model (AlphaFill/SwissModel cofactors etc.).
         s.ligands = StructureViewer.enumerateLigands ? StructureViewer.enumerateLigands() : [];
-        // Family & Domains window: a domain the loaded structure doesn't cover can't be drawn, so
-        // start it unselected (recomputed whenever the selected structure changes).
-        if (s.currentMode === 'domains') (s.domains || []).forEach(d => { d.visible = structureCoversRange(d.position, d.endPosition); });
+        // Family & Domains window: a domain the loaded structure doesn't actually resolve can't be
+        // drawn, so start it unselected (recomputed whenever the selected structure changes).
+        if (s.currentMode === 'domains') applyDomainCoverageDefaults();
         refreshLigandSections();
         StructureViewer.dblClickCb = () => {
             const s = UFVState.state;
@@ -763,16 +763,30 @@ const UFVModal = (() => {
         return map;
     }
 
-    // Whether the loaded structure covers (at least partially) the UniProt range [start,end].
-    // Full-length canonical AlphaFold models cover everything; experimental / isoform / computed
-    // models only cover their mapped segments, so a domain outside them can't be shown.
-    function structureCoversRange(start, end) {
+    // Minimum fraction of a domain's residues that must be MODELLED in the loaded structure for
+    // it to be selectable by default. Using mapped (SIFTS) range isn't enough: experimental models
+    // often map a wide range but leave big disordered/cytoplasmic stretches unresolved, which would
+    // otherwise sit checked-but-invisible. Tunable.
+    const DOMAIN_MIN_MODELLED_FRAC = 0.3;
+
+    // Set domain default visibility from what the loaded structure actually resolves. Full-length
+    // canonical AlphaFold resolves everything (all selectable); other models only resolve their
+    // modelled residues, so a domain lying in an unresolved region starts unselected.
+    function applyDomainCoverageDefaults() {
+        const s = UFVState.state;
         const st = UFVState.selectedStructure();
-        if (!st) return true;
-        if (st.source === 'AlphaFold' && !st.isoform) return true; // full-length canonical model
-        const ranges = st.mappedRanges;
-        if (!ranges || !ranges.length) return true; // unknown mapping → don't hide
-        return ranges.some(r => r.uniprotStart <= end && r.uniprotEnd >= start);
+        const fullCoverage = !st || (st.source === 'AlphaFold' && !st.isoform);
+        const modelled = fullCoverage ? null : new Set(StructureViewer.mappedResidues?.() || []);
+        (s.domains || []).forEach(d => { d.visible = domainVisualizable(d, modelled); });
+    }
+
+    function domainVisualizable(d, modelled) {
+        if (!modelled) return true;            // full-coverage model
+        const end = d.endPosition || d.position;
+        let n = 0;
+        for (let p = d.position; p <= end; p++) if (modelled.has(p)) n++;
+        const len = end - d.position + 1;
+        return n >= Math.max(1, Math.ceil(len * DOMAIN_MIN_MODELLED_FRAC));
     }
 
     // Variants belonging to a disease the user selected in the secondary "Disease variants" group.
