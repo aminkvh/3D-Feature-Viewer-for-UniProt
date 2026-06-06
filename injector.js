@@ -62,53 +62,54 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Place the button ABSOLUTELY inside the heading (top-right), so it's out of normal flow and
-    // adds NO height to the heading. Previously the in-flow button increased the heading's height
-    // and shifted every section below it; UniProt's left-nav active indicator caches section
-    // offsets, so the PTM link wouldn't highlight until a later section forced a recalc. An
-    // absolutely-positioned button leaves the heading's box untouched, so offsets stay correct.
-    function placeAnchoredButton(heading, btn) {
-        btn.classList.add('ufv-3d-btn--inline');
-        try { if (getComputedStyle(heading).position === 'static') heading.style.position = 'relative'; } catch (_) {}
-        btn.style.position = 'absolute';
-        btn.style.right = '0';
-        btn.style.top = '50%';
-        btn.style.transform = 'translateY(-50%)';
-        btn.style.margin = '0';
-        btn.style.zIndex = '5';
-        heading.appendChild(btn);
-        // Belt-and-suspenders: still nudge the scroll-spy in case the host computes offsets some
-        // other way. Cheap and only fires when a button is actually (re)placed.
-        nudgeScrollSpy();
-    }
+    // Entry-page buttons FLOAT on document.body, positioned over each section title — they are NOT
+    // injected into UniProt's section headings. Putting a child into a heading made React re-render
+    // that section, which both dropped our button (the "disappearing buttons" bug) and made the
+    // section lose its left-nav scroll-spy registration (the PTM active-indicator bug). Keeping the
+    // buttons out of the React-managed DOM avoids both: body children survive re-renders, and the
+    // headings are never mutated. position:absolute in document coordinates means they scroll with
+    // the page naturally; we only reposition when layout/structure changes.
+    const FLOAT_BTN_SPECS = [
+        { id: 'ufv-btn-ptm', label: 'View PTMs in 3D', open: () => UFVModal.open('ptm'),
+          find: () => findSectionHeading('ptm_processing') },
+        { id: 'ufv-btn-variant', label: 'View Variants in 3D', open: () => UFVModal.open('variant'),
+          find: () => findSectionHeading('disease_variants'),
+          onPosition: h => { try { UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(h); } catch (_) {} } },
+        { id: 'ufv-btn-features', label: 'View Sites in 3D', open: () => UFVModal.open('sites'),
+          find: () => findSectionFeaturesHeading('function', 'function') },
+        { id: 'ufv-btn-domains', label: 'View Domains in 3D', open: () => UFVModal.open('domains'),
+          find: () => findSectionFeaturesHeading('family_and_domains', 'family & domains')
+                     || findSectionFeaturesHeading('family_&_domains', 'family & domains') },
+    ];
 
-    let _nudgeTimer = null;
-    function nudgeScrollSpy() {
-        if (_nudgeTimer) return;
-        _nudgeTimer = setTimeout(() => {
-            _nudgeTimer = null;
-            window.dispatchEvent(new Event('resize'));
-            window.dispatchEvent(new Event('scroll'));
-        }, 80);
-    }
-
-    function tryInjectPTMButton() {
-        const existing = document.getElementById('ufv-btn-ptm');
-        if (existing && document.body.contains(existing)) return;
-        const heading = findSectionHeading('ptm_processing');
-        if (!heading) return;
-        const btn = UFVModal.createButton('ufv-btn-ptm', 'View PTMs in 3D', () => UFVModal.open('ptm'));
-        placeAnchoredButton(heading, btn);
-    }
-
-    function tryInjectVariantButton() {
-        const existing = document.getElementById('ufv-btn-variant');
-        if (existing && document.body.contains(existing)) return;
-        const heading = findSectionHeading('disease_variants');
-        if (!heading) return;
-        UFVState.state.scrapedDiseases = scrapeDiseaseHeadings(heading);
-        const btn = UFVModal.createButton('ufv-btn-variant', 'View Variants in 3D', () => UFVModal.open('variant'));
-        placeAnchoredButton(heading, btn);
+    // (Re)create each floating button and place it just after its section's title text. Cheap — a
+    // getBoundingClientRect per button — so it's safe to call on mutations, resize, and a keepalive.
+    function positionEntryButtons() {
+        if (isVariantViewerPage()) return; // no entry buttons on the variant-viewer page
+        FLOAT_BTN_SPECS.forEach(spec => {
+            const heading = spec.find();
+            let btn = document.getElementById(spec.id);
+            if (!heading) { if (btn) btn.style.display = 'none'; return; }
+            if (!btn) {
+                btn = UFVModal.createButton(spec.id, spec.label, spec.open);
+                btn.classList.add('ufv-3d-btn--float');
+                document.body.appendChild(btn);
+            }
+            if (spec.onPosition) spec.onPosition(heading);
+            // Measure where the title text ends so the button sits right after it (not at the far
+            // right of a full-width heading). A Range over the heading's contents gives that.
+            let tr;
+            try { const range = document.createRange(); range.selectNodeContents(heading); tr = range.getBoundingClientRect(); }
+            catch (_) { tr = heading.getBoundingClientRect(); }
+            if (tr.width === 0 && tr.height === 0) { btn.style.display = 'none'; return; }
+            btn.style.display = '';
+            const top = window.scrollY + tr.top + tr.height / 2 - btn.offsetHeight / 2;
+            let left = window.scrollX + tr.right + 12;
+            const maxLeft = window.scrollX + document.documentElement.clientWidth - btn.offsetWidth - 10;
+            if (left > maxLeft) left = Math.max(window.scrollX, maxLeft);
+            btn.style.top = Math.max(0, top) + 'px';
+            btn.style.left = Math.max(0, left) + 'px';
+        });
     }
 
     // The "Features" sub-viewer inside a section (Function, Family & Domains, …) is where that
@@ -125,29 +126,6 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Features sub-section under Function (active/binding/metal sites). Opens the Functional-features
-    // window (sites primary; PTMs + disease variants as collapsed secondary groups).
-    function tryInjectFeaturesButton() {
-        const existing = document.getElementById('ufv-btn-features');
-        if (existing && document.body.contains(existing)) return;
-        const heading = findSectionFeaturesHeading('function', 'function');
-        if (!heading) return;
-        const btn = UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('sites'));
-        placeAnchoredButton(heading, btn);
-    }
-
-    // Features sub-section under Family & Domains (domain / region / repeat / compositional bias).
-    // Opens the Family & Domains window (domains primary; PTMs + disease variants collapsed).
-    function tryInjectDomainsButton() {
-        const existing = document.getElementById('ufv-btn-domains');
-        if (existing && document.body.contains(existing)) return;
-        const heading = findSectionFeaturesHeading('family_&_domains', 'family & domains')
-            || findSectionFeaturesHeading('family_and_domains', 'family & domains');
-        if (!heading) return;
-        const btn = UFVModal.createButton('ufv-btn-domains', 'View Domains in 3D', () => UFVModal.open('domains'));
-        placeAnchoredButton(heading, btn);
-    }
-
     function tryInjectVariantViewerButton() {
         const existing = document.getElementById('ufv-btn-variant-page');
         if (existing && document.body.contains(existing)) return;
@@ -158,66 +136,38 @@ const UFVInjector = (() => {
         btn.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3);';        document.body.appendChild(btn);
     }
 
-    function injectAllEntryButtons() {
-        tryInjectPTMButton();
-        tryInjectVariantButton();
-        tryInjectFeaturesButton();
-        tryInjectDomainsButton();
-    }
-    function allEntryButtonsPresent() {
-        return document.getElementById('ufv-btn-ptm')?.isConnected &&
-            document.getElementById('ufv-btn-variant')?.isConnected &&
-            document.getElementById('ufv-btn-features')?.isConnected &&
-            document.getElementById('ufv-btn-domains')?.isConnected;
-    }
-
     function injectEntryButtons() {
+        // Reposition (and create-if-missing) on any DOM change — covers sections rendering late and
+        // React re-renders that move a heading. The buttons live on body, so this never removes
+        // them; it only updates their position, and it never touches the headings.
         if (!runtime.observer) {
-            // Debounce: React batch-renders cause many rapid mutations; collapse them
-            // into a single inject attempt so we never mutate the DOM mid-scroll.
-            let _injectTimer = null;
+            let _t = null;
             runtime.observer = new MutationObserver(() => {
-                // Skip when all buttons are already present — prevents timer churn during
-                // scroll-triggered React re-renders.
-                if (allEntryButtonsPresent()) return;
-                if (_injectTimer) return;
-                _injectTimer = setTimeout(() => { _injectTimer = null; injectAllEntryButtons(); }, 150);
+                if (_t) return;
+                _t = setTimeout(() => { _t = null; positionEntryButtons(); }, 150);
             });
             runtime.observer.observe(document.body, { childList: true, subtree: true });
         }
-        // Re-inject when switching back to this tab (UniProt SPA re-renders on visibility)
         if (!runtime.visibilityBound) {
             runtime.visibilityBound = true;
-            document.addEventListener('visibilitychange', () => { if (!document.hidden) injectAllEntryButtons(); });
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) positionEntryButtons(); });
         }
-        if (!runtime.entryPoll) {
-            // Permanent low-frequency keepalive. UniProt's React app re-renders sections on
-            // scroll / tab changes and silently drops our buttons, and the Function "Features"
-            // sub-view renders lazily only when scrolled into view — so a one-shot poll that
-            // stops once buttons exist left them gone until a manual refresh (the "inconsistent
-            // injection" bug). Re-checking every second is cheap (each tryInject* short-circuits
-            // on getElementById when present) and guarantees the buttons always come back.
-            // Cleared only when navigating to a non-entry page (handlePageType).
-            runtime.entryPoll = setInterval(injectAllEntryButtons, 1000);
-        }
-        // Throttled scroll re-inject: UniProt virtualizes/unmounts off-screen sections on scroll,
-        // dropping our buttons; this re-adds them the moment a section scrolls back into view
-        // (faster than the 1 s keepalive). Safe vs. the sidebar indicator because it only mutates
-        // the DOM when a button is actually MISSING — when all are present it's a no-op, so it
-        // never reflows during normal scrolling.
         if (!runtime.scrollBound) {
             runtime.scrollBound = true;
-            let _lastScrollInject = 0;
-            window.addEventListener('scroll', () => {
-                const now = Date.now();
-                if (now - _lastScrollInject < 250) return;
-                _lastScrollInject = now;
-                if (!allEntryButtonsPresent()) injectAllEntryButtons();
-            }, { passive: true });
+            // Reposition on resize (layout width changes move the title-text end). Scrolling needs
+            // no handler: the buttons are absolute in document coordinates, so they scroll with the
+            // page. rAF-coalesced to avoid redundant work.
+            let raf = 0;
+            const reflow = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; positionEntryButtons(); }); };
+            window.addEventListener('resize', reflow, { passive: true });
         }
-        // Immediate burst of attempts for a snappy first paint (covers the common case where
-        // the sections are already in the DOM at document_idle).
-        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(injectAllEntryButtons, d));
+        if (!runtime.entryPoll) {
+            // Keepalive: catches headings that render later and layout shifts (lazy images/fonts)
+            // that move a heading without firing a childList mutation. Cheap and idempotent.
+            runtime.entryPoll = setInterval(positionEntryButtons, 1000);
+        }
+        // Immediate burst for a snappy first paint.
+        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(positionEntryButtons, d));
     }
 
     function injectVariantViewerButton() {
