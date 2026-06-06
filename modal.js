@@ -524,7 +524,6 @@ const UFVModal = (() => {
      * mode needs the result, then folds in partner-protein disease residues.
      */
     function scheduleStructureAnalyses(structure, requestedId, mySeq) {
-        if (selectedIsIsoform()) return; // overlays are hidden on isoforms — don't burn CPU on them
         const run = () => {
             const s = UFVState.state;
             if (s.uniprotId !== requestedId || _loadSeq !== mySeq || !StructureViewer.viewer) return;
@@ -666,17 +665,10 @@ const UFVModal = (() => {
             // Membrane-topology mode only when the entry has topology features.
             const hasTopology = UFVState.state.topology?.length > 0;
             cmDrop.querySelector('[data-value="topology"]').classList.toggle('ufv-hidden', !hasTopology);
-            // On isoform models annotation-based colour modes are meaningless (no canonical
-            // mapping) — hide them and keep only the structural ones.
-            const isoform = selectedIsIsoform();
-            ['hotspots', 'distantContacts', 'alphaMissense', 'residueBurden', 'prism'].forEach(v => {
-                cmDrop.querySelector(`[data-value="${v}"]`)?.classList.toggle('ufv-hidden', isoform);
-            });
             const cur = getColorMode();
             if ((cur === 'bfactor' && isAlphaFold) || (cur === 'plddt' && !isAlphaFold) || (cur === 'topology' && !hasTopology)) {
                 setColorMode('default');
             }
-            if (isoform && cur !== 'plddt' && cur !== 'default') setColorMode('plddt');
         }
         byId('ufv-structure-meta') && (byId('ufv-structure-meta').textContent = '');
         renderStructureSelector();
@@ -702,28 +694,13 @@ const UFVModal = (() => {
         return ` (mapped: ${min}–${max}, ${ranges.length} segments)`;
     }
 
-    // Non-canonical isoform AlphaFold models number residues by the isoform sequence, but every
-    // annotation we hold (PTMs, variants, sites, hotspots, pockets…) is canonical-numbered with
-    // no real isoform↔canonical mapping. Overlaying them would confidently mis-place features
-    // after any indel, so on isoform models we show the structure only.
-    function selectedIsIsoform() {
-        const st = UFVState.selectedStructure();
-        return !!(st && st.source === 'AlphaFold' && st.isoform);
-    }
-
+    // Non-canonical isoform AlphaFold models number residues by the isoform sequence. We carry a
+    // real canonical<->isoform mapping (segmented mappedRanges built from the isoform's VSP edits),
+    // so annotations now render at the correct residues through the normal mapping path; the only
+    // isoform-specific handling left is fetching the isoform's own PAE for pocket analysis.
     function applyMode() {
         const s = UFVState.state;
         if (!StructureViewer.viewer) return;
-        if (selectedIsIsoform()) {
-            // Structure only — colour by pLDDT (or plain default), draw no annotation overlays.
-            let m = getColorMode();
-            if (m !== 'plddt' && m !== 'default') m = 'plddt';
-            StructureViewer.applyCartoonColoring(m, {}, true);
-            StructureViewer.showPTMs([], s.ptmGroups, []); // clear any spheres from a prior structure
-            s.displayedPositions = [];
-            byId('ufv-count-text').textContent = 'Isoform model — canonical annotations hidden (isoform numbering differs)';
-            return;
-        }
         const mode = getColorMode();
         const filteredVariants = DataProcessor.filterVariants(s.variants, s.activeConsequences, s.activeProvenances, s.activeDiseases);
         // defer=true skips the intermediate render; showPTMs/showVariants will render once
@@ -814,14 +791,16 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const st = UFVState.selectedStructure();
         if (!st || !StructureViewer.viewer) return s.analysis.prism;
-        if (selectedIsIsoform()) return s.analysis.prism; // canonical PAE/positions don't map to isoforms
         if (s.analysis.prism) return s.analysis.prism; // already computed for this structure
         const requestedId = s.uniprotId;
         showLoading('Computing constraint pockets…');
         try {
             let pae = null;
             if (st.source === 'AlphaFold') {
-                try { pae = await UFVApi.getPaeMatrix(requestedId, st.version); } catch (_) {}
+                // Isoform models have their own PAE file (AF-<accession-N>-…); fetch by the
+                // isoform accession so PAE indices align with the isoform residue order. Falls
+                // back to geometry-only pockets if that PAE isn't available.
+                try { pae = await UFVApi.getPaeMatrix(st.isoform || requestedId, st.version); } catch (_) {}
             }
             if (s.uniprotId !== requestedId || UFVState.selectedStructure() !== st) return s.analysis.prism;
             const geometry = StructureViewer.residueGeometry();

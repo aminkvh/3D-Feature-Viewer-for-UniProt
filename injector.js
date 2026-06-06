@@ -90,11 +90,25 @@ const UFVInjector = (() => {
         placeAnchoredButton(heading, btn);
     }
 
-    // Function section (holds active/binding/metal sites). Opens the viewer with sites shown.
+    // The "Features" sub-viewer inside the Function section is where active/binding/metal sites
+    // are tabulated, so the button belongs next to that <h3>Features</h3> — not the section's
+    // top-level <h2>Function</h2>.
+    function findFunctionFeaturesHeading() {
+        const section = document.getElementById('function')
+            || [...(document.querySelector('main') || document.body).querySelectorAll('h2')]
+                .find(h => h.textContent.trim().toLowerCase() === 'function')?.closest('section');
+        if (!section) return null;
+        for (const h of section.querySelectorAll('h3')) {
+            if (h.textContent.trim().toLowerCase() === 'features') return h;
+        }
+        return null;
+    }
+
+    // Features sub-section under Function (holds active/binding/metal sites). Opens with sites shown.
     function tryInjectFeaturesButton() {
         const existing = document.getElementById('ufv-btn-features');
         if (existing && document.body.contains(existing)) return;
-        const heading = findSectionHeading('function');
+        const heading = findFunctionFeaturesHeading();
         if (!heading) return;
         const btn = UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('ptm', { sitesOn: true }));
         placeAnchoredButton(heading, btn);
@@ -141,25 +155,21 @@ const UFVInjector = (() => {
             document.addEventListener('visibilitychange', () => { if (!document.hidden) injectAllEntryButtons(); });
         }
         if (!runtime.entryPoll) {
-            // Poll quickly at first so the button appears promptly once the section renders,
-            // then stop once all buttons exist (the MutationObserver remains the long-term safety
-            // net for sections that render later, e.g. on scroll).  400 ms × 40 ≈ 16 s.
-            let attempts = 0;
-            runtime.entryPoll = setInterval(() => {
-                injectAllEntryButtons();
-                attempts++;
-                if (allEntryButtonsPresent() || attempts > 40) {
-                    clearInterval(runtime.entryPoll);
-                    runtime.entryPoll = null;
-                }
-            }, 400);
+            // Permanent low-frequency keepalive. UniProt's React app re-renders sections on
+            // scroll / tab changes and silently drops our buttons, and the Function "Features"
+            // sub-view renders lazily only when scrolled into view — so a one-shot poll that
+            // stops once buttons exist left them gone until a manual refresh (the "inconsistent
+            // injection" bug). Re-checking every second is cheap (each tryInject* short-circuits
+            // on getElementById when present) and guarantees the buttons always come back.
+            // Cleared only when navigating to a non-entry page (handlePageType).
+            runtime.entryPoll = setInterval(injectAllEntryButtons, 1000);
         }
         // NOTE: scroll listener removed — MutationObserver already covers lazy-loaded
         // section re-renders, and the scroll listener was racing with UniProt's
         // IntersectionObserver that drives the sidebar active-indicator.
         // Immediate burst of attempts for a snappy first paint (covers the common case where
         // the sections are already in the DOM at document_idle).
-        [0, 120, 300, 600, 1000].forEach(d => setTimeout(injectAllEntryButtons, d));
+        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(injectAllEntryButtons, d));
     }
 
     function injectVariantViewerButton() {

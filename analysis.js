@@ -397,12 +397,13 @@ const UFVAnalysis = (() => {
     // the observed distribution, not a fixed percentile — so a featureless chain emits nothing).
     const HUB_Z_STRONG = 3.0;
     const HUB_Z_MODERATE = 2.0;
-    // Brandes' betweenness is O(V·E); for a single chain E grows with V, so cost is roughly
-    // O(V²)–O(V³). Cap the per-chain residue count so a very large chain (e.g. a giant single
-    // protein or a complex parsed as one chain) can't freeze the UniProt tab. Real single chains
-    // are almost always well under this; above it we skip the hub overlay for that chain rather
-    // than block the main thread.
-    const HUB_MAX_CA = 1600;
+    // Brandes' betweenness is O(V·E); for an 8 Å contact graph |E| ≈ 4V, so cost ≈ O(4V²):
+    // ~20 ms at 2000 residues, ~80 ms at 4000, ~0.6 s at 10000. The analysis is run off the main
+    // thread (requestIdleCallback) so the only thing this cap protects against is a pathologically
+    // huge chain (e.g. a giant complex parsed as one chain) stalling for seconds. It is set well
+    // above any real single protein chain — a 2000-residue protein is computed normally — so it
+    // never nerfs ordinary entries; above it we skip the hub overlay for that chain.
+    const HUB_MAX_CA = 6000;
 
     /**
      * Identify "long-range contact hubs" as residues with high BETWEENNESS CENTRALITY in the

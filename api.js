@@ -207,10 +207,25 @@ const UFVApi = (() => {
     // How many distinct partner accessions we will fetch variant data for (bounds network use
     // on large hetero-complexes).
     const PARTNER_ACCESSION_CAP = 8;
-    // Most PDB chains the user could ever pick survive into the final (25-capped) selector, so
-    // decorating more than this many distinct PDB entries just burns requests. Generous enough
-    // that the best structures are never dropped, small enough to tame request storms.
-    const MAX_EXPERIMENTAL_PDBS = 30;
+    // Max simultaneous structure-decoration fetch groups. Proteins mapped to dozens/hundreds of
+    // PDB chains would otherwise open hundreds of parallel requests at once (a request storm that
+    // hammers EBI/RCSB and can stall the browser). Bounding concurrency keeps every structure
+    // available while spreading the load.
+    const DECORATE_CONCURRENCY = 8;
+
+    /** Run `fn` over `items` with at most `limit` in flight at once (bounded concurrency). */
+    async function mapPool(items, limit, fn) {
+        const ret = new Array(items.length);
+        let next = 0;
+        async function worker() {
+            while (next < items.length) {
+                const i = next++;
+                ret[i] = await fn(items[i], i);
+            }
+        }
+        await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+        return ret;
+    }
 
     /**
      * From the per-entry SIFTS mapping, list the OTHER proteins (different UniProt accession)
@@ -319,7 +334,7 @@ const UFVApi = (() => {
     }
 
     async function decoratePdbStructures(structures, uniprotId, sequenceLength) {
-        await Promise.all(structures.map(async s => {
+        await mapPool(structures, DECORATE_CONCURRENCY, async s => {
             if (!s.pdbId) return;
             const [summary, molecules, sifts] = await Promise.all([
                 fetchOptionalJson(PDBe_ENTRY(s.pdbId)),
@@ -420,7 +435,7 @@ const UFVApi = (() => {
                         s.coverage = Math.round((modelled / sequenceLength) * 1000) / 10;
                 } catch (_) {}
             }
-        }));
+        });
         return structures;
     }
 
@@ -436,23 +451,10 @@ const UFVApi = (() => {
             const prev = dedupMap.get(key);
             if (!prev || (s.coverage || 0) > (prev.coverage || 0)) dedupMap.set(key, s);
         }
-        // Cap the candidate PDB entries BEFORE decorating. decoratePdbStructures makes
-        // per-chain network calls (summary, SIFTS/residue-listing, modeled-residue count), so a
-        // protein mapped to hundreds of PDB entries (e.g. TP53) would otherwise fan out into a
-        // request storm. Rank PDB entries by their best_structures coverage (then resolution),
-        // keep the top MAX_EXPERIMENTAL_PDBS, and decorate only those chains. The richer
-        // per-chain figures from decoration still re-rank within the kept set below.
-        const byPdbCoverage = new Map(); // pdbId → { coverage, resolution }
-        for (const s of dedupMap.values()) {
-            const cur = byPdbCoverage.get(s.pdbId);
-            if (!cur || (s.coverage || 0) > cur.coverage) byPdbCoverage.set(s.pdbId, { coverage: s.coverage || 0, resolution: s.resolution });
-        }
-        const keptPdbIds = new Set([...byPdbCoverage.entries()]
-            .sort((a, b) => (b[1].coverage - a[1].coverage) || ((a[1].resolution ?? 99) - (b[1].resolution ?? 99)))
-            .slice(0, MAX_EXPERIMENTAL_PDBS)
-            .map(([pdbId]) => pdbId));
-        const candidates = [...dedupMap.values()].filter(s => keptPdbIds.has(s.pdbId));
-        const decorated = await decoratePdbStructures(candidates, id, sequenceLength);
+        // Decorate every deduped chain (keeps all structures available — proteins with many PDB
+        // entries still show all of them). decoratePdbStructures bounds its own request
+        // concurrency so a large list can't fan out into a request storm.
+        const decorated = await decoratePdbStructures([...dedupMap.values()], id, sequenceLength);
         // Merge all chains of the same PDB entry that map to this protein into one entry.
         // This handles homodimers / homo-oligomers: show "7QNE-A,D" instead of separate rows.
         const byPdb = new Map();
@@ -641,19 +643,72 @@ const UFVApi = (() => {
     }
 
     /**
+     * Collect the VAR_SEQ / "Alternative sequence" edits (`sequenceIds`, e.g. VSP_001031) that
+     * define one isoform, as {start, end, newLen} in canonical coordinates.  An empty replacement
+     * is a deletion (newLen 0); otherwise newLen is the substituted segment's length.
+     */
+    function isoformVsps(uniprotData, vspIds) {
+        const byId = new Map();
+        (uniprotData?.features || []).forEach(f => {
+            if (f.type === 'Alternative sequence' && f.featureId) byId.set(f.featureId, f);
+        });
+        const out = [];
+        (vspIds || []).forEach(vid => {
+            const f = byId.get(vid);
+            const s = f?.location?.start?.value, e = f?.location?.end?.value;
+            if (s == null || e == null) return;
+            const alt = f.alternativeSequence?.alternativeSequences;
+            const newLen = Array.isArray(alt) && alt.length ? String(alt[0]).length : 0;
+            out.push({ start: s, end: e, newLen });
+        });
+        return out;
+    }
+
+    /**
+     * Build segmented mappedRanges (canonical UniProt position <-> isoform residue number) from an
+     * isoform's VSP edits.  Unedited stretches map 1:1 with a running offset; canonical positions
+     * inside an edited (deleted/substituted) region get no isoform counterpart, so annotations
+     * there are simply not drawn — which is correct, those residues genuinely differ.  The result
+     * uses the same {uniprotStart,uniprotEnd,pdbStart,pdbEnd} shape the viewer already uses for
+     * gapped PDB mappings, so isoform annotations/clicks flow through the normal mapping path.
+     */
+    function buildIsoformMappedRanges(canonLen, vsps) {
+        const sorted = vsps.slice().sort((a, b) => a.start - b.start);
+        const ranges = [];
+        let canon = 1, iso = 1;
+        for (const v of sorted) {
+            if (v.start < canon) continue; // overlapping/duplicate edit — skip defensively
+            if (v.start > canon) {
+                const len = v.start - canon;
+                ranges.push({ uniprotStart: canon, uniprotEnd: v.start - 1, pdbStart: iso, pdbEnd: iso + len - 1, chainId: null });
+                iso += len;
+            }
+            iso += v.newLen;      // replacement residues occupy isoform space but map to no canonical position
+            canon = v.end + 1;
+        }
+        if (canon <= canonLen) {
+            const len = canonLen - canon + 1;
+            ranges.push({ uniprotStart: canon, uniprotEnd: canonLen, pdbStart: iso, pdbEnd: iso + len - 1, chainId: null });
+        }
+        return ranges;
+    }
+
+    /**
      * AlphaFold models for the protein's NON-canonical isoforms (e.g. AF-P35498-2-F1). These are
      * not listed in the 3D-Beacons summary of the canonical accession, so we read the isoform IDs
      * from the UniProt entry and probe AlphaFold DB for each. Residue numbering follows the
-     * isoform sequence, so canonical PTM/variant positions may be offset on these models.
+     * isoform sequence; we derive a real canonical<->isoform mapping from the isoform's VSP edits
+     * so annotations land on the correct residues (see buildIsoformMappedRanges).
      */
     async function getIsoformAlphaFoldStructures(id, sequenceLength) {
         const base = String(id).split('-')[0];
         const u = await fetchOptionalJson(UNIPROT_URL(base));
-        const isoIds = new Set();
+        const isoMap = new Map(); // isoformId -> VSP ids
         (u?.comments || []).forEach(c => {
-            if (c.commentType === 'ALTERNATIVE PRODUCTS') (c.isoforms || []).forEach(iso => (iso.isoformIds || []).forEach(iid => isoIds.add(iid)));
+            if (c.commentType === 'ALTERNATIVE PRODUCTS') (c.isoforms || []).forEach(iso =>
+                (iso.isoformIds || []).forEach(iid => isoMap.set(iid, iso.sequenceIds || [])));
         });
-        const targets = [...isoIds].filter(iid => iid && iid !== base && iid !== `${base}-1`);
+        const targets = [...isoMap.keys()].filter(iid => iid && iid !== base && iid !== `${base}-1`);
         const out = [];
         // Resolve each isoform's AlphaFold model via its 3D-Beacons summary. We can't HEAD-probe
         // the AlphaFold file directly: alphafold.ebi.ac.uk returns CORS headers on GET but NOT on
@@ -664,6 +719,14 @@ const UFVApi = (() => {
             const af = (d?.structures || []).map(e => e?.summary || e).find(sm => sm?.model_url && /alphafold/i.test(sm.provider || ''));
             if (!af) return;
             const fmt = String(af.model_format || '').toUpperCase();
+            const vsps = isoformVsps(u, isoMap.get(iid));
+            const mappedRanges = sequenceLength
+                ? (vsps.length ? buildIsoformMappedRanges(sequenceLength, vsps)
+                               : [{ uniprotStart: 1, uniprotEnd: sequenceLength, pdbStart: 1, pdbEnd: sequenceLength, chainId: null }])
+                : [];
+            const mappingStatus = vsps.length
+                ? `AlphaFold isoform model — canonical annotations mapped across ${mappedRanges.length} segment${mappedRanges.length === 1 ? '' : 's'}; residues inside spliced regions are not shown.`
+                : 'AlphaFold isoform model — no alternative-sequence data found; positions assumed identical to canonical.';
             out.push({
                 id: `AF-${iid}`, label: `AlphaFold ${iid}`, source: 'AlphaFold', isoform: iid,
                 pdbId: null, chainId: null,
@@ -672,9 +735,9 @@ const UFVApi = (() => {
                 format: fmt === 'PDB' ? 'pdb' : 'mmcif',
                 method: 'Predicted model (isoform)', resolution: null, coverage: null,
                 rangeText: `isoform ${iid}`,
-                mappedRanges: sequenceLength ? [{ uniprotStart: 1, uniprotEnd: sequenceLength, pdbStart: 1, pdbEnd: sequenceLength, chainId: null }] : [],
+                mappedRanges,
                 otherChains: false,
-                mappingStatus: 'AlphaFold isoform model — residue numbering follows the isoform sequence; canonical annotations may be offset.',
+                mappingStatus,
                 version: '',
             });
         }));

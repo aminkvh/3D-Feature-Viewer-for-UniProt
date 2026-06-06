@@ -164,7 +164,7 @@ const StructureViewer = {
         this._observedResi = null;
         this._observedResiByChain = null;
         const structure = this.currentStructure;
-        if (!structure || structure.source === 'AlphaFold' || !structure.mappedRanges?.length) return;
+        if (!structure || (structure.source === 'AlphaFold' && !structure.isoform) || !structure.mappedRanges?.length) return;
         const model = this.viewer?.getModel();
         if (!model) return;
         if (structure.chainIds?.length > 1) {
@@ -187,7 +187,7 @@ const StructureViewer = {
 
     residueSelector(resi) {
         const structure = this.currentStructure;
-        if (!structure || structure.source === 'AlphaFold' || !structure.mappedRanges?.length) return { resi };
+        if (!structure || (structure.source === 'AlphaFold' && !structure.isoform) || !structure.mappedRanges?.length) return { resi };
         for (const r of structure.mappedRanges) {
             if (resi >= r.uniprotStart && resi <= r.uniprotEnd) {
                 const pdbResi = this._resiToPdb(resi, r);
@@ -211,7 +211,7 @@ const StructureViewer = {
     residueSelectorForChain(resi, chain) {
         const structure = this.currentStructure;
         if (chain == null) return this.residueSelector(resi);
-        if (!structure || structure.source === 'AlphaFold') return { resi };
+        if (!structure || (structure.source === 'AlphaFold' && !structure.isoform)) return { resi };
         const ranges = structure.chainMappings?.[chain] || structure.mappedRanges || [];
         const obs = this._observedResiByChain?.[chain] ?? this._observedResi;
         for (const r of ranges) {
@@ -249,7 +249,7 @@ const StructureViewer = {
      */
     allChainsAddStyle(resi, style, atomSel = {}) {
         const structure = this.currentStructure;
-        if (!structure || structure.source === 'AlphaFold' || !structure.mappedRanges?.length) {
+        if (!structure || (structure.source === 'AlphaFold' && !structure.isoform) || !structure.mappedRanges?.length) {
             this.viewer.addStyle({ resi, ...atomSel }, style);
             return true;
         }
@@ -464,7 +464,7 @@ const StructureViewer = {
             // Colour the cartoon by membrane-topology segment (TM / cytoplasmic / extracellular …).
             const posColor = context.topologyByPos instanceof Map ? context.topologyByPos : new Map();
             const s = this.currentStructure;
-            const isAF = !s || s.source === 'AlphaFold' || !s.mappedRanges?.length;
+            const isAF = !s || (s.source === 'AlphaFold' && !s.isoform) || !s.mappedRanges?.length;
             const reverseCache = new Map();
             const toUni = (chain, resi) => {
                 if (!reverseCache.has(chain)) reverseCache.set(chain, this._reverseResidueMapForChain(chain));
@@ -730,7 +730,7 @@ const StructureViewer = {
 
         const CONTACT_DIST = 5.0;
         // Residue numbers repeat across chains, so track neighbours by chain+resi.
-        const keyOf = (c, r) => `${c ?? ''} ${r}`;
+        const keyOf = (c, r) => `${c ?? ''}|${r}`;
         const nearby = new Map(); // key → { chain, resi, het }
         nearby.set(keyOf(selChain, pdbResi), { chain: selChain, resi: pdbResi, het: false });
         allAtoms.forEach(a => {
