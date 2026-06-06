@@ -461,9 +461,11 @@ const StructureViewer = {
         } else if (mode === 'residueBurden') {
             this.viewer.setStyle({}, { cartoon: { ...base, color: '#b9c2cf' } });
             (context.residueBurden || new Set()).forEach(pos => this.allChainsAddStyle(pos, { cartoon: { ...base, color: '#e65100' } }));
-        } else if (mode === 'topology') {
-            // Colour the cartoon by membrane-topology segment (TM / cytoplasmic / extracellular …).
-            const posColor = context.topologyByPos instanceof Map ? context.topologyByPos : new Map();
+        } else if (mode === 'topology' || mode === 'domains') {
+            // Colour the cartoon by per-position segment map: membrane-topology segments, or (in the
+            // Family & Domains window) the domain/region/repeat ranges. Same machinery either way.
+            const posColor = context.topologyByPos instanceof Map ? context.topologyByPos
+                : context.domainByPos instanceof Map ? context.domainByPos : new Map();
             const s = this.currentStructure;
             const isAF = !s || (s.source === 'AlphaFold' && !s.isoform) || !s.mappedRanges?.length;
             // Restrict colouring to chains that actually belong to THIS protein. In a hetero-complex
@@ -578,6 +580,39 @@ const StructureViewer = {
         this._drawSiteSpheres(sites, hoverMap, active);
         this._activeSpheres = active;
         this._bindHover(hoverMap, 'ptm');
+        this.viewer.render();
+        return count;
+    },
+
+    /**
+     * Generic CA-sphere overlay used by the Functional-features and Family & Domains windows.
+     * Assumes the cartoon has already been (re)coloured via applyCartoonColoring(..., defer=true);
+     * adds one CA sphere per annotation (plus the end position for ranged ones) and binds hover.
+     * `spheres`: [{ position, endPosition?, color, hover }]. Returns the number actually placed
+     * (positions outside the mapped/modelled range are skipped, like showPTMs).
+     */
+    showAnnotationSpheres(spheres) {
+        if (!this.viewer) return 0;
+        this._selectedResi = null;
+        this._lastRender = () => this.showAnnotationSpheres(spheres);
+        const hoverMap = new Map();
+        const active = new Map();
+        let count = 0;
+        (spheres || []).forEach(sp => {
+            if (sp.position == null) return;
+            const placed = this.allChainsAddStyle(sp.position, { sphere: { radius: 1.8, color: sp.color, opacity: 0.92 } }, { atom: 'CA' });
+            if (!placed) return;
+            active.set(sp.position, sp.color);
+            if (sp.hover) hoverMap.set(sp.position, sp.hover);
+            count++;
+            if (sp.endPosition && sp.endPosition !== sp.position) {
+                if (this.allChainsAddStyle(sp.endPosition, { sphere: { radius: 1.8, color: sp.color, opacity: 0.92 } }, { atom: 'CA' }))
+                    active.set(sp.endPosition, sp.color);
+                if (sp.hover && !hoverMap.has(sp.endPosition)) hoverMap.set(sp.endPosition, { ...sp.hover, position: sp.endPosition });
+            }
+        });
+        this._activeSpheres = active;
+        this._bindHover(hoverMap, 'feature');
         this.viewer.render();
         return count;
     },

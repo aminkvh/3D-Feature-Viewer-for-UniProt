@@ -59,6 +59,7 @@ const UFVState = (() => {
         state.sites = [];
         state.sitesVisible = false;
         state.topology = [];
+        state.domains = [];
         state.sequence = '';
         state.structures = [];
         state.selectedStructureIndex = 0;

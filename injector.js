@@ -90,13 +90,13 @@ const UFVInjector = (() => {
         placeAnchoredButton(heading, btn);
     }
 
-    // The "Features" sub-viewer inside the Function section is where active/binding/metal sites
-    // are tabulated, so the button belongs next to that <h3>Features</h3> — not the section's
-    // top-level <h2>Function</h2>.
-    function findFunctionFeaturesHeading() {
-        const section = document.getElementById('function')
+    // The "Features" sub-viewer inside a section (Function, Family & Domains, …) is where that
+    // section's features are tabulated, so the button belongs next to that <h3>Features</h3> —
+    // not the section's top-level <h2>.
+    function findSectionFeaturesHeading(sectionId, sectionText) {
+        const section = document.getElementById(sectionId)
             || [...(document.querySelector('main') || document.body).querySelectorAll('h2')]
-                .find(h => h.textContent.trim().toLowerCase() === 'function')?.closest('section');
+                .find(h => h.textContent.trim().toLowerCase() === sectionText)?.closest('section');
         if (!section) return null;
         for (const h of section.querySelectorAll('h3')) {
             if (h.textContent.trim().toLowerCase() === 'features') return h;
@@ -104,13 +104,26 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Features sub-section under Function (holds active/binding/metal sites). Opens with sites shown.
+    // Features sub-section under Function (active/binding/metal sites). Opens the Functional-features
+    // window (sites primary; PTMs + disease variants as collapsed secondary groups).
     function tryInjectFeaturesButton() {
         const existing = document.getElementById('ufv-btn-features');
         if (existing && document.body.contains(existing)) return;
-        const heading = findFunctionFeaturesHeading();
+        const heading = findSectionFeaturesHeading('function', 'function');
         if (!heading) return;
-        const btn = UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('ptm', { sitesOn: true }));
+        const btn = UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('sites'));
+        placeAnchoredButton(heading, btn);
+    }
+
+    // Features sub-section under Family & Domains (domain / region / repeat / compositional bias).
+    // Opens the Family & Domains window (domains primary; PTMs + disease variants collapsed).
+    function tryInjectDomainsButton() {
+        const existing = document.getElementById('ufv-btn-domains');
+        if (existing && document.body.contains(existing)) return;
+        const heading = findSectionFeaturesHeading('family_&_domains', 'family & domains')
+            || findSectionFeaturesHeading('family_and_domains', 'family & domains');
+        if (!heading) return;
+        const btn = UFVModal.createButton('ufv-btn-domains', 'View Domains in 3D', () => UFVModal.open('domains'));
         placeAnchoredButton(heading, btn);
     }
 
@@ -128,11 +141,13 @@ const UFVInjector = (() => {
         tryInjectPTMButton();
         tryInjectVariantButton();
         tryInjectFeaturesButton();
+        tryInjectDomainsButton();
     }
     function allEntryButtonsPresent() {
         return document.getElementById('ufv-btn-ptm')?.isConnected &&
             document.getElementById('ufv-btn-variant')?.isConnected &&
-            document.getElementById('ufv-btn-features')?.isConnected;
+            document.getElementById('ufv-btn-features')?.isConnected &&
+            document.getElementById('ufv-btn-domains')?.isConnected;
     }
 
     function injectEntryButtons() {
@@ -206,7 +221,7 @@ const UFVInjector = (() => {
             if (runtime.observer) { runtime.observer.disconnect(); runtime.observer = null; }
             if (runtime.entryPoll) { clearInterval(runtime.entryPoll); runtime.entryPoll = null; }
             // Remove all extension buttons — no button on the variant-viewer page.
-            ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
+            ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-domains', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
             injectVariantViewerButton();
         } else {
             // Cancel the variant-viewer poll so it can't re-inject ufv-btn-variant-page

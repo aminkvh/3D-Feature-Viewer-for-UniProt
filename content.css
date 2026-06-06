@@ -949,6 +949,12 @@
     flex-shrink: 0;
 }
 
+.ufv-empty {
+    padding: 14px;
+    font-size: 12px;
+    color: var(--ufv-text-secondary);
+}
+
 .ufv-panel-hdr h3 {
     font-size: 13px;
     font-weight: 600;

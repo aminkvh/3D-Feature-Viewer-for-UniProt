@@ -528,8 +528,9 @@ const UFVApi = (() => {
         [...sitesUni, ...sitesApi].forEach(s => { const k = `${s.position}-${s.endPosition}`; if (!siteByKey.has(k)) siteByKey.set(k, s); });
         const sites = [...siteByKey.values()].sort((a, b) => a.position - b.position);
         const topology = DataProcessor.extractTopology(featuresData);
+        const domains = DataProcessor.extractDomains(uniprotData);
         const sequence = uniprotData?.sequence?.value || featuresData?.sequence || variationData?.sequence || '';
-        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, sequence, amMap };
+        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, domains, sequence, amMap };
     }
 
     /**

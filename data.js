@@ -246,6 +246,40 @@ const DataProcessor = {
         return out;
     },
 
+    // Feature types that make up the UniProt "Family & Domains" section.
+    DOMAIN_TYPES: ['Domain', 'Region', 'Repeat', 'Compositional bias', 'Zinc finger', 'Coiled coil', 'Motif', 'DNA binding'],
+    // Qualitatively-distinct palette cycled so every domain feature gets its own colour.
+    DOMAIN_PALETTE: ['#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00897b', '#e53935', '#3949ab',
+        '#c0ca33', '#6d4c41', '#00acc1', '#d81b60', '#5e35b1', '#7cb342', '#f4511e', '#039be5', '#fdd835'],
+
+    /**
+     * Extract Family & Domains features (domain / region / repeat / compositional bias / zinc
+     * finger / coiled coil / motif / DNA binding) from the UniProt entry JSON. Each gets its own
+     * colour. `isRange` is true for multi-residue features (rendered as cartoon colouring) and
+     * false for single-residue ones (rendered as a sphere). Returns [] when the entry has none.
+     */
+    extractDomains(uniprotData) {
+        const feats = (uniprotData?.features || []).filter(f => this.DOMAIN_TYPES.includes(f.type));
+        const out = [];
+        feats.forEach((f, i) => {
+            const start = f.location?.start?.value;
+            if (start == null) return;
+            const end = f.location?.end?.value ?? start;
+            const desc = f.description || f.type;
+            out.push({
+                position: start,
+                endPosition: end,
+                type: f.type,
+                description: f.type === 'Compositional bias' ? `${desc} (compositional bias)`
+                    : f.type === desc ? desc : `${desc} (${f.type.toLowerCase()})`,
+                color: this.DOMAIN_PALETTE[i % this.DOMAIN_PALETTE.length],
+                isRange: end > start,
+                visible: true,
+            });
+        });
+        return out.sort((a, b) => a.position - b.position);
+    },
+
     _categorizePTM(desc, type) {
         const d = desc.toLowerCase();
         if (type === 'DISULFID') return 'Disulfide bond';

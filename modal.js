@@ -18,7 +18,6 @@ const UFVModal = (() => {
     // This is what prevents the "variant modal shows the PTM header / nothing ever loads" race
     // when the user navigates between proteins or re-opens the modal mid-load.
     let _openSeq = 0;
-    let _openSitesOn = false; // set when opened from the Function/sites button
     let _loadSeq = 0;
     // Constraint-pocket significance threshold (BH-FDR q) controlled by the sensitivity slider.
     // The analysis returns ALL candidates with q-values; this filters what's shown, so moving
@@ -129,6 +128,8 @@ const UFVModal = (() => {
                         <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-var"><div class="ufv-collapsible-hdr" id="ufv-ligands-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><label class="ufv-toggle-switch ufv-ions-toggle" title="Exclude water &amp; ions"><input type="checkbox" id="ufv-ligands-ions-var"><span class="ufv-toggle-slider"></span></label><button class="ufv-section-btn" id="ufv-ligands-var-all">All</button><button class="ufv-section-btn" id="ufv-ligands-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-var-body"><div id="ufv-ligands-var-list"></div></div></div>
                     </div>
+                    <div id="ufv-feat-panel" class="ufv-filter-scroll ufv-hidden"></div>
+                    <div id="ufv-dom-panel" class="ufv-filter-scroll ufv-hidden"></div>
                     <div class="ufv-panel-footer"><span class="ufv-count-text" id="ufv-count-text">-</span><button class="ufv-copy-btn" id="ufv-btn-copy">${ICON_COPY} Copy</button></div>
                     <div class="ufv-details" id="ufv-details"><div class="ufv-details-hdr"><h4 id="ufv-details-title">Details</h4><div class="ufv-details-hdr-actions"><label class="ufv-toggle-switch" id="ufv-sphere-toggle" title="Show/hide annotation spheres"><input type="checkbox" id="ufv-sphere-chk" checked><span class="ufv-toggle-slider"></span></label><button class="ufv-details-close" id="ufv-details-close">&#10005;</button></div></div><div class="ufv-details-body" id="ufv-details-body"></div></div>
                 </div>
@@ -324,15 +325,20 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const mySeq = ++_openSeq;
         s.currentMode = mode;
-        _openSitesOn = !!opts.sitesOn; // opened from the Function/sites button → show sites by default
         build();
         await UFVState.loadSettings();
         if (_openSeq !== mySeq) return; // superseded by a newer open()
         syncSettingsControls();
         byId('ufv-id-badge').textContent = s.uniprotId;
-        byId('ufv-modal-heading').textContent = mode === 'ptm' ? 'PTM Viewer' : 'Disease & Variants';
+        const HEADINGS = { ptm: 'PTM Viewer', variant: 'Disease & Variants', sites: 'Functional Features', domains: 'Family & Domains' };
+        byId('ufv-modal-heading').textContent = HEADINGS[mode] || '3D Feature Viewer';
         byId('ufv-ptm-panel').classList.toggle('ufv-hidden', mode !== 'ptm');
         byId('ufv-var-panel').classList.toggle('ufv-hidden', mode !== 'variant');
+        byId('ufv-feat-panel').classList.toggle('ufv-hidden', mode !== 'sites');
+        byId('ufv-dom-panel').classList.toggle('ufv-hidden', mode !== 'domains');
+        // The Family & Domains window colours the cartoon by domain, so the colour-mode picker
+        // isn't meaningful there — hide it. Shown for every other window.
+        byId('ufv-cm')?.classList.toggle('ufv-hidden', mode === 'domains');
         _gsgt9LockActive = false; // reset so focus-scroll and UniProt handlers can settle
         overlayEl.style.display = 'flex';
         document.documentElement.style.overflow = 'hidden';
@@ -368,11 +374,7 @@ const UFVModal = (() => {
             if (_openSeq !== mySeq) return;
         }
         buildFilters();
-        // Opened from the Function/sites button: turn all sites on so they show by default.
-        if (_openSitesOn && s.sites?.length) {
-            s.sites.forEach(x => x.visible = true);
-            buildSiteFilters();
-        }
+        setupWindowDefaults(s.currentMode); // primary-on / secondary-off defaults + dynamic panel
         if (!s.loaded) {
             loadStructuresAndShow(); // intentionally not awaited — shows viewer async
         } else {
@@ -736,6 +738,124 @@ const UFVModal = (() => {
         return ` (mapped: ${min}–${max}, ${ranges.length} segments)`;
     }
 
+    // ── Family & Domains window helpers ─────────────────────────────────────────────────────
+    function activeDomains() {
+        return (UFVState.state.domains || []).filter(d => d.visible !== false);
+    }
+
+    // UniProt position → colour for the active *range* domain features. Longer features are laid
+    // down first so a shorter, more specific feature (e.g. a region inside a domain) wins on overlap.
+    function domainByPos() {
+        const map = new Map();
+        activeDomains().filter(d => d.isRange)
+            .slice().sort((a, b) => (b.endPosition - b.position) - (a.endPosition - a.position))
+            .forEach(d => { for (let p = d.position; p <= d.endPosition; p++) map.set(p, d.color); });
+        return map;
+    }
+
+    // Disease-associated variants only (those carrying a disease label) — the secondary
+    // "Disease variants" group in the feature windows, kept small vs. all natural variants.
+    function diseaseVariants() {
+        return UFVState.state.variants.filter(v => v.diseases && v.diseases.length);
+    }
+
+    // Label for a primary feature row: three-letter AA + position for single residues, a span for
+    // ranges; then the description.
+    function featureLabel(item) {
+        const seq = UFVState.state.sequence;
+        const single = !item.endPosition || item.endPosition === item.position;
+        const aa = single ? (AA1TO3[seq?.[item.position - 1]] || '') : '';
+        const loc = single ? `${aa} ${item.position}`.trim() : `${item.position}–${item.endPosition}`;
+        return `${loc}: ${item.description}`;
+    }
+
+    // Per-window default visibility + dynamic panel build. Feature windows show their own group as
+    // the selectable primary list and start PTMs / disease variants collapsed and off.
+    function setupWindowDefaults(mode) {
+        const s = UFVState.state;
+        if (mode === 'sites' || mode === 'domains') {
+            // Feature windows: own group ON (primary), PTMs + disease variants OFF (secondary).
+            Object.values(s.ptmGroups).forEach(g => { g.visible = false; });
+            s._featVariantsOn = false;
+            s.sites.forEach(x => { x.visible = (mode === 'sites'); });
+            (s.domains || []).forEach(d => { d.visible = (mode === 'domains'); });
+            buildFeatureWindow(mode);
+        } else {
+            // PTM / Variant windows: restore their defaults (a prior feature window may have
+            // flipped PTM-group visibility or turned sites on).
+            Object.values(s.ptmGroups).forEach(g => { g.visible = true; });
+            s.sites.forEach(x => { x.visible = false; });
+            if (mode === 'ptm') buildPTMFilters();
+            buildSiteFilters();
+        }
+    }
+
+    // A collapsed-by-default section with a chevron header and optional All/None buttons.
+    function makeCollapsibleSection(title, { onAll, onNone } = {}) {
+        const box = document.createElement('div'); box.className = 'ufv-collapsible';
+        const hdr = document.createElement('div'); hdr.className = 'ufv-collapsible-hdr';
+        const chev = document.createElement('span'); chev.className = 'ufv-collapsible-chevron'; chev.innerHTML = '&#9654;';
+        const t = document.createElement('span'); t.textContent = title;
+        const acts = document.createElement('div'); acts.className = 'ufv-section-actions';
+        const mkBtn = (label, fn) => { const b = document.createElement('button'); b.className = 'ufv-section-btn'; b.textContent = label; b.addEventListener('click', e => { e.stopPropagation(); fn(); }); return b; };
+        if (onAll) acts.appendChild(mkBtn('All', onAll));
+        if (onNone) acts.appendChild(mkBtn('None', onNone));
+        hdr.append(chev, t, acts);
+        const body = document.createElement('div'); body.className = 'ufv-collapsible-body ufv-collapsed';
+        hdr.addEventListener('click', e => { if (e.target.closest('button')) return; const c = body.classList.toggle('ufv-collapsed'); chev.innerHTML = c ? '&#9654;' : '&#9660;'; });
+        box.append(hdr, body);
+        return { box, body };
+    }
+
+    // Build the right-panel content for a feature window: primary selectable list on top, then
+    // collapsed (off) PTMs and disease-variant sections, then ligands.
+    function buildFeatureWindow(mode) {
+        const s = UFVState.state;
+        const panel = byId(mode === 'sites' ? 'ufv-feat-panel' : 'ufv-dom-panel');
+        if (!panel) return;
+        panel.textContent = '';
+        const items = mode === 'sites' ? s.sites : (s.domains || []);
+
+        const hdr = document.createElement('div');
+        hdr.className = 'ufv-panel-hdr';
+        hdr.innerHTML = `<h3>${mode === 'sites' ? 'Functional features' : 'Family &amp; Domains'}</h3>`;
+        const acts = document.createElement('div'); acts.className = 'ufv-panel-actions';
+        const mkBtn = (label, fn) => { const b = document.createElement('button'); b.className = 'ufv-sm-btn'; b.textContent = label; b.addEventListener('click', fn); return b; };
+        acts.append(
+            mkBtn('All', () => { items.forEach(x => x.visible = true); buildFeatureWindow(mode); applyMode(); }),
+            mkBtn('None', () => { items.forEach(x => x.visible = false); buildFeatureWindow(mode); applyMode(); }));
+        hdr.appendChild(acts);
+        panel.appendChild(hdr);
+
+        if (!items.length) {
+            const empty = document.createElement('div'); empty.className = 'ufv-empty';
+            empty.textContent = mode === 'sites' ? 'No active/binding/metal-site features for this protein.'
+                : 'No domain / region / repeat features for this protein.';
+            panel.appendChild(empty);
+        } else {
+            const list = document.createElement('div');
+            items.forEach(item => list.appendChild(
+                makeFilterItem(featureLabel(item), item.color, '', item.visible !== false, checked => { item.visible = checked; applyMode(); })));
+            panel.appendChild(list);
+        }
+
+        // Secondary: PTMs (collapsed, off by default).
+        const ptm = makeCollapsibleSection('PTMs', {
+            onAll: () => { Object.values(s.ptmGroups).forEach(g => g.visible = true); buildFeatureWindow(mode); applyMode(); },
+            onNone: () => { Object.values(s.ptmGroups).forEach(g => g.visible = false); buildFeatureWindow(mode); applyMode(); },
+        });
+        Object.values(s.ptmGroups).forEach(g => ptm.body.appendChild(
+            makeFilterItem(g.category, g.color, g.items.length, !!g.visible, checked => { g.visible = checked; applyMode(); })));
+        panel.appendChild(ptm.box);
+
+        // Secondary: disease variants (collapsed, off by default) — a single toggle.
+        const dv = diseaseVariants();
+        const varSec = makeCollapsibleSection('Disease variants');
+        varSec.body.appendChild(
+            makeFilterItem('Show disease variants', '#e53935', dv.length, !!s._featVariantsOn, checked => { s._featVariantsOn = checked; applyMode(); }));
+        panel.appendChild(varSec.box);
+    }
+
     // Non-canonical isoform AlphaFold models number residues by the isoform sequence. We carry a
     // real canonical<->isoform mapping (segmented mappedRanges built from the isoform's VSP edits),
     // so annotations now render at the correct residues through the normal mapping path; the only
@@ -743,29 +863,35 @@ const UFVModal = (() => {
     function applyMode() {
         const s = UFVState.state;
         if (!StructureViewer.viewer) return;
+        const cm = s.currentMode;
         const mode = getColorMode();
         const filteredVariants = DataProcessor.filterVariants(s.variants, s.activeConsequences, s.activeProvenances, s.activeDiseases);
-        // defer=true skips the intermediate render; showPTMs/showVariants will render once
-        StructureViewer.applyCartoonColoring(mode, {
-            ptms: activePtms(),
-            variants: filteredVariants,
-            hotspots: s.analysis.hotspots,
-            hotspotsByChain: s.analysis.hotspotsByChain,
-            distantContacts: s.analysis.distantContacts,
-            distantContactsByChain: s.analysis.distantContactsByChain,
-            alphaMissense: s.analysis.alphaMissense,
-            residueBurden: s.analysis.residueBurden,
-            pocketByPos: mode === 'prism' ? filteredPocketByPos() : null,
-            topologyByPos: mode === 'topology' ? topologyByPos() : null,
-        }, true);
+        // Cartoon colouring. The Family & Domains window colours by domain ranges; every other
+        // window uses the chosen colour mode. defer=true skips the intermediate render.
+        if (cm === 'domains') {
+            StructureViewer.applyCartoonColoring('domains', { domainByPos: domainByPos() }, true);
+        } else {
+            StructureViewer.applyCartoonColoring(mode, {
+                ptms: activePtms(),
+                variants: filteredVariants,
+                hotspots: s.analysis.hotspots,
+                hotspotsByChain: s.analysis.hotspotsByChain,
+                distantContacts: s.analysis.distantContacts,
+                distantContactsByChain: s.analysis.distantContactsByChain,
+                alphaMissense: s.analysis.alphaMissense,
+                residueBurden: s.analysis.residueBurden,
+                pocketByPos: mode === 'prism' ? filteredPocketByPos() : null,
+                topologyByPos: mode === 'topology' ? topologyByPos() : null,
+            }, true);
+        }
         const rangeNote = getMappedRangeNote();
         const siteList = activeSites();
         const sitePositions = siteList.flatMap(x => x.endPosition && x.endPosition !== x.position ? [x.position, x.endPosition] : [x.position]);
-        if (s.currentMode === 'ptm') {
+        if (cm === 'ptm') {
             const n = StructureViewer.showPTMs(s.ptms, s.ptmGroups, siteList);
             s.displayedPositions = [...new Set([...activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]), ...sitePositions])];
             byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${rangeNote}`;
-        } else {
+        } else if (cm === 'variant') {
             const coPtms = activeCoDisplayPtms();
             const r = StructureViewer.showVariants(filteredVariants, coPtms, siteList);
             s.displayedPositions = Array.from(new Set([
@@ -775,6 +901,23 @@ const UFVModal = (() => {
             ]));
             const ptmNote = r.ptmCount ? `, ${r.ptmCount} PTM site${r.ptmCount === 1 ? '' : 's'}` : '';
             byId('ufv-count-text').textContent = `${r.varCount} variants at ${r.posCount} positions${ptmNote}${rangeNote}`;
+        } else {
+            // Feature windows ('sites' / 'domains'): primary feature spheres on top, plus any
+            // toggled-on secondary PTMs / disease variants. Domain ranges are already painted on
+            // the cartoon above; only single-residue domain features get a sphere.
+            const spheres = [];
+            if (cm === 'domains') {
+                activeDomains().filter(d => !d.isRange).forEach(d => spheres.push({ position: d.position, color: d.color, hover: { position: d.position, description: d.description } }));
+            } else {
+                siteList.forEach(x => spheres.push({ position: x.position, endPosition: x.endPosition, color: x.color, hover: { position: x.position, description: x.description } }));
+            }
+            activePtms().forEach(p => spheres.push({ position: p.position, endPosition: p.endPosition, color: p.color, hover: p }));
+            if (s._featVariantsOn) diseaseVariants().forEach(v => spheres.push({ position: v.position, color: v.consequenceColor, hover: v }));
+            StructureViewer.showAnnotationSpheres(spheres);
+            s.displayedPositions = [...new Set(spheres.flatMap(sp => sp.endPosition && sp.endPosition !== sp.position ? [sp.position, sp.endPosition] : [sp.position]))];
+            const primaryN = cm === 'domains' ? activeDomains().length : siteList.length;
+            const word = cm === 'domains' ? 'domain feature' : 'functional site';
+            byId('ufv-count-text').textContent = `${primaryN} ${word}${primaryN === 1 ? '' : 's'} shown${rangeNote}`;
         }
         // Preserve an active focus across coloring changes: re-enter focus on the selected
         // ligand or residue instead of dropping back to the full sphere view.
