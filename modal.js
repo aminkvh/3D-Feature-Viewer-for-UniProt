@@ -18,6 +18,7 @@ const UFVModal = (() => {
     // This is what prevents the "variant modal shows the PTM header / nothing ever loads" race
     // when the user navigates between proteins or re-opens the modal mid-load.
     let _openSeq = 0;
+    let _openSitesOn = false; // set when opened from the Function/sites button
     let _loadSeq = 0;
     // Constraint-pocket significance threshold (BH-FDR q) controlled by the sensitivity slider.
     // The analysis returns ALL candidates with q-values; this filters what's shown, so moving
@@ -319,10 +320,11 @@ const UFVModal = (() => {
         // Settings moved to extension options page (right-click extension icon → Options)
     }
 
-    async function open(mode) {
+    async function open(mode, opts = {}) {
         const s = UFVState.state;
         const mySeq = ++_openSeq;
         s.currentMode = mode;
+        _openSitesOn = !!opts.sitesOn; // opened from the Function/sites button → show sites by default
         build();
         await UFVState.loadSettings();
         if (_openSeq !== mySeq) return; // superseded by a newer open()
@@ -366,6 +368,11 @@ const UFVModal = (() => {
             if (_openSeq !== mySeq) return;
         }
         buildFilters();
+        // Opened from the Function/sites button: turn all sites on so they show by default.
+        if (_openSitesOn && s.sites?.length) {
+            s.sites.forEach(x => x.visible = true);
+            buildSiteFilters();
+        }
         if (!s.loaded) {
             loadStructuresAndShow(); // intentionally not awaited — shows viewer async
         } else {

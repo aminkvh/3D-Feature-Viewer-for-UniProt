@@ -52,6 +52,7 @@ const UFVInjector = (() => {
         const textMap = {
             ptm_processing: ['PTM/Processing', 'PTM / Processing'],
             disease_variants: ['Disease & Variants', 'Disease and Variants'],
+            function: ['Function'],
         };
         const main = document.querySelector('main') || document.querySelector('[role="main"]') || document.body;
         for (const h of main.querySelectorAll('h1, h2, h3')) {
@@ -89,6 +90,16 @@ const UFVInjector = (() => {
         placeAnchoredButton(heading, btn);
     }
 
+    // Function section (holds active/binding/metal sites). Opens the viewer with sites shown.
+    function tryInjectFeaturesButton() {
+        const existing = document.getElementById('ufv-btn-features');
+        if (existing && document.body.contains(existing)) return;
+        const heading = findSectionHeading('function');
+        if (!heading) return;
+        const btn = UFVModal.createButton('ufv-btn-features', 'View Sites in 3D', () => UFVModal.open('ptm', { sitesOn: true }));
+        placeAnchoredButton(heading, btn);
+    }
+
     function tryInjectVariantViewerButton() {
         const existing = document.getElementById('ufv-btn-variant-page');
         if (existing && document.body.contains(existing)) return;
@@ -99,46 +110,45 @@ const UFVInjector = (() => {
         btn.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3);';        document.body.appendChild(btn);
     }
 
+    function injectAllEntryButtons() {
+        tryInjectPTMButton();
+        tryInjectVariantButton();
+        tryInjectFeaturesButton();
+    }
+    function allEntryButtonsPresent() {
+        return document.getElementById('ufv-btn-ptm')?.isConnected &&
+            document.getElementById('ufv-btn-variant')?.isConnected &&
+            document.getElementById('ufv-btn-features')?.isConnected;
+    }
+
     function injectEntryButtons() {
         if (!runtime.observer) {
             // Debounce: React batch-renders cause many rapid mutations; collapse them
             // into a single inject attempt so we never mutate the DOM mid-scroll.
             let _injectTimer = null;
             runtime.observer = new MutationObserver(() => {
-                // Skip when both buttons are already present — prevents timer churn
-                // during scroll-triggered React re-renders which would otherwise
-                // interfere with UniProt's IntersectionObserver sidebar indicator.
-                if (document.getElementById('ufv-btn-ptm')?.isConnected &&
-                    document.getElementById('ufv-btn-variant')?.isConnected) return;
+                // Skip when all buttons are already present — prevents timer churn during
+                // scroll-triggered React re-renders.
+                if (allEntryButtonsPresent()) return;
                 if (_injectTimer) return;
-                _injectTimer = setTimeout(() => {
-                    _injectTimer = null;
-                    tryInjectPTMButton();
-                    tryInjectVariantButton();
-                }, 150);
+                _injectTimer = setTimeout(() => { _injectTimer = null; injectAllEntryButtons(); }, 150);
             });
             runtime.observer.observe(document.body, { childList: true, subtree: true });
         }
         // Re-inject when switching back to this tab (UniProt SPA re-renders on visibility)
         if (!runtime.visibilityBound) {
             runtime.visibilityBound = true;
-            document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) {
-                    tryInjectPTMButton();
-                    tryInjectVariantButton();
-                }
-            });
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) injectAllEntryButtons(); });
         }
         if (!runtime.entryPoll) {
             // Poll quickly at first so the button appears promptly once the section renders,
-            // then stop once both buttons exist (the MutationObserver remains as the long-term
-            // safety net for sections that render later, e.g. on scroll).  400 ms × 40 ≈ 16 s.
+            // then stop once all buttons exist (the MutationObserver remains the long-term safety
+            // net for sections that render later, e.g. on scroll).  400 ms × 40 ≈ 16 s.
             let attempts = 0;
             runtime.entryPoll = setInterval(() => {
-                tryInjectPTMButton();
-                tryInjectVariantButton();
+                injectAllEntryButtons();
                 attempts++;
-                if ((document.getElementById('ufv-btn-ptm') && document.getElementById('ufv-btn-variant')) || attempts > 40) {
+                if (allEntryButtonsPresent() || attempts > 40) {
                     clearInterval(runtime.entryPoll);
                     runtime.entryPoll = null;
                 }
@@ -149,10 +159,7 @@ const UFVInjector = (() => {
         // IntersectionObserver that drives the sidebar active-indicator.
         // Immediate burst of attempts for a snappy first paint (covers the common case where
         // the sections are already in the DOM at document_idle).
-        [0, 120, 300, 600, 1000].forEach(d => setTimeout(() => {
-            tryInjectPTMButton();
-            tryInjectVariantButton();
-        }, d));
+        [0, 120, 300, 600, 1000].forEach(d => setTimeout(injectAllEntryButtons, d));
     }
 
     function injectVariantViewerButton() {
@@ -189,7 +196,7 @@ const UFVInjector = (() => {
             if (runtime.observer) { runtime.observer.disconnect(); runtime.observer = null; }
             if (runtime.entryPoll) { clearInterval(runtime.entryPoll); runtime.entryPoll = null; }
             // Remove all extension buttons — no button on the variant-viewer page.
-            ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
+            ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
             injectVariantViewerButton();
         } else {
             // Cancel the variant-viewer poll so it can't re-inject ufv-btn-variant-page

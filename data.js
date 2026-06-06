@@ -168,6 +168,45 @@ const DataProcessor = {
         return out;
     },
 
+    /**
+     * Extract "interesting site" features from the UniProt entry JSON (rest.uniprot.org). Richer
+     * than the proteins-API features endpoint: binding sites carry the ligand name AND a note
+     * (e.g. "ligand shared with the neighboring beta subunit", "agonist"), which the proteins API
+     * omits. Used as the preferred site source, merged with the proteins-API sites.
+     */
+    extractSitesUniProt(uniprotData) {
+        if (!uniprotData || !Array.isArray(uniprotData.features)) return [];
+        const LABELS = { 'Site': 'Site', 'Active site': 'Active site', 'Binding site': 'Binding site', 'Metal binding': 'Metal binding' };
+        const out = [];
+        uniprotData.features.forEach(f => {
+            const typeLabel = LABELS[f.type];
+            if (!typeLabel) return;
+            const pos = f.location?.start?.value;
+            if (pos == null) return;
+            const end = f.location?.end?.value || pos;
+            const ligandName = f.ligand?.name || '';
+            const ligandNote = f.ligand?.note || '';
+            let description;
+            if (f.type === 'Site') {
+                description = f.description || 'Site';
+            } else {
+                const parts = [ligandName, ligandNote, f.description].filter(Boolean);
+                description = parts.length ? `${typeLabel}: ${parts.join('; ')}` : typeLabel;
+            }
+            out.push({
+                position: pos,
+                endPosition: end,
+                description,
+                ligand: ligandName || null,
+                ligandRef: f.ligand?.id || f.featureCrossReferences?.[0]?.id || null,
+                category: 'Site',
+                color: this.SITE_COLOR,
+                evidences: f.evidences || [],
+            });
+        });
+        return out;
+    },
+
     SITE_COLOR: '#fbc02d', // amber — distinct from PTM and variant palettes
 
     TOPOLOGY_COLORS: {

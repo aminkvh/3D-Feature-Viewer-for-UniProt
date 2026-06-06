@@ -498,7 +498,13 @@ const UFVApi = (() => {
             });
         }
         const variants = DataProcessor.extractVariants(variationData, amMap);
-        const sites = DataProcessor.extractSites(featuresData);
+        // Sites: prefer the richer UniProt-entry-JSON features (ligand name + note), then add any
+        // proteins-API sites at positions UniProt didn't cover. Dedup by position range.
+        const sitesUni = DataProcessor.extractSitesUniProt(uniprotData);
+        const sitesApi = DataProcessor.extractSites(featuresData);
+        const siteByKey = new Map();
+        [...sitesUni, ...sitesApi].forEach(s => { const k = `${s.position}-${s.endPosition}`; if (!siteByKey.has(k)) siteByKey.set(k, s); });
+        const sites = [...siteByKey.values()].sort((a, b) => a.position - b.position);
         const topology = DataProcessor.extractTopology(featuresData);
         const sequence = uniprotData?.sequence?.value || featuresData?.sequence || variationData?.sequence || '';
         return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, sequence, amMap };
