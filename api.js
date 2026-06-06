@@ -21,6 +21,8 @@ const UFVApi = (() => {
     const BEACONS_SUMMARY = (id) => `https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/${id}.json`;
     // RCSB Chemical Component Dictionary entry for a ligand CCD code (e.g. ABU = GABA).
     const LIGAND_CCD = (ccd) => `https://data.rcsb.org/rest/v1/core/chemcomp/${encodeURIComponent(String(ccd).toUpperCase())}`;
+    // PubChem PUG-REST: the published 881-bit CACTVS 2D substructure fingerprint, by InChIKey.
+    const PUBCHEM_FP = (ikey) => `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/${encodeURIComponent(ikey)}/property/Fingerprint2D/JSON`;
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -627,24 +629,28 @@ const UFVApi = (() => {
         });
         const targets = [...isoIds].filter(iid => iid && iid !== base && iid !== `${base}-1`);
         const out = [];
+        // Resolve each isoform's AlphaFold model via its 3D-Beacons summary. We can't HEAD-probe
+        // the AlphaFold file directly: alphafold.ebi.ac.uk returns CORS headers on GET but NOT on
+        // HEAD, so an in-browser HEAD is blocked. The Beacons summary (www.ebi.ac.uk) is CORS-OK
+        // and gives the GET-able model URL.
         await Promise.all(targets.map(async iid => {
-            for (const ver of [6, 5, 4]) {
-                const url = `https://alphafold.ebi.ac.uk/files/AF-${iid}-F1-model_v${ver}.cif`;
-                let ok = false;
-                try { ok = (await fetch(url, { method: 'HEAD' })).ok; } catch (_) { ok = false; }
-                if (!ok) continue;
-                out.push({
-                    id: `AF-${iid}`, label: `AlphaFold ${iid}`, source: 'AlphaFold', isoform: iid,
-                    pdbId: null, chainId: null, url, format: 'mmcif',
-                    method: 'Predicted model (isoform)', resolution: null, coverage: null,
-                    rangeText: `isoform ${iid}`,
-                    mappedRanges: sequenceLength ? [{ uniprotStart: 1, uniprotEnd: sequenceLength, pdbStart: 1, pdbEnd: sequenceLength, chainId: null }] : [],
-                    otherChains: false,
-                    mappingStatus: 'AlphaFold isoform model — residue numbering follows the isoform sequence; canonical annotations may be offset.',
-                    version: ver,
-                });
-                break;
-            }
+            const d = await fetchOptionalJson(BEACONS_SUMMARY(iid));
+            const af = (d?.structures || []).map(e => e?.summary || e).find(sm => sm?.model_url && /alphafold/i.test(sm.provider || ''));
+            if (!af) return;
+            const fmt = String(af.model_format || '').toUpperCase();
+            out.push({
+                id: `AF-${iid}`, label: `AlphaFold ${iid}`, source: 'AlphaFold', isoform: iid,
+                pdbId: null, chainId: null,
+                url: af.model_url,
+                cifUrl: fmt === 'MMCIF' ? af.model_url : null,
+                format: fmt === 'PDB' ? 'pdb' : 'mmcif',
+                method: 'Predicted model (isoform)', resolution: null, coverage: null,
+                rangeText: `isoform ${iid}`,
+                mappedRanges: sequenceLength ? [{ uniprotStart: 1, uniprotEnd: sequenceLength, pdbStart: 1, pdbEnd: sequenceLength, chainId: null }] : [],
+                otherChains: false,
+                mappingStatus: 'AlphaFold isoform model — residue numbering follows the isoform sequence; canonical annotations may be offset.',
+                version: '',
+            });
         }));
         return out;
     }
@@ -688,5 +694,30 @@ const UFVApi = (() => {
         return p;
     }
 
-    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo };
+    // PubChem 2D substructure fingerprint (881-bit CACTVS keys) as a Uint8Array(881), by InChIKey.
+    // Published/standard fingerprint, decoded client-side; used for rigorous Tanimoto similarity.
+    const _fpCache = new Map();
+    function b64ToBytes(b64) {
+        const s = atob(b64);
+        const a = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+        return a;
+    }
+    function getLigandFingerprint(inchikey) {
+        if (!inchikey) return Promise.resolve(null);
+        if (_fpCache.has(inchikey)) return _fpCache.get(inchikey);
+        const p = (async () => {
+            const j = await fetchOptionalJson(PUBCHEM_FP(inchikey));
+            const b64 = j?.PropertyTable?.Properties?.[0]?.Fingerprint2D;
+            if (!b64) return null;
+            const bin = b64ToBytes(b64); // first 4 bytes are a length prefix, then the 881 bits
+            const bits = new Uint8Array(881);
+            for (let i = 0; i < 881; i++) { const byte = bin[4 + (i >> 3)] || 0; bits[i] = (byte >> (7 - (i & 7))) & 1; }
+            return bits;
+        })();
+        _fpCache.set(inchikey, p);
+        return p;
+    }
+
+    return { loadFeatureData, getStructures, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint };
 })();

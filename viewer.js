@@ -31,7 +31,7 @@ const StructureViewer = {
             cartoonQuality: 8,
         });
         // Fire hover near-instantly (3Dmol default is 500 ms) so ligand highlight feels immediate.
-        try { this.viewer.setHoverDuration(60); } catch (_) {}
+        try { this.viewer.setHoverDuration(5); } catch (_) {}
         if (!this._resizeBound) {
             window.addEventListener('resize', () => { if (this.viewer) this.viewer.resize(); });
             this._resizeBound = true;
