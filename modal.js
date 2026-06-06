@@ -378,6 +378,9 @@ const UFVModal = (() => {
         if (!s.loaded) {
             loadStructuresAndShow(); // intentionally not awaited — shows viewer async
         } else {
+            // Reopening a window starts from a reset view: snap back to the default structure
+            // (loadSelectedStructure resets camera/coloring/focus too).
+            chooseDefaultStructure();
             renderStructureSelector();
             await loadSelectedStructure();
         }
@@ -534,9 +537,9 @@ const UFVModal = (() => {
         StructureViewer.hoverCb = onHover;
         StructureViewer.clickCb = onClick;
         StructureViewer.ligandClickCb = onLigandClick;
-        // Enumerate ligands present in the loaded model (AlphaFill cofactors etc.).
+        // Enumerate ligands present in the loaded model (AlphaFill/SwissModel cofactors etc.).
         s.ligands = StructureViewer.enumerateLigands ? StructureViewer.enumerateLigands() : [];
-        buildLigandFilters();
+        refreshLigandSections();
         StructureViewer.dblClickCb = () => {
             const s = UFVState.state;
             s.selectedResidue = null;
@@ -551,6 +554,10 @@ const UFVModal = (() => {
                 renderSequence();
             });
         };
+        // Already-loaded structures skip the loadStructure() that would re-frame the camera, so
+        // reset the view here — reopening a window should return to the default framing, not keep
+        // wherever the previous session was zoomed/panned.
+        if (alreadyLoaded) { StructureViewer.viewer?.zoomTo(); StructureViewer.viewer?.zoom(1.15); }
         updateStructureMeta();
         applyMode();
         // If the constraint-pocket mode is active, (re)compute it for this structure then recolour.
@@ -753,10 +760,85 @@ const UFVModal = (() => {
         return map;
     }
 
-    // Disease-associated variants only (those carrying a disease label) — the secondary
-    // "Disease variants" group in the feature windows, kept small vs. all natural variants.
+    // Variants belonging to a disease the user selected in the secondary "Disease variants" group.
+    // Empty selection ⇒ nothing shown (the group is off/unselected by default).
     function diseaseVariants() {
-        return UFVState.state.variants.filter(v => v.diseases && v.diseases.length);
+        const sel = UFVState.state.featDiseases;
+        if (!sel || sel.size === 0) return [];
+        return UFVState.state.variants.filter(v => (v.diseases || []).some(d => sel.has(d)));
+    }
+
+    function diseaseSpheres() {
+        return diseaseVariants().map(v => ({ position: v.position, color: v.consequenceColor, hover: v }));
+    }
+
+    // Secondary "Disease variants" collapsible: a checklist of diseases (off by default) with
+    // All/None. Selecting diseases shows their variants as spheres. Shared by the PTM, Functional-
+    // features and Family & Domains windows.
+    function buildDiseaseVariantSection() {
+        const s = UFVState.state;
+        const { names, ds } = diseaseNamesToShow();
+        const { box, body } = makeCollapsibleSection('Disease variants', {
+            onAll: () => { s.featDiseases = new Set(names); buildAllSecondaryDiseaseSections(); reapply(); },
+            onNone: () => { s.featDiseases = new Set(); buildAllSecondaryDiseaseSections(); reapply(); },
+        });
+        box.setAttribute('data-ufv-disease', '1');
+        if (!names.length) {
+            const empty = document.createElement('div'); empty.className = 'ufv-empty'; empty.textContent = 'No disease-associated variants.';
+            body.appendChild(empty);
+        } else {
+            names.forEach(name => {
+                const meta = ds[name] || { color: '#e53935', count: 0 };
+                body.appendChild(makeFilterItem(name, meta.color, meta.count, s.featDiseases.has(name), checked => {
+                    checked ? s.featDiseases.add(name) : s.featDiseases.delete(name);
+                    reapply();
+                }));
+            });
+        }
+        return box;
+    }
+
+    // Re-draw the disease-variant checklist in every window that hosts one (so All/None and
+    // cross-window state stay in sync), then re-render the viewer.
+    function buildAllSecondaryDiseaseSections() {
+        ['ufv-ptm-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(pid => {
+            const panel = byId(pid);
+            const existing = panel?.querySelector('[data-ufv-disease]');
+            if (existing) existing.replaceWith(buildDiseaseVariantSection());
+        });
+    }
+
+    // Re-render using the fast PTM path when in the PTM window, else a full applyMode.
+    function reapply() {
+        if (UFVState.state.currentMode === 'ptm') applyPTMMode();
+        else applyMode();
+    }
+
+    // A Ligands collapsible built dynamically for the feature windows (the static PTM/Variant
+    // panels already have their own). Shows the model's ligands when any are present.
+    function buildDynamicLigandSection() {
+        const s = UFVState.state;
+        if (!s.ligands || !s.ligands.length) return null;
+        const ions = StructureViewer.ION_CODES || new Set();
+        const excludeIons = !!StructureViewer.excludeIons;
+        const sel = s.selectedLigand;
+        const isSel = lig => sel && sel.resn === lig.resn && sel.resi === lig.resi && sel.chain === lig.chain;
+        const { box, body } = makeCollapsibleSection('Ligands', {
+            onAll: () => ligandsSetAll(true),
+            onNone: () => ligandsSetAll(false),
+        });
+        const grid = document.createElement('div');
+        grid.className = 'ufv-ligand-grid';
+        s.ligands.filter(l => !(excludeIons && ions.has(l.resn))).forEach(lig => {
+            const cell = document.createElement('button');
+            cell.className = 'ufv-ligand-cell' + (isSel(lig) ? ' selected' : '');
+            cell.title = `${lig.resn} — chain ${lig.chain || '?'} ${lig.resi}`;
+            cell.innerHTML = `<span class="ufv-ligand-ccd">${_esc(lig.resn)}</span><span class="ufv-ligand-loc">${lig.chain ? _esc(lig.chain) + ' ' : ''}${_esc(lig.resi)}</span>`;
+            cell.addEventListener('click', () => onLigandClick({ resn: lig.resn, resi: lig.resi, chain: lig.chain }));
+            grid.appendChild(cell);
+        });
+        body.appendChild(grid);
+        return box;
     }
 
     // Label for a primary feature row: three-letter AA + position for single residues, a span for
@@ -773,10 +855,10 @@ const UFVModal = (() => {
     // the selectable primary list and start PTMs / disease variants collapsed and off.
     function setupWindowDefaults(mode) {
         const s = UFVState.state;
+        s.featDiseases = new Set(); // disease variants always start unselected
         if (mode === 'sites' || mode === 'domains') {
             // Feature windows: own group ON (primary), PTMs + disease variants OFF (secondary).
             Object.values(s.ptmGroups).forEach(g => { g.visible = false; });
-            s._featVariantsOn = false;
             s.sites.forEach(x => { x.visible = (mode === 'sites'); });
             (s.domains || []).forEach(d => { d.visible = (mode === 'domains'); });
             buildFeatureWindow(mode);
@@ -785,7 +867,13 @@ const UFVModal = (() => {
             // flipped PTM-group visibility or turned sites on).
             Object.values(s.ptmGroups).forEach(g => { g.visible = true; });
             s.sites.forEach(x => { x.visible = false; });
-            if (mode === 'ptm') buildPTMFilters();
+            if (mode === 'ptm') {
+                buildPTMFilters();
+                // PTM window also offers disease variants as a collapsed, off-by-default group.
+                const panel = byId('ufv-ptm-panel');
+                panel?.querySelector('[data-ufv-disease]')?.remove();
+                panel?.appendChild(buildDiseaseVariantSection());
+            }
             buildSiteFilters();
         }
     }
@@ -848,12 +936,13 @@ const UFVModal = (() => {
             makeFilterItem(g.category, g.color, g.items.length, !!g.visible, checked => { g.visible = checked; applyMode(); })));
         panel.appendChild(ptm.box);
 
-        // Secondary: disease variants (collapsed, off by default) — a single toggle.
-        const dv = diseaseVariants();
-        const varSec = makeCollapsibleSection('Disease variants');
-        varSec.body.appendChild(
-            makeFilterItem('Show disease variants', '#e53935', dv.length, !!s._featVariantsOn, checked => { s._featVariantsOn = checked; applyMode(); }));
-        panel.appendChild(varSec.box);
+        // Secondary: disease variants (collapsed, off by default) — a checklist of diseases.
+        panel.appendChild(buildDiseaseVariantSection());
+
+        // Ligands present in the model (e.g. SwissModel/AlphaFill cofactors) — shown whenever any
+        // exist, so the window reflects everything in the system, not just the protein.
+        const ligSec = buildDynamicLigandSection();
+        if (ligSec) panel.appendChild(ligSec);
     }
 
     // Non-canonical isoform AlphaFold models number residues by the isoform sequence. We carry a
@@ -888,7 +977,7 @@ const UFVModal = (() => {
         const siteList = activeSites();
         const sitePositions = siteList.flatMap(x => x.endPosition && x.endPosition !== x.position ? [x.position, x.endPosition] : [x.position]);
         if (cm === 'ptm') {
-            const n = StructureViewer.showPTMs(s.ptms, s.ptmGroups, siteList);
+            const n = StructureViewer.showPTMs(s.ptms, s.ptmGroups, siteList, diseaseSpheres());
             s.displayedPositions = [...new Set([...activePtms().flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]), ...sitePositions])];
             byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${rangeNote}`;
         } else if (cm === 'variant') {
@@ -912,7 +1001,7 @@ const UFVModal = (() => {
                 siteList.forEach(x => spheres.push({ position: x.position, endPosition: x.endPosition, color: x.color, hover: { position: x.position, description: x.description } }));
             }
             activePtms().forEach(p => spheres.push({ position: p.position, endPosition: p.endPosition, color: p.color, hover: p }));
-            if (s._featVariantsOn) diseaseVariants().forEach(v => spheres.push({ position: v.position, color: v.consequenceColor, hover: v }));
+            diseaseSpheres().forEach(sp => spheres.push(sp));
             StructureViewer.showAnnotationSpheres(spheres);
             s.displayedPositions = [...new Set(spheres.flatMap(sp => sp.endPosition && sp.endPosition !== sp.position ? [sp.position, sp.endPosition] : [sp.position]))];
             const primaryN = cm === 'domains' ? activeDomains().length : siteList.length;
@@ -939,7 +1028,7 @@ const UFVModal = (() => {
     function applyPTMMode() {
         const s = UFVState.state;
         if (!StructureViewer.viewer) return;
-        const n = StructureViewer.refreshPTMDisplay(s.ptms, s.ptmGroups, activeSites());
+        const n = StructureViewer.refreshPTMDisplay(s.ptms, s.ptmGroups, activeSites(), diseaseSpheres());
         if (n === false) {
             // Focus mode active — need a full rebuild to restore sticks
             applyMode();
@@ -1099,6 +1188,14 @@ const UFVModal = (() => {
         applyMode();
     }
 
+    // Rebuild ligand UI everywhere it can appear: the static PTM/Variant panels (buildLigandFilters)
+    // and — since ligands are only enumerated after a structure loads — the dynamic feature windows.
+    function refreshLigandSections() {
+        buildLigandFilters();
+        const cm = UFVState.state.currentMode;
+        if (cm === 'sites' || cm === 'domains') buildFeatureWindow(cm);
+    }
+
     function buildLigandFilters() {
         const s = UFVState.state;
         const ions = StructureViewer.ION_CODES || new Set();
@@ -1169,51 +1266,43 @@ const UFVModal = (() => {
         applyMode();
     }
 
+    // The disease names to offer (and their summary metadata). On the entry page this is
+    // restricted to the diseases that appear as h4 headings in the page's Disease & Variants
+    // section; on the variant-viewer page (or when nothing was scraped) it's every disease.
+    function diseaseNamesToShow() {
+        const s = UFVState.state;
+        const ds = DataProcessor.getDiseaseSummary(s.variants);
+        let names = Object.keys(ds);
+        if (s.pageContext !== 'variant-viewer') {
+            const scraped = s.scrapedDiseases || [];
+            if (scraped.length > 0) {
+                const scrapedIds = new Set(scraped.map(d => d.id).filter(Boolean));
+                const scrapedAbbrs = new Set();
+                scraped.forEach(d => { const m = (d.label || '').match(/\(([A-Z][A-Z0-9]+)\)\s*$/); if (m) scrapedAbbrs.add(m[1]); });
+                // 1-to-1 label → disease ID (avoids a variant's labels all inheriting all its IDs).
+                const labelToId = new Map();
+                s.variants.forEach(v => (v.diseasePairs || []).forEach(({ id, label }) => { if (id && !labelToId.has(label)) labelToId.set(label, id); }));
+                const filtered = names.filter(name => {
+                    if (name === 'Unclassified') return false;
+                    if (scrapedAbbrs.has(name)) return true;
+                    const id = labelToId.get(name);
+                    return !!(id && scrapedIds.has(id));
+                });
+                if (filtered.length > 0) names = filtered;
+            }
+        }
+        return { names, ds };
+    }
+
     function buildVariantFilters() {
         const s = UFVState.state;
         fillFilterList('ufv-prov-list', DataProcessor.getProvenanceSummary(s.variants), s.activeProvenances, applyMode);
         fillFilterList('ufv-cons-list', DataProcessor.getConsequenceSummary(s.variants), s.activeConsequences, applyMode);
         buildVariantPtmFilters();
-        const ds = DataProcessor.getDiseaseSummary(s.variants);
+        const { names: diseasesToShow, ds } = diseaseNamesToShow();
         const dis = byId('ufv-dis-section');
         const list = byId('ufv-dis-list');
         list.textContent = '';
-        const onVariantPage = s.pageContext === 'variant-viewer';
-        let diseasesToShow = Object.keys(ds);
-        if (!onVariantPage) {
-            // Entry page: restrict disease list to ONLY those that appear as h4 headings
-            // in the "Disease & Variants" section of the current UniProt page.
-            const scraped = s.scrapedDiseases || [];
-            if (scraped.length > 0) {
-                // IDs like 'DI-01127' from /diseases/DI-01127 links
-                const scrapedIds = new Set(scraped.map(d => d.id).filter(Boolean));
-                // Abbreviations like 'DRVT' extracted from labels like "Dravet syndrome (DRVT)"
-                const scrapedAbbrs = new Set();
-                scraped.forEach(d => {
-                    const m = (d.label || '').match(/\(([A-Z][A-Z0-9]+)\)\s*$/);
-                    if (m) scrapedAbbrs.add(m[1]);
-                });
-                // Build label → its own disease ID using the correct 1-to-1 diseasePairs mapping
-                // (avoids the bug where all labels on a variant inherit all the variant's IDs)
-                const labelToId = new Map();
-                s.variants.forEach(v => {
-                    (v.diseasePairs || []).forEach(({ id, label }) => {
-                        if (id && !labelToId.has(label)) labelToId.set(label, id);
-                    });
-                });
-                const filtered = diseasesToShow.filter(name => {
-                    // No 'Unclassified' on entry page — only diseases listed in h4 headings
-                    if (name === 'Unclassified') return false;
-                    // Exact abbreviation match (e.g. 'DRVT' in scrapedAbbrs)
-                    if (scrapedAbbrs.has(name)) return true;
-                    // 1-to-1 disease ID match via diseasePairs
-                    const id = labelToId.get(name);
-                    if (id && scrapedIds.has(id)) return true;
-                    return false;
-                });
-                if (filtered.length > 0) diseasesToShow = filtered;
-            }
-        }
         if (diseasesToShow.length) {
             dis.classList.remove('ufv-hidden');
             s.activeDiseases = new Set(diseasesToShow);
@@ -1509,12 +1598,23 @@ const UFVModal = (() => {
         const nearCell = document.createElement('div');
         nearCell.className = 'ufv-detail-cell';
         // Colour each nearby residue number by its annotation (variant consequence / PTM) so a
-        // nearby disease variant stands out — same colour map used for the focus sticks.
-        const nearbyHtml = Array.from(s.nearbyResidues).sort((a, b) => a - b).map(p => {
+        // nearby disease variant stands out — same colour map used for the focus sticks. Each is
+        // clickable: clicking re-focuses that residue (same as clicking it in the 3-D view).
+        const nearLbl = document.createElement('span'); nearLbl.className = 'ufv-detail-lbl'; nearLbl.textContent = 'Nearby';
+        const nearVal = document.createElement('span'); nearVal.className = 'ufv-detail-val ufv-nearby-val';
+        const sortedNearby = Array.from(s.nearbyResidues).sort((a, b) => a - b);
+        sortedNearby.forEach((p, i) => {
+            const span = document.createElement('span');
+            span.className = 'ufv-nearby-res';
+            span.textContent = p;
             const c = annotations.get(p)?.color;
-            return c ? `<span style="color:${c}">${p}</span>` : `${p}`;
-        }).join(', ');
-        nearCell.innerHTML = `<span class="ufv-detail-lbl">Nearby</span><span class="ufv-detail-val ufv-nearby-val">${nearbyHtml}</span>`;
+            if (c) span.style.color = c;
+            span.title = `Focus residue ${p}`;
+            span.addEventListener('click', () => onClick({ position: p }, null, s.selectedChain));
+            nearVal.appendChild(span);
+            if (i < sortedNearby.length - 1) nearVal.appendChild(document.createTextNode(', '));
+        });
+        nearCell.append(nearLbl, nearVal);
         topGrid.append(posCell, nearCell);
         body.appendChild(topGrid);
 

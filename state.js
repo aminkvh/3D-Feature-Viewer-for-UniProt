@@ -60,6 +60,7 @@ const UFVState = (() => {
         state.sitesVisible = false;
         state.topology = [];
         state.domains = [];
+        state.featDiseases = new Set(); // diseases selected in the secondary "Disease variants" group
         state.sequence = '';
         state.structures = [];
         state.selectedStructureIndex = 0;

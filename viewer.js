@@ -539,9 +539,9 @@ const StructureViewer = {
         });
     },
 
-    showPTMs(ptms, ptmGroups, sites = []) {
+    showPTMs(ptms, ptmGroups, sites = [], extras = []) {
         this._selectedResi = null;
-        this._lastRender = () => this.showPTMs(ptms, ptmGroups, sites);
+        this._lastRender = () => this.showPTMs(ptms, ptmGroups, sites, extras);
         const hoverMap = new Map();
         const active = new Map(); // uniProtPos → color, for zoom-mode sphere persistence
         let count = 0;
@@ -578,6 +578,15 @@ const StructureViewer = {
         });
 
         this._drawSiteSpheres(sites, hoverMap, active);
+        // Optional extra spheres (e.g. the secondary "Disease variants" group toggled on in the
+        // PTM window). Drawn after PTMs/sites so they share the same hover + persistence machinery.
+        (extras || []).forEach(sp => {
+            if (sp.position == null) return;
+            if (this.allChainsAddStyle(sp.position, { sphere: { radius: 1.8, color: sp.color, opacity: 0.92 } }, { atom: 'CA' })) {
+                active.set(sp.position, sp.color);
+                if (sp.hover && !hoverMap.has(sp.position)) hoverMap.set(sp.position, sp.hover);
+            }
+        });
         this._activeSpheres = active;
         this._bindHover(hoverMap, 'ptm');
         this.viewer.render();
@@ -622,7 +631,7 @@ const StructureViewer = {
      * then re-renders only the currently visible PTM spheres.
      * Returns false when in focus mode so the caller can do a full applyMode() instead.
      */
-    refreshPTMDisplay(ptms, ptmGroups, sites = []) {
+    refreshPTMDisplay(ptms, ptmGroups, sites = [], extras = []) {
         if (!this.viewer || this._inFocusMode) return false;
         this.viewer.removeAllLabels();
         // Hard-clear ALL per-atom style records first.  setStyle({}, {cartoon}) replaces the
@@ -634,7 +643,7 @@ const StructureViewer = {
         const base = { opacity: 0.82, thickness: 0.25, ribbonWidth: 0.6 };
         this._applyModeStyles(this.activeColoringMode, this._lastColoringContext || {}, base);
         this._drawLigands();
-        return this.showPTMs(ptms, ptmGroups, sites);
+        return this.showPTMs(ptms, ptmGroups, sites, extras);
     },
 
     /**

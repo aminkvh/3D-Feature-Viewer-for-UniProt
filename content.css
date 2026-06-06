@@ -955,6 +955,14 @@
     color: var(--ufv-text-secondary);
 }
 
+.ufv-nearby-res {
+    cursor: pointer;
+    text-decoration: underline dotted transparent;
+}
+.ufv-nearby-res:hover {
+    text-decoration: underline dotted currentColor;
+}
+
 .ufv-panel-hdr h3 {
     font-size: 13px;
     font-weight: 600;
