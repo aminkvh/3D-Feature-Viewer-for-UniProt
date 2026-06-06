@@ -290,6 +290,13 @@ const UFVExport = (() => {
     }
     const fix = n => n.toFixed(3);
 
+    // [{chain,resi}] → Map<chain, resi[]>.
+    function itemsByChain(items) {
+        const m = new Map();
+        items.forEach(({ chain, resi }) => { if (!m.has(chain)) m.set(chain, []); m.get(chain).push(resi); });
+        return m;
+    }
+
     // Group [{chain,resi,color}] by colour, then by chain → sorted resi list.
     function groupByColor(items) {
         const byColor = new Map(); // color → Map<chain, number[]>
@@ -366,10 +373,33 @@ const UFVExport = (() => {
             L.push('util.cnc (not polymer and not solvent)');
             const ions = scene.ligands.filter(l => l.ion);
             if (ions.length) {
-                const byChain = new Map();
-                ions.forEach(({ chain, resi }) => { if (!byChain.has(chain)) byChain.set(chain, []); byChain.get(chain).push(resi); });
-                L.push(`show spheres, (${pymolSel(byChain)})`);
+                L.push(`show spheres, (${pymolSel(itemsByChain(ions))})`);
             }
+        }
+        // Zoom-in (focus) state: selected residue + 5 Å neighbourhood as sticks.
+        if (scene.focus) {
+            const f = scene.focus;
+            const allItems = [{ chain: f.selChain, resi: f.pdbResi }, ...f.sticks];
+            L.push('# Zoom-in: focused residue + 5 A neighbourhood (ball-and-stick)');
+            L.push(`show sticks, (${pymolSel(itemsByChain(allItems))})`);
+            L.push(`select ufv_focus_sel, (${pymolSel(itemsByChain([{ chain: f.selChain, resi: f.pdbResi }]))})`);
+            L.push('show spheres, ufv_focus_sel');
+            L.push(`alter ufv_focus_sel, vdw=${fix(0.4)}`);
+            // Element (Jmol-style) colouring for the selected residue + uncoloured/ligand neighbours.
+            const jmolItems = [{ chain: f.selChain, resi: f.pdbResi }, ...f.sticks.filter(x => !x.color)];
+            const jmolSel = pymolSel(itemsByChain(jmolItems));
+            L.push(`color grey80, (${jmolSel})`);
+            L.push(`util.cnc (${jmolSel})`);
+            // Annotation-coloured neighbours: whole stick painted the annotation colour.
+            let fi = 0;
+            groupByColor(f.sticks.filter(x => x.color)).forEach((byChain, color) => {
+                const name = `ufv_f${fi++}`;
+                const [r, g, b] = colorToUnit(color);
+                L.push(`set_color ${name}, [${fix(r)}, ${fix(g)}, ${fix(b)}]`);
+                L.push(`color ${name}, (${pymolSel(byChain)})`);
+            });
+            L.push('rebuild');
+            L.push('deselect');
         }
         L.push('orient');
         return L.join('\n') + '\n';
@@ -442,6 +472,29 @@ const UFVExport = (() => {
             L.push('mol representation Licorice 0.3 12');
             L.push('mol color Name');
             L.push('mol selection {not protein and not water}');
+            L.push('mol addrep top');
+        }
+        // Zoom-in (focus) state: selected residue + 5 Å neighbourhood as licorice.
+        if (scene.focus) {
+            const f = scene.focus;
+            // Element-coloured licorice: selected residue + uncoloured/ligand neighbours.
+            const jmolItems = [{ chain: f.selChain, resi: f.pdbResi }, ...f.sticks.filter(x => !x.color)];
+            L.push('mol representation Licorice 0.2 12');
+            L.push('mol color Name');
+            L.push(`mol selection {${vmdSelParts(itemsByChain(jmolItems))}}`);
+            L.push('mol addrep top');
+            // Annotation-coloured neighbours.
+            groupByColor(f.sticks.filter(x => x.color)).forEach((byChain, color) => {
+                const id = defColor(color);
+                L.push('mol representation Licorice 0.2 12');
+                L.push(`mol color ColorID ${id}`);
+                L.push(`mol selection {${vmdSelParts(byChain)}}`);
+                L.push('mol addrep top');
+            });
+            // Selected residue: small spheres.
+            L.push('mol representation VDW 0.4 16');
+            L.push('mol color Name');
+            L.push(`mol selection {${vmdSelParts(itemsByChain([{ chain: f.selChain, resi: f.pdbResi }]))}}`);
             L.push('mol addrep top');
         }
         L.push('display resetview');

@@ -279,7 +279,22 @@ const UFVModal = (() => {
         };
         byId('ufv-ligands-ions-ptm').addEventListener('change', e => onIonsToggle(e.target.checked));
         byId('ufv-ligands-ions-var').addEventListener('change', e => onIonsToggle(e.target.checked));
-        byId('ufv-details-close').addEventListener('click', () => byId('ufv-details').classList.remove('show'));
+        byId('ufv-details-close').addEventListener('click', () => {
+            const s = UFVState.state;
+            byId('ufv-details').classList.remove('show');
+            // Closing the panel after a zoom-in returns the structure to its overview.
+            const wasFocused = s.selectedResidue != null || s.selectedLigand != null || StructureViewer._inFocusMode;
+            s.selectedResidue = null;
+            s.selectedChain = null;
+            s.selectedLigand = null;
+            s.nearbyResidues = new Set();
+            StructureViewer._selectedResi = null;
+            StructureViewer._inFocusMode = false;
+            if (wasFocused && StructureViewer.viewer) {
+                StructureViewer.viewer.zoomTo({}, 600);
+                requestAnimationFrame(() => applyMode());
+            }
+        });
         // Header sphere-visibility toggle: controls whether other annotation spheres stay visible
         // while zoomed into a residue.  Always available (PTM / variant / disease views).
         byId('ufv-sphere-chk').addEventListener('change', e => {

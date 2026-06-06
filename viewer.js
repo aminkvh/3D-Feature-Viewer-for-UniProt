@@ -317,6 +317,7 @@ const StructureViewer = {
         this.activeColoringMode = mode;
         this._lastColoringContext = context;
         this._inFocusMode = false; // exit focus mode on any full re-color
+        this._focusState = null;
         this.viewer.removeAllShapes();
         this.viewer.removeAllLabels();
         this.viewer.setStyle({}, {}); // wipe accumulated sphere/stick addStyle records
@@ -827,7 +828,9 @@ const StructureViewer = {
             });
         }
 
-        // Show nearby residues as thin sticks (each on its own chain's copy)
+        // Show nearby residues as thin sticks (each on its own chain's copy).
+        // Capture them for the session export (PyMOL/VMD) so the zoom-in is reproduced faithfully.
+        const focusSticks = [];
         nearby.forEach(({ chain: nc, resi: nr, het }) => {
             if (nc === selChain && nr === pdbResi) return;
             if (het) {
@@ -835,6 +838,7 @@ const StructureViewer = {
                 // …), never an annotation colour, and add small spheres so single-atom ions show.
                 this.viewer.addStyle(nc != null ? { chain: nc, resi: nr, hetflag: true } : { resi: nr, hetflag: true },
                     { stick: { radius: 0.15, colorscheme: 'Jmol' }, sphere: { radius: 0.3, colorscheme: 'Jmol' } });
+                focusSticks.push({ chain: nc || '', resi: nr, het: true, color: null });
                 return;
             }
             const uniResi = toUni(nc, nr);
@@ -843,7 +847,9 @@ const StructureViewer = {
                 nc != null ? { chain: nc, resi: nr } : { resi: nr },
                 { stick: color ? { radius: 0.15, color, opacity: 0.8 } : { radius: 0.12, colorscheme: 'Jmol', opacity: 0.6 } }
             );
+            focusSticks.push({ chain: nc || '', resi: nr, het: false, color: color || null });
         });
+        this._focusState = { selChain: selChain || '', pdbResi, sticks: focusSticks };
 
         // Show selected residue as ball-and-stick (prominent)
         this.viewer.addStyle(
@@ -932,6 +938,7 @@ const StructureViewer = {
         this.viewer.removeAllLabels();
         this.clearProximityLines();
         this._selectedResi = null;
+        this._focusState = null; // residue-focus export state doesn't apply to a ligand focus
         const prevActive = this._activeSpheres || new Map(); // PTM/variant/site spheres to optionally keep
         const model = this.viewer.getModel();
         const ligSel = { resn, resi, ...(chain != null ? { chain } : {}) };
@@ -1165,11 +1172,21 @@ const StructureViewer = {
             if (color && color.toLowerCase() !== base.toLowerCase()) cartoon.push({ chain: a.chain || '', resi: a.resi, color });
         });
 
+        // Focus (zoom-in) state: selected residue + 5 Å neighbourhood drawn as sticks. Those
+        // residues are NOT spheres on screen, so exclude them from the sphere list below.
+        const focus = (this._inFocusMode && this._focusState) ? this._focusState : null;
+        const stickKeys = new Set();
+        if (focus) {
+            focus.sticks.filter(x => !x.het).forEach(x => stickKeys.add(`${x.chain}|${x.resi}`));
+            stickKeys.add(`${focus.selChain}|${focus.pdbResi}`);
+        }
+
         // Annotation Cα spheres: _activeSpheres is uniProt→colour, drawn on every chain.
         const spheres = [];
         const activeSph = this._activeSpheres || new Map();
         if (activeSph.size) {
             caAtoms.forEach(a => {
+                if (stickKeys.has(`${a.chain || ''}|${a.resi}`)) return; // shown as a stick in focus mode
                 const uni = toUni(a.chain, a.resi);
                 if (uni != null && activeSph.has(uni)) spheres.push({ chain: a.chain || '', resi: a.resi, color: activeSph.get(uni) });
             });
@@ -1194,7 +1211,7 @@ const StructureViewer = {
             cartoonOpacity: this._inFocusMode ? 0.42 : 0.82,
             sphereRadius: 1.8,
             sphereOpacity: 0.92,
-            cartoon, spheres, ligands,
+            cartoon, spheres, ligands, focus,
         };
     },
 
@@ -1207,6 +1224,7 @@ const StructureViewer = {
     clearModel() {
         this._selectedResi = null;
         this._inFocusMode = false;
+        this._focusState = null;
         this._observedResi = null;
         this._observedResiByChain = null;
         this._lastRender = null;
