@@ -991,8 +991,22 @@ def _resolve_uid(uid):
     return (uid or _STATE.get("uid"))
 
 
+def _collapse_resi(resis):
+    """Collapse a sorted int list into PyMOL resi tokens with ranges: [1,2,3,5] -> '1-3+5'. Keeps
+    selection strings short so PyMOL doesn't choke parsing thousands of '+'-separated residues
+    (a 260-residue domain becomes one '100-360' token instead of 260)."""
+    out, i, n = [], 0, len(resis)
+    while i < n:
+        j = i
+        while j + 1 < n and resis[j + 1] == resis[j] + 1:
+            j += 1
+        out.append(str(resis[i]) if i == j else "%d-%d" % (resis[i], resis[j]))
+        i = j + 1
+    return "+".join(out)
+
+
 def _sel_for_positions(obj, positions, ca_only=False):
-    """Build a PyMOL selection covering the given UniProt positions on the mapped object."""
+    """Build a compact PyMOL selection covering the given UniProt positions on the mapped object."""
     per_chain = {}
     for ch in _mapped_chains(obj):
         resis = []
@@ -1006,7 +1020,7 @@ def _sel_for_positions(obj, positions, ca_only=False):
         return None
     clauses = []
     for ch, resis in per_chain.items():
-        rsel = "resi " + "+".join(str(r) for r in resis)
+        rsel = "resi " + _collapse_resi(resis)
         clauses.append("(chain {} and {})".format(ch, rsel) if ch else "({})".format(rsel))
     sel = "({}) and ({})".format(obj, " or ".join(clauses))
     if ca_only:
@@ -1057,8 +1071,24 @@ def _batch():
             pass
 
 
+_SPHERE_TUNED = set()  # objects we've already set fast sphere settings on
+
+
+def _tune_spheres(obj):
+    if obj in _SPHERE_TUNED:
+        return
+    # GPU impostor spheres render thousands of points cheaply; avoids the slow CPU sphere geometry.
+    for k, v in (("sphere_mode", 9), ("sphere_quality", 1), ("sphere_scale", 0.5)):
+        try:
+            cmd.set(k, v, obj)
+        except Exception:
+            pass
+    _SPHERE_TUNED.add(obj)
+
+
 def _redraw_spheres(obj):
     """Hide the previously-shown UFV spheres, then re-show every active sphere layer (batched)."""
+    _tune_spheres(obj)
     with _batch():
         prev = _SPHERE_SHOWN.get(obj)
         if prev:
@@ -1066,7 +1096,6 @@ def _redraw_spheres(obj):
                 cmd.hide("spheres", prev)
             except Exception:
                 pass
-        cmd.set("sphere_scale", 0.5, obj)
         state = _SPHERE_STATE.get(obj, {})
         shown = set()
         for tag in _SPHERE_ORDER:
