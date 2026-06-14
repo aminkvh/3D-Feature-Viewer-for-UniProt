@@ -1038,27 +1038,47 @@ def _cons_token(cons):
     return "uncertain"
 
 
-def _redraw_spheres(obj):
-    """Hide the previously-shown UFV spheres, then re-show every active sphere layer."""
-    prev = _SPHERE_SHOWN.get(obj)
-    if prev:
+@contextlib.contextmanager
+def _batch():
+    """Suspend PyMOL scene updates while running many cmd ops, then rebuild once. Without this,
+    every show/set/color triggers a full rebuild — painting thousands of variant spheres one
+    selection at a time froze the viewer."""
+    try:
+        cmd.set("suspend_updates", "on")
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
         try:
-            cmd.hide("spheres", prev)
+            cmd.set("suspend_updates", "off")
+            cmd.refresh()
         except Exception:
             pass
-    cmd.set("sphere_scale", 0.5, obj)
-    state = _SPHERE_STATE.get(obj, {})
-    shown = set()
-    for tag in _SPHERE_ORDER:
-        for color, positions in (state.get(tag) or {}).items():
-            sel = _sel_for_positions(obj, positions, ca_only=True)
-            if not sel:
-                continue
-            cmd.show("spheres", sel)
-            cmd.set("sphere_color", _color_name(color), sel)
-            shown.update(positions)
-    _SPHERE_SHOWN[obj] = _sel_for_positions(obj, sorted(shown), ca_only=True) if shown else None
-    return len(shown)
+
+
+def _redraw_spheres(obj):
+    """Hide the previously-shown UFV spheres, then re-show every active sphere layer (batched)."""
+    with _batch():
+        prev = _SPHERE_SHOWN.get(obj)
+        if prev:
+            try:
+                cmd.hide("spheres", prev)
+            except Exception:
+                pass
+        cmd.set("sphere_scale", 0.5, obj)
+        state = _SPHERE_STATE.get(obj, {})
+        shown = set()
+        for tag in _SPHERE_ORDER:
+            for color, positions in (state.get(tag) or {}).items():
+                sel = _sel_for_positions(obj, positions, ca_only=True)
+                if not sel:
+                    continue
+                cmd.show("spheres", sel)
+                cmd.set("sphere_color", _color_name(color), sel)
+                shown.update(positions)
+        _SPHERE_SHOWN[obj] = _sel_for_positions(obj, sorted(shown), ca_only=True) if shown else None
+        return len(shown)
 
 
 def _set_sphere_layer(obj, tag, groups):
@@ -1148,16 +1168,17 @@ def ufv_domains(obj=None, uid=None):
     _set_cartoon_layer(obj, "domains")
     dom_spheres = {}
     n = 0
-    for d in ann["domains"]:
-        positions = list(range(d["position"], d["endPosition"] + 1))
-        if d["isRange"]:
-            sel = _sel_for_positions(obj, positions)
-            if not sel:
-                continue
-            cmd.color(_color_name(d["color"]), sel)  # cartoon = atom colour (intended here)
-        else:
-            dom_spheres.setdefault(d["color"], []).append(d["position"])
-        n += 1
+    with _batch():
+        for d in ann["domains"]:
+            positions = list(range(d["position"], d["endPosition"] + 1))
+            if d["isRange"]:
+                sel = _sel_for_positions(obj, positions)
+                if not sel:
+                    continue
+                cmd.color(_color_name(d["color"]), sel)  # cartoon = atom colour (intended here)
+            else:
+                dom_spheres.setdefault(d["color"], []).append(d["position"])
+            n += 1
     _set_sphere_layer(obj, "dom", dom_spheres or None)
     print("[UFV] %s: coloured %d domain/region features." % (obj, n))
 
@@ -1168,12 +1189,13 @@ def ufv_topology(obj=None, uid=None):
     ann = fetch_annotations(_resolve_uid(uid))
     _set_cartoon_layer(obj, "topology")
     n = 0
-    for t in ann["topology"]:
-        sel = _sel_for_positions(obj, list(range(t["start"], t["end"] + 1)))
-        if not sel:
-            continue
-        cmd.color(_color_name(t["color"]), sel)
-        n += 1
+    with _batch():
+        for t in ann["topology"]:
+            sel = _sel_for_positions(obj, list(range(t["start"], t["end"] + 1)))
+            if not sel:
+                continue
+            cmd.color(_color_name(t["color"]), sel)
+            n += 1
     print("[UFV] %s: coloured %d topology segments." % (obj, n))
 
 
@@ -1186,15 +1208,16 @@ def ufv_alphamissense(obj=None, uid=None):
         print("[UFV] no AlphaMissense scores available for %s." % ann["uid"])
         return
     _set_cartoon_layer(obj, "alphamissense")
-    cmd.color(_color_name("#b9c2cf"), obj)
     buckets = {"#3d85c8": [], "#b9c2cf": [], "#e06666": [], "#b71c1c": []}
     for pos, avg in am.items():
         c = "#b71c1c" if avg >= 0.78 else "#e06666" if avg >= 0.564 else "#b9c2cf" if avg >= 0.34 else "#3d85c8"
         buckets[c].append(pos)
-    for color, positions in buckets.items():
-        sel = _sel_for_positions(obj, positions)
-        if sel:
-            cmd.color(_color_name(color), sel)
+    with _batch():
+        cmd.color(_color_name("#b9c2cf"), obj)
+        for color, positions in buckets.items():
+            sel = _sel_for_positions(obj, positions)
+            if sel:
+                cmd.color(_color_name(color), sel)
     print("[UFV] %s: coloured by AlphaMissense (%d scored positions)." % (obj, len(am)))
 
 
@@ -1257,10 +1280,11 @@ def _color_tiers(obj, tiers, colors):
         c = colors.get(tier)
         if c:
             groups.setdefault(c, []).append(uni)
-    for c, positions in groups.items():
-        sel = _sel_for_positions(obj, positions)
-        if sel:
-            cmd.color(_color_name(c), sel)
+    with _batch():
+        for c, positions in groups.items():
+            sel = _sel_for_positions(obj, positions)
+            if sel:
+                cmd.color(_color_name(c), sel)
     return len(tiers)
 
 
@@ -1785,21 +1809,24 @@ def _build_panel_class(QtWidgets, QtCore):
             if not s:
                 self.status.setText("Press Fetch, then choose a structure."); return
             uid = self.cur_uid()
-            self._async(lambda: _download_only(s), lambda path: self._finish_load(s, path, uid),
+            # Download AND fetch SIFTS off the UI thread (both are network) so load can't hang.
+            self._async(lambda: _prepare_structure(s, uid),
+                        lambda prep: self._finish_load(s, prep, uid),
                         "Downloading %s ..." % s["label"])
 
-        def _finish_load(self, struct, path, uid):
-            if not path:
+        def _finish_load(self, struct, prep, uid):
+            if not prep or not prep.get("path"):
                 self.status.setText("Download failed."); return
-            name = _load_from_path(struct, path, uid)
+            _load_from_path(struct, prep["path"], uid, prep.get("segments"))
             self.obj_label_refresh()
-            # reflect current overlay state on the freshly loaded object (nothing yet)
 
         # ---- layers ----
         def toggle_points(self, tag, cb, fn):
             o = self.obj()
-            if not o:
-                cb.setChecked(False); return
+            if not o or not _CACHE.get(self.cur_uid()):
+                cb.setChecked(False)
+                self.status.setText("Fetch an accession and load a structure first.")
+                return
             if cb.isChecked():
                 fn(o, self.cur_uid())
             else:
@@ -1824,6 +1851,10 @@ def _build_panel_class(QtWidgets, QtCore):
             if choice == "None":
                 _reset_cartoon(o); return
             uid = self.cur_uid()
+            # pLDDT / B-factor read the structure only; the rest need cached annotations.
+            if choice not in ("pLDDT", "B-factor") and not _CACHE.get(uid):
+                self.status.setText("Fetch an accession first.")
+                self.cart.setCurrentIndex(0); return
             cheap = {"Domains": ufv_domains, "Topology": ufv_topology, "pLDDT": ufv_plddt,
                      "B-factor": ufv_bfactor, "AlphaMissense": ufv_alphamissense, "Burden": ufv_burden}
             if choice in cheap:
@@ -1975,8 +2006,9 @@ def _build_panel_class(QtWidgets, QtCore):
     return _UFVPanel
 
 
-# Download helpers split so the slow network part can run off the UI thread (no cmd.* there).
-def _download_only(struct):
+# Network prep runs off the UI thread (no cmd.* here): download the coordinates AND, for a PDB,
+# fetch the SIFTS segments — so neither stalls the panel. _load_from_path then only does cmd ops.
+def _prepare_structure(struct, uid):
     data = _get_text(struct["url"])
     if not data:
         return None
@@ -1985,10 +2017,13 @@ def _download_only(struct):
     path = os.path.join(tempfile.gettempdir(), "ufv_%s.%s" % (name, ext))
     with open(path, "w") as fh:
         fh.write(data)
-    return path
+    segments = None
+    if struct.get("numbering") == "sifts" and struct.get("pdbId"):
+        segments = _sifts_segments(struct["pdbId"], uid.upper()) or None
+    return {"path": path, "segments": segments}
 
 
-def _load_from_path(struct, path, uid):
+def _load_from_path(struct, path, uid, segments=None):
     name = re.sub(r"[^A-Za-z0-9_]", "_", struct["key"])
     cmd.load(path, name)
     try:
@@ -1998,8 +2033,10 @@ def _load_from_path(struct, path, uid):
     cmd.hide("everything", name)
     cmd.show("cartoon", name)
     cmd.color("gray80", name)
-    if struct.get("numbering") == "sifts" and struct.get("pdbId"):
-        _set_sifts_map(name, struct["pdbId"], uid)
+    if segments:
+        UFV_MAPS[name] = {"mode": "sifts", "segments": segments}
+    elif struct.get("numbering") == "sifts" and struct.get("pdbId"):
+        _set_sifts_map(name, struct["pdbId"], uid)  # fallback (will fetch synchronously)
     else:
         _set_identity_map(name)
     _GEOM_CACHE.pop(name, None)
