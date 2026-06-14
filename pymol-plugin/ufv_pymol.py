@@ -14,8 +14,8 @@ Quick start (PyMOL command line)
 --------------------------------
     run ufv_pymol.py                 # load the plugin (or install via Plugin Manager)
 
-    ufv_load P35498                  # download AlphaFold model + annotate it
-    ufv_gui                          # open the graphical panel
+    ufv_gui                          # open the control panel (Fetch -> pick structure -> layers)
+    ufv_load P35498                  # or just quick-load the AlphaFold model (no auto-projection)
 
 Annotate a structure / trajectory YOU already loaded
 ----------------------------------------------------
@@ -440,6 +440,298 @@ def _compute_burden(variants):
 
 
 # ----------------------------------------------------------------------------------------------
+# Geometry-based analyses (ported from analysis.js). All operate on a `geom` list of modelled Ca
+# atoms — each {uniPos, chain, resi, x, y, z} — so they are unit-testable without PyMOL. The
+# permutation RNG is Python's Random(seed); tiers are statistically equivalent to the JS (not
+# byte-identical, since the JS uses mulberry32).
+# ----------------------------------------------------------------------------------------------
+import math as _math
+import random as _random
+
+HOTSPOT_PERMUTATIONS = 1000
+HOTSPOT_SEED = 0x9e3779b9 & 0xFFFFFFFF
+HOTSPOT_MIN_PATH = 3
+HOTSPOT_MIN_BENIGN = 2
+HUB_Z_STRONG = 3.0
+HUB_Z_MODERATE = 2.0
+HUB_MAX_CA = 6000
+_TIER_RANK = {"strong": 3, "moderate": 2, "weak": 1}
+
+
+def _d2(a, b):
+    dx = a["x"] - b["x"]
+    dy = a["y"] - b["y"]
+    dz = a["z"] - b["z"]
+    return dx * dx + dy * dy + dz * dz
+
+
+def _ca_by_uni(geom):
+    m = {}
+    for g in geom:
+        if g["uniPos"] is not None and g["uniPos"] not in m:
+            m[g["uniPos"]] = g
+    return m
+
+
+def _is_pathogenic(v):
+    s = (v.get("consequence") or v.get("clinVar") or "").lower()
+    return "pathogenic" in s or "deleterious" in s
+
+
+def _residue_neighborhood(geom, center_uni, threshold=8.0):
+    """[(uniPos, distance)] for residues within `threshold` Å of center_uni's Cα, nearest first."""
+    cab = _ca_by_uni(geom)
+    c = cab.get(center_uni)
+    if not c:
+        return []
+    th2 = threshold * threshold
+    out = [(uni, _math.sqrt(_d2(c, g))) for uni, g in cab.items()
+           if uni != center_uni and _d2(c, g) <= th2]
+    out.sort(key=lambda t: t[1])
+    return out
+
+
+def _ptm_variant_proximity(ptms, variants, geom):
+    """Port of analysis.js computePtmVariantProximity: per PTM, variants in tiers (same residue /
+    <=8 Å pathogenic / <=12 Å), nearest variant, counts."""
+    cab = _ca_by_uni(geom)
+    vbypos = {}
+    for v in variants:
+        vbypos.setdefault(v["position"], []).append(v)
+    result, seen = {}, set()
+    for ptm in ptms:
+        pp = ptm["position"]
+        if pp in seen:
+            continue
+        seen.add(pp)
+        pc = cab.get(pp)
+        if not pc:
+            continue
+        tier1 = list(vbypos.get(pp, []))
+        tier2, tier3 = [], []
+        nearest, nearest_var = float("inf"), None
+        for uni, g in cab.items():
+            if uni == pp:
+                continue
+            d2 = _d2(pc, g)
+            if d2 > 144.0:  # 12 Å
+                continue
+            vh = vbypos.get(uni)
+            if not vh:
+                continue
+            dist = _math.sqrt(d2)
+            for v in vh:
+                (tier2 if (dist <= 8 and _is_pathogenic(v)) else tier3).append((v, dist))
+                if dist < nearest:
+                    nearest = dist
+                    nearest_var = "%s%s%s" % (v.get("wildType", ""), v["position"], v.get("mutant", ""))
+        if tier1 and nearest > 0:
+            v0 = tier1[0]
+            nearest, nearest_var = 0.0, "%s%s%s" % (v0.get("wildType", ""), pp, v0.get("mutant", ""))
+        tier = 1 if tier1 else 2 if tier2 else 3 if tier3 else None
+        if tier is not None:
+            result[pp] = {
+                "tier": tier, "tier1": tier1, "tier2": tier2, "tier3": tier3,
+                "pathCount8A": len(tier2),
+                "nearbyCount8A": len(tier1) + len(tier2) + sum(1 for _, d in tier3 if d <= 8),
+                "nearestDist": None if nearest == float("inf") else nearest,
+                "nearestVariant": nearest_var,
+            }
+    return result
+
+
+def _betweenness_hubs(geom, threshold=8.0):
+    """Port of analysis.js betweennessHubs: Brandes' betweenness on the Cα contact graph, tiers by
+    absolute z-score. Returns {uniPos: 'strong'|'moderate'}."""
+    nodes = [g for g in geom if g["uniPos"] is not None]
+    n = len(nodes)
+    if n < 8 or n > HUB_MAX_CA:
+        return {}
+    th2 = threshold * threshold
+    adj = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _d2(nodes[i], nodes[j]) <= th2:
+                adj[i].append(j)
+                adj[j].append(i)
+    bc = [0.0] * n
+    for s in range(n):
+        stack, pred = [], [[] for _ in range(n)]
+        sigma = [0.0] * n
+        sigma[s] = 1.0
+        dist = [-1] * n
+        dist[s] = 0
+        queue, qi = [s], 0
+        while qi < len(queue):
+            v = queue[qi]
+            qi += 1
+            stack.append(v)
+            for w in adj[v]:
+                if dist[w] < 0:
+                    dist[w] = dist[v] + 1
+                    queue.append(w)
+                if dist[w] == dist[v] + 1:
+                    sigma[w] += sigma[v]
+                    pred[w].append(v)
+        delta = [0.0] * n
+        for idx in range(len(stack) - 1, -1, -1):
+            w = stack[idx]
+            for v in pred[w]:
+                delta[v] += (sigma[v] / sigma[w]) * (1 + delta[w])
+            if w != s:
+                bc[w] += delta[w]
+    scale = 1.0 / ((n - 1) * (n - 2)) if n > 2 else 0.0
+    bc = [b * scale for b in bc]
+    mean = sum(bc) / n
+    std = _math.sqrt(sum((b - mean) ** 2 for b in bc) / n)
+    if std <= 0:
+        return {}
+    out = {}
+    for i in range(n):
+        if bc[i] <= 0:
+            continue
+        z = (bc[i] - mean) / std
+        if z >= HUB_Z_STRONG:
+            out[nodes[i]["uniPos"]] = "strong"
+        elif z >= HUB_Z_MODERATE:
+            out[nodes[i]["uniPos"]] = "moderate"
+    return out
+
+
+def _bh_fdr(centres):
+    """In-place Benjamini-Hochberg q-values; `centres` sorted ascending by 'p'."""
+    n = len(centres)
+    for i, c in enumerate(centres):
+        c["q"] = min(c["p"] * n / (i + 1), 1.0)
+    for i in range(n - 2, -1, -1):
+        centres[i]["q"] = min(centres[i]["q"], centres[i + 1]["q"])
+
+
+def _compute_hotspots(geom, variants, threshold=8.0):
+    """Port of analysis.js computeHotspots: case-control label-permutation when benign controls are
+    available, else a spatial-placement null. Returns {uniPos: 'strong'|'moderate'|'weak'}."""
+    path = {v["position"] for v in variants if _is_pathogenic(v)}
+    benign = {v["position"] for v in variants
+              if v["position"] not in path and "benign" in (v.get("consequence") or "").lower()}
+    if len(path) < HOTSPOT_MIN_PATH:
+        return {}
+    cab = _ca_by_uni(geom)
+    th2 = threshold * threshold
+    rng = _random.Random(HOTSPOT_SEED)
+
+    if len(benign) >= HOTSPOT_MIN_BENIGN:  # case-control
+        items = [(p, True, cab[p]) for p in path if p in cab] + \
+                [(p, False, cab[p]) for p in benign if p in cab]
+        k = len(items)
+        if k < HOTSPOT_MIN_PATH + 1:
+            return {}
+        neigh = [[i] for i in range(k)]
+        for i in range(k):
+            for j in range(i + 1, k):
+                if _d2(items[i][2], items[j][2]) <= th2:
+                    neigh[i].append(j)
+                    neigh[j].append(i)
+        labels = [it[1] for it in items]
+        local = [sum(1 for j in neigh[i] if labels[j]) for i in range(k)]
+        base = sum(1 for l in labels if l) / k
+        ge = [0] * k
+        perm = labels[:]
+        for _ in range(HOTSPOT_PERMUTATIONS):
+            rng.shuffle(perm)
+            for i in range(k):
+                if sum(1 for j in neigh[i] if perm[j]) >= local[i]:
+                    ge[i] += 1
+        centres = []
+        for i in range(k):
+            if not items[i][1]:
+                continue
+            tot = len(neigh[i])
+            frac = local[i] / tot if tot else 0
+            centres.append({"pos": items[i][0], "p": (ge[i] + 1) / (HOTSPOT_PERMUTATIONS + 1),
+                            "local": local[i], "frac": frac, "er": frac / max(base, 1e-9)})
+        centres.sort(key=lambda c: c["p"])
+        _bh_fdr(centres)
+        out = {}
+        for c in centres:
+            if c["q"] <= 0.10 and c["local"] >= 3 and c["er"] >= 2.0:
+                out[c["pos"]] = "strong"
+            elif c["q"] <= 0.25 and c["local"] >= 2 and c["er"] >= 1.5:
+                out[c["pos"]] = "moderate"
+            elif c["q"] <= 0.25 and c["local"] >= 2 and c["frac"] >= 0.40:
+                out[c["pos"]] = "weak"
+        return out
+
+    # spatial-placement null (no benign controls needed)
+    universe = [g for g in geom if g["uniPos"] is not None]
+    n = len(universe)
+    if n < 10 or n > 6000:
+        return {}
+    idx_by_uni = {u["uniPos"]: i for i, u in enumerate(universe)}
+    path_idx = [idx_by_uni[p] for p in path if p in idx_by_uni]
+    m = len(path_idx)
+    if m < HOTSPOT_MIN_PATH:
+        return {}
+    neigh = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _d2(universe[i], universe[j]) <= th2:
+                neigh[i].append(j)
+                neigh[j].append(i)
+    is_path = [0] * n
+    for i in path_idx:
+        is_path[i] = 1
+    obs = [sum(1 for j in neigh[i] if is_path[j]) for i in range(n)]
+    ge = {ci: 0 for ci in path_idx}
+    pool = list(range(n))
+    for _ in range(HOTSPOT_PERMUTATIONS):
+        sim = [0] * n
+        for i in range(m):
+            r = i + rng.randrange(n - i)
+            pool[i], pool[r] = pool[r], pool[i]
+            sim[pool[i]] = 1
+        for ci in path_idx:
+            if sum(1 for j in neigh[ci] if sim[j]) >= obs[ci]:
+                ge[ci] += 1
+    centres = [{"ci": ci, "p": (ge[ci] + 1) / (HOTSPOT_PERMUTATIONS + 1), "den": obs[ci]} for ci in path_idx]
+    centres.sort(key=lambda c: c["p"])
+    _bh_fdr(centres)
+    out = {}
+    for c in centres:
+        uni = universe[c["ci"]]["uniPos"]
+        if c["q"] <= 0.10 and c["den"] >= 3:
+            out[uni] = "strong"
+        elif c["q"] <= 0.25 and c["den"] >= 2:
+            out[uni] = "moderate"
+    return out
+
+
+def _per_chain_merge(geom, fn):
+    """Run a per-chain analysis `fn(geom_of_chain)` and merge tiers across chains (strongest wins)."""
+    chains = {}
+    for g in geom:
+        chains.setdefault(g["chain"], []).append(g)
+    merged = {}
+    for gs in chains.values():
+        for uni, tier in fn(gs).items():
+            if uni is None:
+                continue
+            if uni not in merged or _TIER_RANK.get(tier, 0) > _TIER_RANK.get(merged[uni], 0):
+                merged[uni] = tier
+    return merged
+
+
+def _am_profile(am_map, pos):
+    """Per-substitution AlphaMissense scores at a position: [(wt, mut, score)], highest first."""
+    out = []
+    for key, score in am_map.items():
+        mt = re.match(r"^([A-Z])(\d+)([A-Z])$", key)
+        if mt and int(mt.group(2)) == pos:
+            out.append((mt.group(1), mt.group(3), score))
+    out.sort(key=lambda t: -t[2])
+    return out
+
+
+# ----------------------------------------------------------------------------------------------
 # Fetch orchestration
 # ----------------------------------------------------------------------------------------------
 def fetch_annotations(uid, force=False):
@@ -469,6 +761,7 @@ def fetch_annotations(uid, force=False):
         "topology": _extract_topology(features),
         "domains": _extract_domains(uniprot),
         "amMean": _am_mean_by_position(am_map),
+        "amMap": am_map,
     }
     ann["burden"] = _compute_burden(ann["variants"])
     _CACHE[uid] = ann
@@ -647,6 +940,33 @@ def _mapped_chains(obj):
     return cmd.get_chains(obj) or [""]
 
 
+def _resi_to_uni(obj, chain, resi):
+    """Inverse of _uni_to_resi: object author residue -> UniProt position (or None)."""
+    try:
+        resi = int(resi)
+    except (TypeError, ValueError):
+        return None
+    mp = UFV_MAPS.get(obj)
+    if not mp or mp["mode"] == "identity":
+        return resi
+    if mp["mode"] == "manual":
+        c = mp["chains"].get(chain)
+        if not c:
+            return None
+        if resi < c["resi_start"]:
+            return None
+        if c["resi_end"] is not None and resi > c["resi_end"]:
+            return None
+        return c["u_start"] + (resi - c["resi_start"])
+    if mp["mode"] == "sifts":
+        for seg in mp["segments"].get(chain, []):
+            lo, hi = sorted((seg["pdb_start"], seg["pdb_end"]))
+            if lo <= resi <= hi:
+                return seg["u_start"] + (resi - seg["pdb_start"])
+        return None
+    return resi
+
+
 # ----------------------------------------------------------------------------------------------
 # Projection helpers
 # ----------------------------------------------------------------------------------------------
@@ -694,15 +1014,17 @@ def _sel_for_positions(obj, positions, ca_only=False):
     return sel
 
 
-# Per-object, per-layer registry of the named selections a layer created, so each layer can be
-# toggled off independently without disturbing the others.
-_LAYER_SELS = {}      # obj -> { tag -> [selection names] }
-_CARTOON_LAYER = {}   # obj -> name of the active cartoon-colouring layer (domains/topology/am)
-
-# Point (sphere) layers are independent and can coexist; cartoon-colour layers are mutually
-# exclusive (only one cartoon colouring at a time), matching the extension's single colour mode.
+# Selection-free overlay model. Point (sphere) layers are kept as state only; redrawing hides the
+# previously-shown UFV spheres and re-shows the active layers. We colour the *representation*
+# (sphere_color), never the atom, so cartoon colouring (which follows atom colour) is untouched —
+# this is what fixes "showing variants recolours the ribbon". No named selections are created, so
+# the PyMOL object panel stays clean.
+_SPHERE_STATE = {}    # obj -> { tag -> {color_hex: [uniprot_positions]} }  (active sphere layers)
+_SPHERE_SHOWN = {}    # obj -> last inline selection of shown UFV spheres (so we can hide them)
+_CARTOON_LAYER = {}   # obj -> active cartoon-colouring mode (informational)
+_SPHERE_ORDER = ["site", "dom", "ptm", "var"]  # later tags win colour on a shared Ca atom
 POINT_TAGS = {"ptms": "ptm", "variants": "var", "sites": "site"}
-CARTOON_TAGS = ("domains", "topology", "alphamissense")
+CARTOON_TAGS = ("domains", "topology", "alphamissense", "burden", "plddt", "bfactor")
 
 
 def _cons_token(cons):
@@ -716,40 +1038,47 @@ def _cons_token(cons):
     return "uncertain"
 
 
-def _hide_layer(obj, tag):
-    """Remove the named selections of one point layer and hide their spheres."""
-    for name in _LAYER_SELS.get(obj, {}).pop(tag, []):
+def _redraw_spheres(obj):
+    """Hide the previously-shown UFV spheres, then re-show every active sphere layer."""
+    prev = _SPHERE_SHOWN.get(obj)
+    if prev:
         try:
-            cmd.hide("spheres", name)
-            cmd.delete(name)
+            cmd.hide("spheres", prev)
         except Exception:
             pass
-
-
-def _show_point_groups(obj, groups, tag):
-    """groups: dict color_hex -> [positions]; (re)draws this layer as coloured Ca spheres."""
-    _hide_layer(obj, tag)
     cmd.set("sphere_scale", 0.5, obj)
-    names, total = [], 0
-    for color, positions in groups.items():
-        sel = _sel_for_positions(obj, positions, ca_only=True)
-        if not sel:
-            continue
-        name = "ufv_%s_%s_%s" % (obj, tag, color.lstrip("#"))
-        cmd.select(name, sel)
-        cmd.show("spheres", name)
-        cmd.color(_color_name(color), name)
-        total += cmd.count_atoms(name)
-        names.append(name)
-        cmd.deselect()
-    _LAYER_SELS.setdefault(obj, {})[tag] = names
-    return total
+    state = _SPHERE_STATE.get(obj, {})
+    shown = set()
+    for tag in _SPHERE_ORDER:
+        for color, positions in (state.get(tag) or {}).items():
+            sel = _sel_for_positions(obj, positions, ca_only=True)
+            if not sel:
+                continue
+            cmd.show("spheres", sel)
+            cmd.set("sphere_color", _color_name(color), sel)
+            shown.update(positions)
+    _SPHERE_SHOWN[obj] = _sel_for_positions(obj, sorted(shown), ca_only=True) if shown else None
+    return len(shown)
+
+
+def _set_sphere_layer(obj, tag, groups):
+    """Turn a sphere layer on (groups = {color: [positions]}) or off (groups = None)."""
+    st = _SPHERE_STATE.setdefault(obj, {})
+    if groups:
+        st[tag] = groups
+    else:
+        st.pop(tag, None)
+    return _redraw_spheres(obj)
+
+
+def _hide_layer(obj, tag):
+    _set_sphere_layer(obj, tag, None)
 
 
 def _reset_cartoon(obj):
-    """Drop any cartoon-colour layer: recolour neutral grey and remove its single-residue spheres."""
+    """Drop any cartoon-colour layer: recolour neutral grey and remove domain single-residue spheres."""
     cmd.color("gray80", obj)
-    _hide_layer(obj, "dom_pts")
+    _set_sphere_layer(obj, "dom", None)
     _CARTOON_LAYER.pop(obj, None)
 
 
@@ -771,8 +1100,8 @@ def ufv_ptms(obj=None, uid=None):
         groups.setdefault(p["color"], []).append(p["position"])
         if p["endPosition"] != p["position"]:
             groups[p["color"]].append(p["endPosition"])
-    n = _show_point_groups(obj, groups, "ptm")
-    print("[UFV] %s: %d PTM spheres." % (obj, n))
+    _set_sphere_layer(obj, "ptm", groups)
+    print("[UFV] %s: PTM layer on (%d categories)." % (obj, len(groups)))
 
 
 def _variant_groups(ann, tokens, reviewed_only=False):
@@ -795,8 +1124,8 @@ def ufv_variants(obj=None, uid=None, only="pathogenic"):
     ann = fetch_annotations(_resolve_uid(uid))
     only = (only or "").lower()
     tokens = None if only in ("", "all") else set(re.split(r"[ ,]+", only.strip()))
-    n = _show_point_groups(obj, _variant_groups(ann, tokens), "var")
-    print("[UFV] %s: %d variant spheres (%s)." % (obj, n, only or "all"))
+    _set_sphere_layer(obj, "var", _variant_groups(ann, tokens))
+    print("[UFV] %s: variant layer on (%s)." % (obj, only or "all"))
 
 
 def ufv_sites(obj=None, uid=None):
@@ -808,8 +1137,8 @@ def ufv_sites(obj=None, uid=None):
         positions.append(s["position"])
         if s["endPosition"] != s["position"]:
             positions.append(s["endPosition"])
-    n = _show_point_groups(obj, {SITE_COLOR: positions}, "site")
-    print("[UFV] %s: %d functional-site spheres." % (obj, n))
+    _set_sphere_layer(obj, "site", {SITE_COLOR: positions} if positions else None)
+    print("[UFV] %s: site layer on (%d sites)." % (obj, len(ann["sites"])))
 
 
 def ufv_domains(obj=None, uid=None):
@@ -817,26 +1146,19 @@ def ufv_domains(obj=None, uid=None):
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
     _set_cartoon_layer(obj, "domains")
-    names, n = [], 0
-    for i, d in enumerate(ann["domains"]):
+    dom_spheres = {}
+    n = 0
+    for d in ann["domains"]:
         positions = list(range(d["position"], d["endPosition"] + 1))
         if d["isRange"]:
             sel = _sel_for_positions(obj, positions)
             if not sel:
                 continue
-            cmd.color(_color_name(d["color"]), sel)
+            cmd.color(_color_name(d["color"]), sel)  # cartoon = atom colour (intended here)
         else:
-            sel = _sel_for_positions(obj, positions, ca_only=True)
-            if not sel:
-                continue
-            name = "ufv_%s_dompt_%d" % (obj, i)
-            cmd.select(name, sel)
-            cmd.show("spheres", name)
-            cmd.color(_color_name(d["color"]), name)
-            names.append(name)
-            cmd.deselect()
+            dom_spheres.setdefault(d["color"], []).append(d["position"])
         n += 1
-    _LAYER_SELS.setdefault(obj, {})["dom_pts"] = names
+    _set_sphere_layer(obj, "dom", dom_spheres or None)
     print("[UFV] %s: coloured %d domain/region features." % (obj, n))
 
 
@@ -906,6 +1228,165 @@ def ufv_bfactor(obj=None, uid=None):
     print("[UFV] %s: coloured by B-factor." % obj)
 
 
+# ----------------------------------------------------------------------------------------------
+# Geometry + structure-dependent analyses (hotspots, contact hubs) + residue report / focus
+# ----------------------------------------------------------------------------------------------
+_GEOM_CACHE = {}    # obj -> geom list
+_FOCUS_SHOWN = {}   # obj -> stick selection currently shown by a focus
+
+
+def _ca_geometry(obj, refresh=False):
+    """Modelled Cα atoms of `obj` as [{uniPos, chain, resi, x, y, z}] (cached per object)."""
+    if not refresh and obj in _GEOM_CACHE:
+        return _GEOM_CACHE[obj]
+    rows = []
+    try:
+        cmd.iterate_state(1, "(%s) and name CA and polymer" % obj,
+                          "rows.append((chain, resi, x, y, z))", space={"rows": rows})
+    except Exception:
+        rows = []
+    geom = [{"uniPos": _resi_to_uni(obj, ch, resi), "chain": ch, "resi": resi, "x": x, "y": y, "z": z}
+            for (ch, resi, x, y, z) in rows]
+    _GEOM_CACHE[obj] = geom
+    return geom
+
+
+def _color_tiers(obj, tiers, colors):
+    groups = {}
+    for uni, tier in tiers.items():
+        c = colors.get(tier)
+        if c:
+            groups.setdefault(c, []).append(uni)
+    for c, positions in groups.items():
+        sel = _sel_for_positions(obj, positions)
+        if sel:
+            cmd.color(_color_name(c), sel)
+    return len(tiers)
+
+
+def ufv_hotspots(obj=None, uid=None):
+    """ufv_hotspots [object [, uniprot_id]] — colour pathogenic-enrichment hotspot tiers."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    _set_cartoon_layer(obj, "hotspots")
+    tiers = _per_chain_merge(_ca_geometry(obj), lambda gs: _compute_hotspots(gs, ann["variants"]))
+    n = _color_tiers(obj, tiers, {"strong": "#b71c1c", "moderate": "#e64a19", "weak": "#ffa726"})
+    print("[UFV] %s: %d hotspot residues." % (obj, n))
+
+
+def ufv_contacthubs(obj=None, uid=None):
+    """ufv_contacthubs [object] — colour long-range contact-hub tiers (Cα betweenness)."""
+    obj = _resolve_object(obj)
+    _set_cartoon_layer(obj, "contacthubs")
+    tiers = _per_chain_merge(_ca_geometry(obj), _betweenness_hubs)
+    n = _color_tiers(obj, tiers, {"strong": "#6a1b9a", "moderate": "#ab47bc"})
+    print("[UFV] %s: %d contact-hub residues." % (obj, n))
+
+
+def residue_report(obj, uid, uni_pos):
+    """Everything the extension's detail panel shows for one residue, as a plain dict."""
+    ann = fetch_annotations(uid)
+    geom = _ca_geometry(obj)
+    seq = ann["sequence"]
+    uni_pos = int(uni_pos)
+    aa = seq[uni_pos - 1] if 0 < uni_pos <= len(seq) else "?"
+    ptm_pos = {p["position"] for p in ann["ptms"]}
+    var_pos = {v["position"]: [] for v in ann["variants"]}
+    for v in ann["variants"]:
+        var_pos[v["position"]].append(v)
+    near = []
+    for nuni, dist in _residue_neighborhood(geom, uni_pos, 12.0):
+        tags = []
+        if nuni in ptm_pos:
+            tags.append("PTM")
+        if nuni in var_pos:
+            tags.append(_cons_token(var_pos[nuni][0]["consequence"]))
+        near.append({"pos": nuni, "dist": round(dist, 1), "tags": tags})
+    return {
+        "uid": ann["uid"], "pos": uni_pos, "aa": aa,
+        "ptms": [p for p in ann["ptms"] if p["position"] <= uni_pos <= p["endPosition"]],
+        "variants": var_pos.get(uni_pos, []),
+        "sites": [s for s in ann["sites"] if s["position"] <= uni_pos <= s["endPosition"]],
+        "domains": [d for d in ann["domains"] if d["position"] <= uni_pos <= d["endPosition"]],
+        "amMean": ann["amMean"].get(uni_pos),
+        "amProfile": _am_profile(ann["amMap"], uni_pos)[:6],
+        "nearby": near,
+    }
+
+
+def format_report(rep):
+    """Render a residue_report dict as a text block for the GUI / console."""
+    if not rep:
+        return ""
+    L = ["%s  position %d  (%s)" % (rep["uid"], rep["pos"], rep["aa"])]
+    for p in rep["ptms"]:
+        L.append("  PTM: %s" % p["description"])
+    for s in rep["sites"]:
+        L.append("  Site: %s" % s["description"])
+    for d in rep["domains"]:
+        L.append("  Domain: %s" % d["description"])
+    for v in rep["variants"]:
+        extra = []
+        if v.get("clinVar"):
+            extra.append("ClinVar: %s" % v["clinVar"])
+        if v.get("alphaMissense") is not None:
+            extra.append("AM %.2f" % v["alphaMissense"])
+        if v.get("diseases"):
+            extra.append("; ".join(v["diseases"]))
+        L.append("  Variant %s%d%s — %s%s" % (v.get("wildType", ""), rep["pos"], v.get("mutant", ""),
+                                              v["consequence"], (" [" + " | ".join(extra) + "]") if extra else ""))
+    if rep["amMean"] is not None:
+        L.append("  AlphaMissense (mean): %.3f" % rep["amMean"])
+    if rep["amProfile"]:
+        L.append("  AM top: " + ", ".join("%s%s %.2f" % (wt, mt, sc) for wt, mt, sc in rep["amProfile"]))
+    if rep["nearby"]:
+        near = ", ".join("%d (%.1fÅ%s)" % (n["pos"], n["dist"], " " + "/".join(n["tags"]) if n["tags"] else "")
+                         for n in rep["nearby"][:12])
+        L.append("  Nearby ≤12Å: " + near)
+    return "\n".join(L)
+
+
+def ufv_focus(obj=None, uni_pos=None):
+    """ufv_focus [object,] uniprot_pos — zoom to a residue and show its 5 Å neighbourhood as sticks."""
+    obj = _resolve_object(obj)
+    sel = _sel_for_positions(obj, [int(uni_pos)])
+    if not sel:
+        print("[UFV] position %s not modelled in %s." % (uni_pos, obj))
+        return
+    prev = _FOCUS_SHOWN.get(obj)
+    if prev:
+        try:
+            cmd.hide("sticks", prev)
+        except Exception:
+            pass
+    show = "(%s) or (byres ((%s) around 5) and polymer)" % (sel, sel)
+    cmd.show("sticks", show)
+    _FOCUS_SHOWN[obj] = show
+    cmd.zoom(show, 3)
+
+
+def ufv_resetview(obj=None):
+    """ufv_resetview [object] — clear focus sticks and zoom back out to the whole structure."""
+    obj = _resolve_object(obj)
+    prev = _FOCUS_SHOWN.pop(obj, None)
+    if prev:
+        try:
+            cmd.hide("sticks", prev)
+        except Exception:
+            pass
+    cmd.zoom(obj)
+
+
+def ufv_report(uni_pos, obj=None, uid=None):
+    """ufv_report uniprot_pos [, object [, uid]] — print the residue report + focus the residue."""
+    obj = _resolve_object(obj)
+    uid = _resolve_uid(uid)
+    rep = residue_report(obj, uid, uni_pos)
+    print(format_report(rep))
+    ufv_focus(obj, uni_pos)
+    return rep
+
+
 def ufv_structures(uid=None):
     """ufv_structures [uniprot_id] — list the structures available for an accession."""
     uid = _resolve_uid(uid)
@@ -953,6 +1434,8 @@ def _load_structure(struct, uid, name=None):
         _set_sifts_map(name, struct["pdbId"], uid)
     else:
         _set_identity_map(name)
+    _GEOM_CACHE.pop(name, None)
+    _STATE["obj"] = name
     cmd.orient(name)
     print("[UFV] loaded %s (%s). Numbering: %s." % (name, struct["label"], struct.get("numbering")))
     return name
@@ -976,11 +1459,10 @@ def ufv_hide(obj=None, layer=None):
 def ufv_clear(obj=None):
     """ufv_clear [object] — remove all UFV overlays and reset colour."""
     obj = _resolve_object(obj)
-    for name in list(cmd.get_names("selections")):
-        if name.startswith("ufv_"):
-            cmd.delete(name)
-    _LAYER_SELS.pop(obj, None)
+    _SPHERE_STATE.pop(obj, None)
+    _SPHERE_SHOWN.pop(obj, None)
     _CARTOON_LAYER.pop(obj, None)
+    _FOCUS_SHOWN.pop(obj, None)
     if obj:
         cmd.hide("spheres", obj)
         cmd.color("gray80", obj)
@@ -1052,6 +1534,8 @@ def ufv_load(uid, name=None):
     cmd.show("cartoon", name)
     cmd.color("gray80", name)
     _set_identity_map(name)
+    _GEOM_CACHE.pop(name, None)
+    _STATE["obj"] = name
     fetch_annotations(uid)
     cmd.orient(name)
     print("[UFV] loaded %s. Open the panel (ufv_gui) or add layers: ufv_ptms / "
@@ -1078,7 +1562,9 @@ if _HAS_PYMOL:
         ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
         ("ufv_alphamissense", ufv_alphamissense), ("ufv_burden", ufv_burden),
         ("ufv_plddt", ufv_plddt), ("ufv_bfactor", ufv_bfactor),
+        ("ufv_hotspots", ufv_hotspots), ("ufv_contacthubs", ufv_contacthubs),
         ("ufv_structures", ufv_structures), ("ufv_use", ufv_use),
+        ("ufv_report", ufv_report), ("ufv_focus", ufv_focus), ("ufv_resetview", ufv_resetview),
         ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
     ]:
         cmd.extend(_name, _fn)
@@ -1091,215 +1577,435 @@ _gui_ref = None  # keep a reference so the window isn't garbage-collected
 
 
 def ufv_gui():
-    """ufv_gui - open the Qt control panel: fetch, pick a structure, choose layers/colouring."""
+    """ufv_gui - open the Qt control panel (visualization driver + report generator)."""
     global _gui_ref
     try:
-        from pymol.Qt import QtWidgets
+        from pymol.Qt import QtWidgets, QtCore
     except Exception as e:
         print("[UFV] Qt GUI unavailable (%s). Use the ufv_* commands instead." % e)
         return
+    cls = _build_panel_class(QtWidgets, QtCore)
+    _gui_ref = cls(QtWidgets, QtCore)
+    _gui_ref.show()
+    return _gui_ref
+
+
+def _build_panel_class(QtWidgets, QtCore):
     from collections import Counter
 
-    w = QtWidgets.QWidget()
-    w.setWindowTitle("3D Feature Viewer for UniProt")
-    w.setMinimumWidth(380)
-    lay = QtWidgets.QVBoxLayout(w)
+    class _Worker(QtCore.QThread):
+        # Runs a pure-Python callable off the UI thread (no cmd.* calls inside!).
+        done = QtCore.Signal(object)
 
-    # --- accession ---
-    top = QtWidgets.QGridLayout(); lay.addLayout(top)
-    top.addWidget(QtWidgets.QLabel("UniProt"), 0, 0)
-    uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); top.addWidget(uid_edit, 0, 1)
-    fetch_btn = QtWidgets.QPushButton("Fetch"); top.addWidget(fetch_btn, 0, 2)
+        def __init__(self, fn):
+            super(_Worker, self).__init__()
+            self._fn = fn
 
-    # --- structure selector ---
-    sbox = QtWidgets.QGroupBox("Structure"); sl = QtWidgets.QGridLayout(sbox); lay.addWidget(sbox)
-    struct_combo = QtWidgets.QComboBox(); sl.addWidget(struct_combo, 0, 0, 1, 2)
-    load_sel_btn = QtWidgets.QPushButton("Load selected"); sl.addWidget(load_sel_btn, 1, 0)
-    sl.addWidget(QtWidgets.QLabel("Active object:"), 2, 0)
-    obj_combo = QtWidgets.QComboBox(); obj_combo.setEditable(True); sl.addWidget(obj_combo, 2, 1)
+        def run(self):
+            try:
+                self.done.emit(self._fn())
+            except Exception as exc:  # surface errors instead of crashing the thread
+                self.done.emit(exc)
 
-    def refresh_objs():
-        cur = obj_combo.currentText()
-        obj_combo.clear()
-        obj_combo.addItems(cmd.get_object_list() if _HAS_PYMOL else [])
-        if cur:
-            obj_combo.setEditText(cur)
-    refresh_objs()
+    class _UFVPanel(QtWidgets.QWidget):
+        def __init__(self, _qtw, _qtc):
+            super(_UFVPanel, self).__init__()
+            self._workers = set()
+            self._wizard = None
+            self.setWindowTitle("3D Feature Viewer for UniProt")
+            self.setMinimumWidth(400)
+            lay = QtWidgets.QVBoxLayout(self)
 
-    def cur_obj():
-        return obj_combo.currentText() or _resolve_object(None)
+            # accession + fetch
+            top = QtWidgets.QGridLayout(); lay.addLayout(top)
+            top.addWidget(QtWidgets.QLabel("UniProt"), 0, 0)
+            self.uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); top.addWidget(self.uid_edit, 0, 1)
+            self.fetch_btn = QtWidgets.QPushButton("Fetch"); top.addWidget(self.fetch_btn, 0, 2)
+            self.fetch_btn.clicked.connect(self.on_fetch)
 
-    def cur_uid():
-        return uid_edit.text().strip().upper() or _STATE.get("uid")
+            # structure
+            sbox = QtWidgets.QGroupBox("Structure"); sl = QtWidgets.QGridLayout(sbox); lay.addWidget(sbox)
+            self.struct_combo = QtWidgets.QComboBox(); sl.addWidget(self.struct_combo, 0, 0, 1, 2)
+            self.load_btn = QtWidgets.QPushButton("Load selected"); sl.addWidget(self.load_btn, 1, 0)
+            self.load_btn.clicked.connect(self.on_load_selected)
+            self.obj_label = QtWidgets.QLabel("Object: -"); sl.addWidget(self.obj_label, 1, 1)
 
-    info = QtWidgets.QLabel("Enter an accession and press Fetch.")
-    info.setWordWrap(True); info.setStyleSheet("font-size:11px;")
+            # layers
+            lbox = QtWidgets.QGroupBox("Layers"); gl = QtWidgets.QGridLayout(lbox); lay.addWidget(lbox)
+            self.cb_ptm = QtWidgets.QCheckBox("PTMs"); self.cb_site = QtWidgets.QCheckBox("Functional sites")
+            gl.addWidget(self.cb_ptm, 0, 0); gl.addWidget(self.cb_site, 0, 1)
+            self.cb_ptm.clicked.connect(lambda: self.toggle_points("ptm", self.cb_ptm, ufv_ptms))
+            self.cb_site.clicked.connect(lambda: self.toggle_points("site", self.cb_site, ufv_sites))
+            self.cb_var = QtWidgets.QCheckBox("Disease variants"); gl.addWidget(self.cb_var, 1, 0)
+            self.cb_reviewed = QtWidgets.QCheckBox("reviewed only"); gl.addWidget(self.cb_reviewed, 1, 1)
+            self.cons_cb = {}
+            for i, (tok, lbl) in enumerate([("pathogenic", "Pathogenic"), ("deleterious", "Pred. deleterious"),
+                                            ("benign", "Benign"), ("uncertain", "Uncertain")]):
+                c = QtWidgets.QCheckBox(lbl); c.setChecked(tok in ("pathogenic", "deleterious"))
+                gl.addWidget(c, 2 + i // 2, i % 2); self.cons_cb[tok] = c
+                c.clicked.connect(self.refresh_variants)
+            self.cb_var.clicked.connect(self.refresh_variants)
+            self.cb_reviewed.clicked.connect(self.refresh_variants)
 
-    def update_info():
-        ann = _CACHE.get(cur_uid() or "")
-        if not ann:
-            info.setText("Not fetched."); return
-        cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
-        reviewed = sum(1 for v in ann["variants"] if v.get("reviewed"))
-        info.setText(
-            "%s - %d aa\nPTMs %d   Sites %d   Domains %d   Topology %d   Burden %d\n"
-            "Variants %d  (reviewed %d; pathogenic %d, deleterious %d, benign %d, uncertain %d)\n"
-            "AlphaMissense: %s"
-            % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["sites"]),
-               len(ann["domains"]), len(ann["topology"]), len(ann["burden"]), len(ann["variants"]),
-               reviewed, cons.get("pathogenic", 0), cons.get("deleterious", 0),
-               cons.get("benign", 0), cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
+            # cartoon colouring
+            cbox = QtWidgets.QGroupBox("Cartoon colouring"); cl = QtWidgets.QHBoxLayout(cbox); lay.addWidget(cbox)
+            self.cart = QtWidgets.QComboBox()
+            self.cart.addItems(["None", "Domains", "Topology", "pLDDT", "B-factor", "AlphaMissense",
+                                "Burden", "Hotspots", "Contact hubs"])
+            cl.addWidget(self.cart)
+            self.cart.currentIndexChanged.connect(lambda _i: self.apply_cartoon())
 
-    def populate_structures():
-        struct_combo.clear()
-        uid = cur_uid()
-        if not uid:
-            return
-        try:
-            structs = list_structures(uid)
-        except Exception as e:
-            print("[UFV] structure list failed: %s" % e); structs = []
-        _STATE["structures"] = structs
-        for s in structs:
-            struct_combo.addItem(s["label"], s)
+            # annotation list + detail (the report generator)
+            rbox = QtWidgets.QGroupBox("Annotations / residue report"); rl = QtWidgets.QVBoxLayout(rbox); lay.addWidget(rbox)
+            row = QtWidgets.QHBoxLayout(); rl.addLayout(row)
+            self.list_kind = QtWidgets.QComboBox(); self.list_kind.addItems(["PTMs", "Variants", "Sites", "Domains"])
+            self.list_kind.currentIndexChanged.connect(lambda _i: self.refresh_table())
+            row.addWidget(QtWidgets.QLabel("List:")); row.addWidget(self.list_kind)
+            self.cb_pick = QtWidgets.QCheckBox("Pick in 3D"); row.addWidget(self.cb_pick)
+            self.cb_pick.clicked.connect(self.toggle_pick)
+            row.addStretch(1)
+            self.reset_btn = QtWidgets.QPushButton("Reset view"); row.addWidget(self.reset_btn)
+            self.reset_btn.clicked.connect(lambda: (ufv_resetview(self.obj())))
+            self.table = QtWidgets.QTableWidget(0, 3)
+            self.table.setHorizontalHeaderLabels(["Pos", "What", "Detail"])
+            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+            self.table.setMaximumHeight(150)
+            self.table.cellClicked.connect(self.on_row)
+            rl.addWidget(self.table)
+            self.detail = QtWidgets.QPlainTextEdit(); self.detail.setReadOnly(True); self.detail.setMaximumHeight(150)
+            rl.addWidget(self.detail)
 
-    def do_fetch():
-        uid = cur_uid()
-        if not uid:
-            info.setText("Enter an accession first."); return
-        fetch_annotations(uid)
-        update_info(); populate_structures(); refresh_objs()
-    fetch_btn.clicked.connect(do_fetch)
+            # advanced numbering (collapsible)
+            self.adv_btn = QtWidgets.QToolButton(); self.adv_btn.setText("Advanced numbering (loaded / trajectory)")
+            self.adv_btn.setCheckable(True); self.adv_btn.setStyleSheet("QToolButton{border:none;}")
+            self.adv_btn.setArrowType(QtCore.Qt.RightArrow)
+            lay.addWidget(self.adv_btn)
+            self.adv = QtWidgets.QWidget(); al = QtWidgets.QGridLayout(self.adv); self.adv.setVisible(False)
+            lay.addWidget(self.adv)
+            self.rb_id = QtWidgets.QRadioButton("Identity"); self.rb_id.setChecked(True)
+            self.rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
+            self.rb_man = QtWidgets.QRadioButton("Manual chain:")
+            self.pdb_edit = QtWidgets.QLineEdit(); self.pdb_edit.setMaximumWidth(70)
+            al.addWidget(self.rb_id, 0, 0, 1, 4)
+            al.addWidget(self.rb_si, 1, 0); al.addWidget(self.pdb_edit, 1, 1)
+            al.addWidget(self.rb_man, 2, 0)
+            self.ch_e = QtWidgets.QLineEdit("A"); self.ch_e.setMaximumWidth(34)
+            self.us_e = QtWidgets.QLineEdit(); self.us_e.setPlaceholderText("UniProt@"); self.us_e.setMaximumWidth(72)
+            self.rs_e = QtWidgets.QLineEdit(); self.rs_e.setPlaceholderText("resi@"); self.rs_e.setMaximumWidth(58)
+            self.re_e = QtWidgets.QLineEdit(); self.re_e.setPlaceholderText("end"); self.re_e.setMaximumWidth(52)
+            mh = QtWidgets.QHBoxLayout()
+            for x in (self.ch_e, self.us_e, self.rs_e, self.re_e):
+                mh.addWidget(x)
+            al.addLayout(mh, 2, 1, 1, 3)
+            apply_btn = QtWidgets.QPushButton("Apply numbering"); al.addWidget(apply_btn, 3, 0, 1, 4)
+            apply_btn.clicked.connect(self.apply_map)
 
-    def do_load_selected():
-        s = struct_combo.currentData()
-        if not s:
-            info.setText("Press Fetch, then choose a structure."); return
-        name = _load_structure(s, cur_uid())
-        if name:
-            refresh_objs(); obj_combo.setEditText(name)
-    load_sel_btn.clicked.connect(do_load_selected)
+            def _toggle_adv():
+                vis = self.adv_btn.isChecked()
+                self.adv.setVisible(vis)
+                self.adv_btn.setArrowType(QtCore.Qt.DownArrow if vis else QtCore.Qt.RightArrow)
+            self.adv_btn.clicked.connect(_toggle_adv)
 
-    def need_uid():
-        uid = cur_uid()
-        if not uid:
-            info.setText("Enter an accession and Fetch first."); return False
-        fetch_annotations(uid); update_info(); return True
+            self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
+            lay.addWidget(self.status)
+            self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px;")
+            lay.addWidget(self.info)
+            self.clear_btn = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(self.clear_btn)
+            self.clear_btn.clicked.connect(self.on_clear)
 
-    # --- point layers ---
-    lbox = QtWidgets.QGroupBox("Annotation layers"); ll = QtWidgets.QGridLayout(lbox); lay.addWidget(lbox)
-    cb_ptm = QtWidgets.QCheckBox("PTMs"); cb_site = QtWidgets.QCheckBox("Functional sites")
-    ll.addWidget(cb_ptm, 0, 0); ll.addWidget(cb_site, 0, 1)
+            if self.cur_uid() and self.cur_uid() in _CACHE:
+                self.after_fetch()
 
-    def tog_ptm():
-        if cb_ptm.isChecked():
-            if not need_uid():
-                cb_ptm.setChecked(False); return
-            ufv_ptms(cur_obj(), cur_uid())
-        else:
-            _hide_layer(cur_obj(), "ptm")
-    cb_ptm.clicked.connect(tog_ptm)
+        # ---- helpers ----
+        def cur_uid(self):
+            return self.uid_edit.text().strip().upper() or _STATE.get("uid")
 
-    def tog_site():
-        if cb_site.isChecked():
-            if not need_uid():
-                cb_site.setChecked(False); return
-            ufv_sites(cur_obj(), cur_uid())
-        else:
-            _hide_layer(cur_obj(), "site")
-    cb_site.clicked.connect(tog_site)
+        def obj(self):
+            return _STATE.get("obj") or _resolve_object(None)
 
-    # --- variants ---
-    vbox = QtWidgets.QGroupBox("Disease variants"); vl = QtWidgets.QGridLayout(vbox); lay.addWidget(vbox)
-    cb_var = QtWidgets.QCheckBox("Show variants"); vl.addWidget(cb_var, 0, 0)
-    cb_reviewed = QtWidgets.QCheckBox("UniProt reviewed only"); vl.addWidget(cb_reviewed, 0, 1)
-    cons_cb = {}
-    for i, (tok, lbl) in enumerate([("pathogenic", "Pathogenic"), ("deleterious", "Pred. deleterious"),
-                                    ("benign", "Benign"), ("uncertain", "Uncertain")]):
-        c = QtWidgets.QCheckBox(lbl); c.setChecked(tok in ("pathogenic", "deleterious"))
-        vl.addWidget(c, 1 + i // 2, i % 2); cons_cb[tok] = c
+        def _async(self, work, apply, status):
+            self.status.setText(status)
+            self.setEnabled(False)
+            wk = _Worker(work)
 
-    def refresh_vars():
-        obj = cur_obj()
-        if not cb_var.isChecked():
-            _hide_layer(obj, "var"); return
-        if not need_uid():
-            cb_var.setChecked(False); return
-        toks = {t for t, c in cons_cb.items() if c.isChecked()}
-        ann = fetch_annotations(cur_uid())
-        _show_point_groups(obj, _variant_groups(ann, toks or None, cb_reviewed.isChecked()), "var")
-    cb_var.clicked.connect(refresh_vars)
-    cb_reviewed.clicked.connect(refresh_vars)
-    for c in cons_cb.values():
-        c.clicked.connect(refresh_vars)
+            def on_done(res):
+                self.setEnabled(True)
+                self.status.setText("")
+                self._workers.discard(wk)
+                if isinstance(res, Exception):
+                    self.status.setText("Error: %s" % res)
+                    return
+                if apply:
+                    apply(res)
+            wk.done.connect(on_done)
+            self._workers.add(wk)
+            wk.start()
 
-    # --- cartoon colouring (mutually exclusive) ---
-    cbox = QtWidgets.QGroupBox("Cartoon colouring"); cl = QtWidgets.QHBoxLayout(cbox); lay.addWidget(cbox)
-    cart = QtWidgets.QComboBox()
-    cart.addItems(["None", "Domains", "Topology", "pLDDT", "B-factor", "AlphaMissense", "Burden"])
-    cl.addWidget(cart)
-    _CART_FN = {"Domains": ufv_domains, "Topology": ufv_topology, "AlphaMissense": ufv_alphamissense,
-                "Burden": ufv_burden, "pLDDT": ufv_plddt, "B-factor": ufv_bfactor}
-    _CART_NEEDS_UID = {"Domains", "Topology", "AlphaMissense", "Burden"}
+        def update_info(self):
+            ann = _CACHE.get(self.cur_uid() or "")
+            if not ann:
+                self.info.setText("Not fetched."); return
+            cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
+            reviewed = sum(1 for v in ann["variants"] if v.get("reviewed"))
+            self.info.setText(
+                "%s - %d aa | PTMs %d  Sites %d  Domains %d  Topology %d  Burden %d\n"
+                "Variants %d (reviewed %d; path %d, delet %d, benign %d, uncertain %d)  AlphaMissense %s"
+                % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["sites"]),
+                   len(ann["domains"]), len(ann["topology"]), len(ann["burden"]), len(ann["variants"]),
+                   reviewed, cons.get("pathogenic", 0), cons.get("deleterious", 0),
+                   cons.get("benign", 0), cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
 
-    def apply_cart():
-        obj = cur_obj(); choice = cart.currentText()
-        if choice == "None":
-            _reset_cartoon(obj); return
-        if choice in _CART_NEEDS_UID and not need_uid():
-            cart.setCurrentIndex(0); return
-        _CART_FN[choice](obj, cur_uid())
-    cart.currentIndexChanged.connect(lambda _i: apply_cart())
+        def obj_label_refresh(self):
+            self.obj_label.setText("Object: %s" % (self.obj() or "-"))
 
-    # --- advanced numbering (loaded structure / trajectory) ---
-    abox = QtWidgets.QGroupBox("Advanced: numbering for a structure/trajectory you loaded yourself")
-    abox.setCheckable(True); abox.setChecked(False)
-    al = QtWidgets.QGridLayout(abox); lay.addWidget(abox)
-    rb_id = QtWidgets.QRadioButton("Identity (resi == UniProt)"); rb_id.setChecked(True)
-    rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
-    rb_man = QtWidgets.QRadioButton("Manual chain:")
-    pdb_edit = QtWidgets.QLineEdit(); pdb_edit.setMaximumWidth(70)
-    al.addWidget(rb_id, 0, 0, 1, 4)
-    al.addWidget(rb_si, 1, 0); al.addWidget(pdb_edit, 1, 1)
-    al.addWidget(rb_man, 2, 0)
-    ch_e = QtWidgets.QLineEdit("A"); ch_e.setMaximumWidth(34)
-    us_e = QtWidgets.QLineEdit(); us_e.setPlaceholderText("UniProt@"); us_e.setMaximumWidth(72)
-    rs_e = QtWidgets.QLineEdit(); rs_e.setPlaceholderText("resi@"); rs_e.setMaximumWidth(58)
-    re_e = QtWidgets.QLineEdit(); re_e.setPlaceholderText("end"); re_e.setMaximumWidth(52)
-    mh = QtWidgets.QHBoxLayout()
-    for x in (ch_e, us_e, rs_e, re_e):
-        mh.addWidget(x)
-    al.addLayout(mh, 2, 1, 1, 3)
-    apply_btn = QtWidgets.QPushButton("Apply numbering to active object"); al.addWidget(apply_btn, 3, 0, 1, 4)
+        # ---- fetch / structures ----
+        def on_fetch(self):
+            uid = self.cur_uid()
+            if not uid:
+                self.status.setText("Enter an accession."); return
+            self._async(lambda: (fetch_annotations(uid), list_structures(uid)),
+                        lambda res: self.after_fetch(res[1]), "Fetching %s ..." % uid)
 
-    def apply_map():
-        obj, uid = cur_obj(), cur_uid()
-        if not obj or not uid:
-            info.setText("Set an accession and object first."); return
-        if rb_si.isChecked():
-            ufv_map(obj, uid, "sifts", pdb_edit.text().strip())
-        elif rb_man.isChecked():
-            ufv_chain(obj, ch_e.text().strip(), us_e.text().strip(),
-                      rs_e.text().strip() or None, re_e.text().strip() or None)
-        else:
-            ufv_map(obj, uid, "identity")
-    apply_btn.clicked.connect(apply_map)
+        def after_fetch(self, structs=None):
+            if structs is None:
+                structs = _STATE.get("structures") or []
+            else:
+                _STATE["structures"] = structs
+            self.struct_combo.clear()
+            for s in structs:
+                self.struct_combo.addItem(s["label"], s)
+            self.update_info()
+            self.refresh_table()
+            self.obj_label_refresh()
 
-    lay.addWidget(info)
-    clr = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(clr)
+        def on_load_selected(self):
+            s = self.struct_combo.currentData()
+            if not s:
+                self.status.setText("Press Fetch, then choose a structure."); return
+            uid = self.cur_uid()
+            self._async(lambda: _download_only(s), lambda path: self._finish_load(s, path, uid),
+                        "Downloading %s ..." % s["label"])
 
-    def do_clear():
-        ufv_clear(cur_obj())
-        for c in (cb_ptm, cb_site, cb_var):
-            c.setChecked(False)
-        cart.setCurrentIndex(0)
-    clr.clicked.connect(do_clear)
+        def _finish_load(self, struct, path, uid):
+            if not path:
+                self.status.setText("Download failed."); return
+            name = _load_from_path(struct, path, uid)
+            self.obj_label_refresh()
+            # reflect current overlay state on the freshly loaded object (nothing yet)
 
-    if cur_uid():
-        update_info(); populate_structures()
-    w.show()
-    _gui_ref = w
-    return w
+        # ---- layers ----
+        def toggle_points(self, tag, cb, fn):
+            o = self.obj()
+            if not o:
+                cb.setChecked(False); return
+            if cb.isChecked():
+                fn(o, self.cur_uid())
+            else:
+                _hide_layer(o, tag)
+
+        def refresh_variants(self):
+            o = self.obj()
+            if not o:
+                self.cb_var.setChecked(False); return
+            if not self.cb_var.isChecked():
+                _hide_layer(o, "var"); return
+            ann = _CACHE.get(self.cur_uid())
+            if not ann:
+                self.cb_var.setChecked(False); return
+            toks = {t for t, c in self.cons_cb.items() if c.isChecked()}
+            _set_sphere_layer(o, "var", _variant_groups(ann, toks or None, self.cb_reviewed.isChecked()))
+
+        def apply_cartoon(self):
+            o = self.obj(); choice = self.cart.currentText()
+            if not o:
+                return
+            if choice == "None":
+                _reset_cartoon(o); return
+            uid = self.cur_uid()
+            cheap = {"Domains": ufv_domains, "Topology": ufv_topology, "pLDDT": ufv_plddt,
+                     "B-factor": ufv_bfactor, "AlphaMissense": ufv_alphamissense, "Burden": ufv_burden}
+            if choice in cheap:
+                cheap[choice](o, uid); return
+            ann = _CACHE.get(uid) or {}
+            geom = _ca_geometry(o)  # main thread (reads structure)
+            if choice == "Hotspots":
+                work = lambda: _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann.get("variants", [])))
+                colors = {"strong": "#b71c1c", "moderate": "#e64a19", "weak": "#ffa726"}
+            else:  # Contact hubs
+                work = lambda: _per_chain_merge(geom, _betweenness_hubs)
+                colors = {"strong": "#6a1b9a", "moderate": "#ab47bc"}
+
+            def apply(tiers):
+                _set_cartoon_layer(o, choice.lower())
+                _color_tiers(o, tiers, colors)
+                self.status.setText("%s: %d residues." % (choice, len(tiers)))
+            self._async(work, apply, "Computing %s ..." % choice)
+
+        # ---- list table + report ----
+        def refresh_table(self):
+            ann = _CACHE.get(self.cur_uid())
+            self.table.setRowCount(0)
+            if not ann:
+                return
+            kind = self.list_kind.currentText()
+            rows = []
+            if kind == "PTMs":
+                for p in ann["ptms"]:
+                    rows.append((p["position"], p["category"], p["description"]))
+            elif kind == "Variants":
+                for v in ann["variants"]:
+                    rows.append((v["position"], "%s%d%s" % (v.get("wildType", ""), v["position"], v.get("mutant", "")),
+                                 v["consequence"] + (" | " + "; ".join(v["diseases"]) if v.get("diseases") else "")))
+            elif kind == "Sites":
+                for s in ann["sites"]:
+                    rows.append((s["position"], "site", s["description"]))
+            else:
+                for d in ann["domains"]:
+                    rng = "%d-%d" % (d["position"], d["endPosition"]) if d["isRange"] else str(d["position"])
+                    rows.append((d["position"], rng, d["description"]))
+            self.table.setRowCount(len(rows))
+            for r, (pos, what, detail) in enumerate(rows):
+                self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(pos)))
+                self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(str(what)))
+                self.table.setItem(r, 2, QtWidgets.QTableWidgetItem(str(detail)))
+
+        def on_row(self, r, _c):
+            item = self.table.item(r, 0)
+            if not item:
+                return
+            try:
+                pos = int(item.text())
+            except ValueError:
+                return
+            self.report_residue(pos)
+
+        def report_residue(self, uni_pos):
+            o = self.obj(); uid = self.cur_uid()
+            if not o or not uid:
+                return
+            rep = residue_report(o, uid, uni_pos)
+            self.detail.setPlainText(format_report(rep))
+            ufv_focus(o, uni_pos)
+
+        # ---- 3D picking ----
+        def toggle_pick(self):
+            if self.cb_pick.isChecked():
+                self._install_wizard()
+            else:
+                self._remove_wizard()
+
+        def _install_wizard(self):
+            try:
+                from pymol.wizard import Wizard
+            except Exception as e:
+                self.status.setText("3D pick unavailable (%s)" % e); self.cb_pick.setChecked(False); return
+            panel = self
+
+            class _PickW(Wizard):
+                def do_select(self, name):
+                    info = []
+                    try:
+                        cmd.iterate(name, "info.append((chain, resi))", space={"info": info})
+                    except Exception:
+                        pass
+                    cmd.delete(name)
+                    self._report(info)
+                    return None
+
+                def do_pick(self, bondFlag):
+                    info = []
+                    try:
+                        cmd.iterate("pk1", "info.append((chain, resi))", space={"info": info})
+                    except Exception:
+                        pass
+                    cmd.unpick()
+                    self._report(info)
+                    return None
+
+                def _report(self, info):
+                    if not info:
+                        return
+                    ch, resi = info[0]
+                    uni = _resi_to_uni(panel.obj(), ch, resi)
+                    if uni is not None:
+                        panel.report_residue(uni)
+
+                def get_prompt(self):
+                    return ["Click an atom to report its residue (UFV)."]
+            self._wizard = _PickW()
+            cmd.set_wizard(self._wizard)
+
+        def _remove_wizard(self):
+            try:
+                cmd.unset_wizard()
+            except Exception:
+                try:
+                    cmd.set_wizard()
+                except Exception:
+                    pass
+            self._wizard = None
+
+        # ---- numbering / clear ----
+        def apply_map(self):
+            o, uid = self.obj(), self.cur_uid()
+            if not o or not uid:
+                self.status.setText("Set accession and load/select an object first."); return
+            if self.rb_si.isChecked():
+                ufv_map(o, uid, "sifts", self.pdb_edit.text().strip())
+            elif self.rb_man.isChecked():
+                ufv_chain(o, self.ch_e.text().strip(), self.us_e.text().strip(),
+                          self.rs_e.text().strip() or None, self.re_e.text().strip() or None)
+            else:
+                ufv_map(o, uid, "identity")
+            _GEOM_CACHE.pop(o, None)
+
+        def on_clear(self):
+            ufv_clear(self.obj())
+            for c in (self.cb_ptm, self.cb_site, self.cb_var):
+                c.setChecked(False)
+            self.cart.setCurrentIndex(0)
+            self.detail.setPlainText("")
+
+        def closeEvent(self, ev):
+            self._remove_wizard()
+            super(_UFVPanel, self).closeEvent(ev)
+
+    return _UFVPanel
+
+
+# Download helpers split so the slow network part can run off the UI thread (no cmd.* there).
+def _download_only(struct):
+    data = _get_text(struct["url"])
+    if not data:
+        return None
+    ext = "cif" if struct.get("fmt") == "mmcif" else "pdb"
+    name = re.sub(r"[^A-Za-z0-9_]", "_", struct["key"])
+    path = os.path.join(tempfile.gettempdir(), "ufv_%s.%s" % (name, ext))
+    with open(path, "w") as fh:
+        fh.write(data)
+    return path
+
+
+def _load_from_path(struct, path, uid):
+    name = re.sub(r"[^A-Za-z0-9_]", "_", struct["key"])
+    cmd.load(path, name)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    cmd.hide("everything", name)
+    cmd.show("cartoon", name)
+    cmd.color("gray80", name)
+    if struct.get("numbering") == "sifts" and struct.get("pdbId"):
+        _set_sifts_map(name, struct["pdbId"], uid)
+    else:
+        _set_identity_map(name)
+    _GEOM_CACHE.pop(name, None)
+    _STATE["obj"] = name
+    cmd.orient(name)
+    return name
 
 
 def __init_plugin__(app=None):
@@ -1315,8 +2021,8 @@ if _HAS_PYMOL:
     cmd.extend("ufv_gui", ufv_gui)
     print("[UFV] 3D Feature Viewer for UniProt loaded. Open the panel with: ufv_gui  |  commands: "
           "ufv_fetch, ufv_structures, ufv_use, ufv_load, ufv_map, ufv_chain, ufv_ptms, ufv_variants, "
-          "ufv_sites, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt, "
-          "ufv_bfactor, ufv_hide, ufv_clear, ufv_info")
+          "ufv_sites, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt, ufv_bfactor, "
+          "ufv_hotspots, ufv_contacthubs, ufv_report, ufv_focus, ufv_resetview, ufv_hide, ufv_clear, ufv_info")
 
 
 # ----------------------------------------------------------------------------------------------

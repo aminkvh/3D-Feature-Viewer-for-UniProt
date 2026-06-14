@@ -43,21 +43,36 @@ ufv_ptms traj
 ufv_variants traj                          # defaults to pathogenic only (avoids flooding)
 ufv_variants traj, P35498, "pathogenic deleterious"   # combine consequences, or "all"
 ufv_sites traj
-ufv_domains traj ; ufv_topology traj ; ufv_alphamissense traj   # one cartoon colouring at a time
+# cartoon colouring (one at a time): structure + analysis modes
+ufv_domains traj ; ufv_topology traj ; ufv_alphamissense traj
+ufv_plddt traj ; ufv_bfactor traj ; ufv_burden traj
+ufv_hotspots traj ; ufv_contacthubs traj
 ufv_hide traj, variants                    # toggle a single layer off
 ufv_clear traj                             # remove everything
+
+# residue report + zoom-in
+ufv_report 1378, traj                      # print nearby annotations + distances + AM, and zoom in
+ufv_focus traj, 1378 ; ufv_resetview traj
 ```
 
-The **Qt panel** (`ufv_gui`) is the easiest way in:
+The **Qt panel** (`ufv_gui`) is the easiest way in. Overlays are **selection-free** (nothing
+clutters PyMOL's object panel) and sphere layers colour the *representation*, so showing PTMs/
+variants never repaints the cartoon. Network work runs off the UI thread (the panel shows a status
+and stays responsive).
 
-1. Enter an accession → **Fetch** (reports PTM / variant / site / domain / burden counts).
-2. Pick a **structure** from the dropdown — AlphaFold, any experimental PDB chain (PDBe
-   best-coverage first), or a computed model — and **Load selected**. Numbering is set
-   automatically (AlphaFold/computed → identity, PDB → SIFTS). `ufv_structures` / `ufv_use
-   <key>` do the same from the command line.
-3. Tick the layers you want. Variants have per-consequence checkboxes and a **UniProt
-   reviewed only** option (off = the full variant-viewer set). Cartoon colouring is a single
-   selector: **Domains, Topology, pLDDT, B-factor, AlphaMissense, Burden**.
+1. Enter an accession → **Fetch** (reports counts).
+2. Pick a **structure** — AlphaFold, any experimental PDB chain (best-coverage first), or a
+   computed model — and **Load selected**. Numbering is automatic (AlphaFold/computed → identity,
+   PDB → SIFTS). `ufv_structures` / `ufv_use <key>` do the same from the command line.
+3. **Layers**: PTMs / sites checkboxes; variants with per-consequence checkboxes + **UniProt
+   reviewed only** (off = the full variant-viewer set).
+4. **Cartoon colouring** (single selector): Domains, Topology, pLDDT, B-factor, AlphaMissense,
+   Burden, **Hotspots**, **Contact hubs** (the last two are computed on the loaded coordinates,
+   off the UI thread).
+5. **Report**: pick an annotation type, browse the list, and click a row — the view **zooms in**
+   (residue + 5 Å neighbours as sticks) and the detail box shows PTMs, variants (ClinVar / dbSNP /
+   AlphaMissense), domains/sites, and **nearby residues with Cα–Cα distances**. Tick **Pick in 3D**
+   to populate the same report by clicking an atom in the viewport. **Reset view** zooms back out.
 
 For a structure/trajectory you loaded yourself, expand **Advanced numbering** to set identity /
 SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).
