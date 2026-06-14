@@ -48,10 +48,19 @@ ufv_hide traj, variants                    # toggle a single layer off
 ufv_clear traj                             # remove everything
 ```
 
-The **Qt panel** (`ufv_gui`) is the easiest way in: enter an accession → *Fetch* (it reports
-PTM/variant/site/domain counts), set numbering, then tick the layers you want. Variants have
-per-consequence checkboxes; cartoon colouring (domains/topology/AlphaMissense) is a single
-selector.
+The **Qt panel** (`ufv_gui`) is the easiest way in:
+
+1. Enter an accession → **Fetch** (reports PTM / variant / site / domain / burden counts).
+2. Pick a **structure** from the dropdown — AlphaFold, any experimental PDB chain (PDBe
+   best-coverage first), or a computed model — and **Load selected**. Numbering is set
+   automatically (AlphaFold/computed → identity, PDB → SIFTS). `ufv_structures` / `ufv_use
+   <key>` do the same from the command line.
+3. Tick the layers you want. Variants have per-consequence checkboxes and a **UniProt
+   reviewed only** option (off = the full variant-viewer set). Cartoon colouring is a single
+   selector: **Domains, Topology, pLDDT, B-factor, AlphaMissense, Burden**.
+
+For a structure/trajectory you loaded yourself, expand **Advanced numbering** to set identity /
+SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).
 
 ## VMD
 

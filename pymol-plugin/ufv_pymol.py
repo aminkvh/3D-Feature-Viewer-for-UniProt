@@ -73,6 +73,9 @@ PROTEOMICS_PTM_URL = "https://www.ebi.ac.uk/proteins/api/proteomics-ptm/{}"
 UNIPROT_URL = "https://rest.uniprot.org/uniprotkb/{}.json"
 AM_CSV_URL = "https://alphafold.ebi.ac.uk/files/AF-{}-F1-aa-substitutions.csv"
 PDBe_SIFTS = "https://www.ebi.ac.uk/pdbe/api/mappings/uniprot/{}"
+PDBe_BEST = "https://www.ebi.ac.uk/pdbe/api/mappings/best_structures/{}"
+PDBe_PDB = "https://www.ebi.ac.uk/pdbe/entry-files/download/pdb{}.ent"
+BEACONS_SUMMARY = "https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/{}.json"
 
 _USER_AGENT = "UFV-PyMOL-plugin/1.0 (https://github.com/aminkvh/3D-Feature-Viewer-for-UniProt)"
 
@@ -109,6 +112,7 @@ SITE_COLOR = "#fbc02d"
 DOMAIN_TYPES = ["Domain", "Region", "Repeat", "Compositional bias", "Zinc finger",
                 "Coiled coil", "Motif", "DNA binding"]
 PTM_TYPES = {"MOD_RES", "CROSSLNK", "LIPID", "CARBOHYD", "DISULFID"}
+STRUCTURE_LIST_CAP = 60  # max experimental PDB chains shown in the structure selector
 
 # ----------------------------------------------------------------------------------------------
 # Module state
@@ -282,6 +286,7 @@ def _extract_variants(variation, am_map):
             "consequence": cons,
             "consequenceColor": CONSEQUENCE_COLORS.get(cons, "#9e9e9e"),
             "provenance": _classify_provenance(f),
+            "reviewed": _classify_provenance(f) == "UniProt reviewed",
             "diseases": _disease_labels(f),
             "clinVar": ", ".join(s.get("type", "") for s in sigs if s.get("type")),
             "alphaMissense": am,
@@ -408,6 +413,32 @@ def _am_mean_by_position(am_map):
     return {pos: tot / n for pos, (tot, n) in acc.items() if n}
 
 
+def _compute_burden(variants):
+    """Mutation/phenotype burden (mirrors analysis.js): a residue is burden-positive when it has
+    >=2 variant records, >=2 distinct disease/phenotype labels, and a composite of the within-
+    protein ranks of (record count, distinct-disease count) in the top decile."""
+    from collections import defaultdict
+    rec = defaultdict(int)
+    dis = defaultdict(set)
+    for v in variants:
+        rec[v["position"]] += 1
+        for d in v.get("diseases", []):
+            dis[v["position"]].add(d)
+    positions = list(rec)
+    if not positions:
+        return set()
+
+    def rank_map(values):
+        order = sorted(set(values))
+        return {val: i for i, val in enumerate(order)}
+    cr = rank_map([rec[p] for p in positions])
+    dr = rank_map([len(dis[p]) for p in positions])
+    comp = {p: (cr[rec[p]] + dr[len(dis[p])]) / 2.0 for p in positions}
+    cutoff = sorted(comp.values())[int(len(comp) * 0.9)] if comp else 0
+    return {p for p in positions
+            if rec[p] >= 2 and len(dis[p]) >= 2 and comp[p] >= cutoff}
+
+
 # ----------------------------------------------------------------------------------------------
 # Fetch orchestration
 # ----------------------------------------------------------------------------------------------
@@ -439,6 +470,7 @@ def fetch_annotations(uid, force=False):
         "domains": _extract_domains(uniprot),
         "amMean": _am_mean_by_position(am_map),
     }
+    ann["burden"] = _compute_burden(ann["variants"])
     _CACHE[uid] = ann
     _STATE["uid"] = uid
     print("[UFV] %s: %d PTMs, %d variants, %d sites, %d domains, %d topology segments, AM=%s"
@@ -493,6 +525,63 @@ def _sifts_segments(pdb_id, uid):
             "pdb_start": pdb_start, "pdb_end": pdb_end,
         })
     return segs
+
+
+def list_structures(uid, seqlen=0):
+    """Available structures for an accession (for the structure selector): the canonical AlphaFold
+    model, experimental PDB chains (PDBe best_structures, numbered via SIFTS on load), and computed
+    models (3D-Beacons). Each item carries how to number it. Mirrors api.js getStructures (the
+    common cases)."""
+    uid = uid.upper()
+    out = []
+    af = _alphafold_url(uid)
+    if af:
+        out.append({"key": "AF-%s" % uid, "label": "AlphaFold — predicted, full length",
+                    "source": "AlphaFold", "url": af, "fmt": "pdb",
+                    "pdbId": None, "chainId": None, "numbering": "identity", "cov": 100.0})
+    best = _get_json(PDBe_BEST.format(uid)) or {}
+    items = best.get(uid) or best.get(uid.upper()) or []
+    seen = set()
+    exp = []
+    for it in items:
+        pid = (it.get("pdb_id") or "").upper()
+        ch = it.get("chain_id") or "A"
+        if not pid or (pid, ch) in seen:
+            continue
+        seen.add((pid, ch))
+        cov = it.get("coverage")
+        covpct = round(cov * 100, 1) if cov is not None else None
+        exp.append({"key": "%s_%s" % (pid, ch),
+                    "label": "%s chain %s%s — %s" % (pid, ch, " (%.0f%%)" % covpct if covpct else "",
+                                                     it.get("experimental_method", "experimental")),
+                    "source": "PDB", "url": PDBe_PDB.format(pid.lower()), "fmt": "pdb",
+                    "pdbId": pid, "chainId": ch, "numbering": "sifts", "cov": covpct,
+                    "_res": it.get("resolution") or 99.0})
+    # Proteins like insulin map to hundreds of PDB chains; sort best-coverage/-resolution first
+    # and cap the list so the selector stays usable.
+    exp.sort(key=lambda s: (-(s["cov"] or 0), s["_res"]))
+    out.extend(exp[:STRUCTURE_LIST_CAP])
+    summ = _get_json(BEACONS_SUMMARY.format(uid)) or {}
+    for e in (summ.get("structures") or []):
+        sm = e.get("summary") or e
+        murl = sm.get("model_url")
+        if not murl:
+            continue
+        if "EXPERIMENTAL" in str(sm.get("model_category", "")).upper():
+            continue
+        prov = sm.get("provider", "Computed")
+        if re.search("alphafold", prov, re.I) and \
+           str(sm.get("model_identifier", "")).upper() == "AF-%s-F1" % uid:
+            continue
+        fmt = str(sm.get("model_format", "")).upper()
+        if fmt not in ("PDB", "MMCIF"):
+            continue
+        cov = sm.get("coverage")
+        out.append({"key": "BCN-%s" % (sm.get("model_identifier") or murl),
+                    "label": "%s — computed model" % prov, "source": "Computed", "url": murl,
+                    "fmt": "pdb" if fmt == "PDB" else "mmcif", "pdbId": None, "chainId": None,
+                    "numbering": "identity", "cov": round(cov * 100, 1) if cov is not None else None})
+    return out
 
 
 # ----------------------------------------------------------------------------------------------
@@ -686,9 +775,11 @@ def ufv_ptms(obj=None, uid=None):
     print("[UFV] %s: %d PTM spheres." % (obj, n))
 
 
-def _variant_groups(ann, tokens):
+def _variant_groups(ann, tokens, reviewed_only=False):
     groups = {}
     for v in ann["variants"]:
+        if reviewed_only and not v.get("reviewed"):
+            continue
         if tokens and _cons_token(v["consequence"]) not in tokens:
             continue
         groups.setdefault(v["consequenceColor"], []).append(v["position"])
@@ -783,6 +874,88 @@ def ufv_alphamissense(obj=None, uid=None):
         if sel:
             cmd.color(_color_name(color), sel)
     print("[UFV] %s: coloured by AlphaMissense (%d scored positions)." % (obj, len(am)))
+
+
+def ufv_burden(obj=None, uid=None):
+    """ufv_burden [object [, uniprot_id]] — colour mutation/phenotype burden-positive residues."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    _set_cartoon_layer(obj, "burden")
+    sel = _sel_for_positions(obj, sorted(ann["burden"]))
+    if sel:
+        cmd.color(_color_name("#e65100"), sel)
+    print("[UFV] %s: %d burden-positive residues." % (obj, len(ann["burden"])))
+
+
+def ufv_plddt(obj=None, uid=None):
+    """ufv_plddt [object] — colour by AlphaFold pLDDT (the B-factor column of an AF model)."""
+    obj = _resolve_object(obj)
+    _set_cartoon_layer(obj, "plddt")
+    cmd.color(_color_name("#ff7d45"), "(%s) and b<50" % obj)
+    cmd.color(_color_name("#ffdb13"), "(%s) and b>=50 and b<70" % obj)
+    cmd.color(_color_name("#65cbf3"), "(%s) and b>=70 and b<90" % obj)
+    cmd.color(_color_name("#0053d6"), "(%s) and b>=90" % obj)
+    print("[UFV] %s: coloured by pLDDT." % obj)
+
+
+def ufv_bfactor(obj=None, uid=None):
+    """ufv_bfactor [object] — colour by B-factor (blue low → red high)."""
+    obj = _resolve_object(obj)
+    _set_cartoon_layer(obj, "bfactor")
+    cmd.spectrum("b", "blue_white_red", obj)
+    print("[UFV] %s: coloured by B-factor." % obj)
+
+
+def ufv_structures(uid=None):
+    """ufv_structures [uniprot_id] — list the structures available for an accession."""
+    uid = _resolve_uid(uid)
+    fetch_annotations(uid)
+    structs = list_structures(uid)
+    print("[UFV] %d structures for %s:" % (len(structs), uid))
+    for s in structs:
+        print("    %-22s %s" % (s["key"], s["label"]))
+    _STATE["structures"] = structs
+    return structs
+
+
+def ufv_use(key=None, uid=None):
+    """ufv_use key [, uniprot_id] — download and load a structure listed by ufv_structures,
+    setting its residue numbering automatically (AlphaFold/computed = identity, PDB = SIFTS)."""
+    uid = _resolve_uid(uid)
+    structs = _STATE.get("structures") or ufv_structures(uid)
+    match = next((s for s in structs if s["key"].lower() == str(key).lower()), None)
+    if not match:
+        print("[UFV] no structure '%s' — run ufv_structures to list them." % key)
+        return
+    return _load_structure(match, uid)
+
+
+def _load_structure(struct, uid, name=None):
+    name = name or re.sub(r"[^A-Za-z0-9_]", "_", struct["key"])
+    print("[UFV] downloading %s ..." % struct["url"])
+    data = _get_text(struct["url"])
+    if not data:
+        print("[UFV] download failed.")
+        return None
+    ext = "cif" if struct.get("fmt") == "mmcif" else "pdb"
+    tmp = os.path.join(tempfile.gettempdir(), "ufv_%s.%s" % (name, ext))
+    with open(tmp, "w") as fh:
+        fh.write(data)
+    cmd.load(tmp, name)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    cmd.hide("everything", name)
+    cmd.show("cartoon", name)
+    cmd.color("gray80", name)
+    if struct.get("numbering") == "sifts" and struct.get("pdbId"):
+        _set_sifts_map(name, struct["pdbId"], uid)
+    else:
+        _set_identity_map(name)
+    cmd.orient(name)
+    print("[UFV] loaded %s (%s). Numbering: %s." % (name, struct["label"], struct.get("numbering")))
+    return name
 
 
 def ufv_hide(obj=None, layer=None):
@@ -903,20 +1076,22 @@ if _HAS_PYMOL:
         ("ufv_load", ufv_load), ("ufv_fetch", ufv_fetch), ("ufv_map", ufv_map),
         ("ufv_chain", ufv_chain), ("ufv_ptms", ufv_ptms), ("ufv_variants", ufv_variants),
         ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
-        ("ufv_alphamissense", ufv_alphamissense), ("ufv_hide", ufv_hide),
-        ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
+        ("ufv_alphamissense", ufv_alphamissense), ("ufv_burden", ufv_burden),
+        ("ufv_plddt", ufv_plddt), ("ufv_bfactor", ufv_bfactor),
+        ("ufv_structures", ufv_structures), ("ufv_use", ufv_use),
+        ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
     ]:
         cmd.extend(_name, _fn)
 
 
 # ----------------------------------------------------------------------------------------------
-# Qt control panel (PyMOL is Qt-based; this replaces the old Tk dialog) + Plugin Manager hook
+# Qt control panel (PyMOL is Qt-based) + Plugin Manager hook
 # ----------------------------------------------------------------------------------------------
 _gui_ref = None  # keep a reference so the window isn't garbage-collected
 
 
 def ufv_gui():
-    """ufv_gui - open the Qt control panel: pick layers, filter variants, read annotation counts."""
+    """ufv_gui - open the Qt control panel: fetch, pick a structure, choose layers/colouring."""
     global _gui_ref
     try:
         from pymol.Qt import QtWidgets
@@ -927,17 +1102,21 @@ def ufv_gui():
 
     w = QtWidgets.QWidget()
     w.setWindowTitle("3D Feature Viewer for UniProt")
-    w.setMinimumWidth(370)
+    w.setMinimumWidth(380)
     lay = QtWidgets.QVBoxLayout(w)
 
+    # --- accession ---
     top = QtWidgets.QGridLayout(); lay.addLayout(top)
     top.addWidget(QtWidgets.QLabel("UniProt"), 0, 0)
     uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); top.addWidget(uid_edit, 0, 1)
     fetch_btn = QtWidgets.QPushButton("Fetch"); top.addWidget(fetch_btn, 0, 2)
-    load_btn = QtWidgets.QPushButton("Load AF"); top.addWidget(load_btn, 0, 3)
-    top.addWidget(QtWidgets.QLabel("Object"), 1, 0)
-    obj_combo = QtWidgets.QComboBox(); obj_combo.setEditable(True); top.addWidget(obj_combo, 1, 1, 1, 2)
-    refresh_btn = QtWidgets.QPushButton("R"); refresh_btn.setMaximumWidth(28); top.addWidget(refresh_btn, 1, 3)
+
+    # --- structure selector ---
+    sbox = QtWidgets.QGroupBox("Structure"); sl = QtWidgets.QGridLayout(sbox); lay.addWidget(sbox)
+    struct_combo = QtWidgets.QComboBox(); sl.addWidget(struct_combo, 0, 0, 1, 2)
+    load_sel_btn = QtWidgets.QPushButton("Load selected"); sl.addWidget(load_sel_btn, 1, 0)
+    sl.addWidget(QtWidgets.QLabel("Active object:"), 2, 0)
+    obj_combo = QtWidgets.QComboBox(); obj_combo.setEditable(True); sl.addWidget(obj_combo, 2, 1)
 
     def refresh_objs():
         cur = obj_combo.currentText()
@@ -954,107 +1133,86 @@ def ufv_gui():
         return uid_edit.text().strip().upper() or _STATE.get("uid")
 
     info = QtWidgets.QLabel("Enter an accession and press Fetch.")
-    info.setWordWrap(True)
-    info.setStyleSheet("font-size:11px;")
+    info.setWordWrap(True); info.setStyleSheet("font-size:11px;")
 
     def update_info():
         ann = _CACHE.get(cur_uid() or "")
         if not ann:
-            info.setText("Not fetched.")
-            return
+            info.setText("Not fetched."); return
         cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
+        reviewed = sum(1 for v in ann["variants"] if v.get("reviewed"))
         info.setText(
-            "%s - %d aa\nPTMs %d   Sites %d   Domains %d   Topology %d\n"
-            "Variants %d  (pathogenic %d, deleterious %d, benign %d, uncertain %d)\n"
+            "%s - %d aa\nPTMs %d   Sites %d   Domains %d   Topology %d   Burden %d\n"
+            "Variants %d  (reviewed %d; pathogenic %d, deleterious %d, benign %d, uncertain %d)\n"
             "AlphaMissense: %s"
             % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["sites"]),
-               len(ann["domains"]), len(ann["topology"]), len(ann["variants"]),
-               cons.get("pathogenic", 0), cons.get("deleterious", 0), cons.get("benign", 0),
-               cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
+               len(ann["domains"]), len(ann["topology"]), len(ann["burden"]), len(ann["variants"]),
+               reviewed, cons.get("pathogenic", 0), cons.get("deleterious", 0),
+               cons.get("benign", 0), cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
+
+    def populate_structures():
+        struct_combo.clear()
+        uid = cur_uid()
+        if not uid:
+            return
+        try:
+            structs = list_structures(uid)
+        except Exception as e:
+            print("[UFV] structure list failed: %s" % e); structs = []
+        _STATE["structures"] = structs
+        for s in structs:
+            struct_combo.addItem(s["label"], s)
+
+    def do_fetch():
+        uid = cur_uid()
+        if not uid:
+            info.setText("Enter an accession first."); return
+        fetch_annotations(uid)
+        update_info(); populate_structures(); refresh_objs()
+    fetch_btn.clicked.connect(do_fetch)
+
+    def do_load_selected():
+        s = struct_combo.currentData()
+        if not s:
+            info.setText("Press Fetch, then choose a structure."); return
+        name = _load_structure(s, cur_uid())
+        if name:
+            refresh_objs(); obj_combo.setEditText(name)
+    load_sel_btn.clicked.connect(do_load_selected)
 
     def need_uid():
         uid = cur_uid()
         if not uid:
-            info.setText("Enter an accession and press Fetch first.")
-            return False
-        fetch_annotations(uid)
-        update_info()
-        return True
+            info.setText("Enter an accession and Fetch first."); return False
+        fetch_annotations(uid); update_info(); return True
 
-    def do_fetch():
-        if need_uid():
-            refresh_objs()
-    fetch_btn.clicked.connect(do_fetch)
-    refresh_btn.clicked.connect(refresh_objs)
-
-    def do_load():
-        uid = uid_edit.text().strip().upper()
-        if not uid:
-            return
-        ufv_load(uid)
-        refresh_objs()
-        obj_combo.setEditText(uid)
-        update_info()
-    load_btn.clicked.connect(do_load)
-
-    numbox = QtWidgets.QGroupBox("Residue numbering"); nl = QtWidgets.QGridLayout(numbox); lay.addWidget(numbox)
-    rb_id = QtWidgets.QRadioButton("Identity (resi == UniProt)"); rb_id.setChecked(True)
-    rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
-    rb_man = QtWidgets.QRadioButton("Manual chain:")
-    pdb_edit = QtWidgets.QLineEdit(); pdb_edit.setMaximumWidth(70)
-    nl.addWidget(rb_id, 0, 0, 1, 4)
-    nl.addWidget(rb_si, 1, 0); nl.addWidget(pdb_edit, 1, 1)
-    nl.addWidget(rb_man, 2, 0)
-    ch_e = QtWidgets.QLineEdit("A"); ch_e.setMaximumWidth(34)
-    us_e = QtWidgets.QLineEdit(); us_e.setPlaceholderText("UniProt@"); us_e.setMaximumWidth(72)
-    rs_e = QtWidgets.QLineEdit(); rs_e.setPlaceholderText("resi@"); rs_e.setMaximumWidth(58)
-    re_e = QtWidgets.QLineEdit(); re_e.setPlaceholderText("end"); re_e.setMaximumWidth(52)
-    mh = QtWidgets.QHBoxLayout()
-    for x in (ch_e, us_e, rs_e, re_e):
-        mh.addWidget(x)
-    nl.addLayout(mh, 2, 1, 1, 3)
-    apply_btn = QtWidgets.QPushButton("Apply numbering"); nl.addWidget(apply_btn, 3, 0, 1, 4)
-
-    def apply_map():
-        obj, uid = cur_obj(), cur_uid()
-        if not obj or not uid:
-            info.setText("Set an accession and object first.")
-            return
-        if rb_si.isChecked():
-            ufv_map(obj, uid, "sifts", pdb_edit.text().strip())
-        elif rb_man.isChecked():
-            ufv_chain(obj, ch_e.text().strip(), us_e.text().strip(),
-                      rs_e.text().strip() or None, re_e.text().strip() or None)
-        else:
-            ufv_map(obj, uid, "identity")
-    apply_btn.clicked.connect(apply_map)
-
+    # --- point layers ---
     lbox = QtWidgets.QGroupBox("Annotation layers"); ll = QtWidgets.QGridLayout(lbox); lay.addWidget(lbox)
     cb_ptm = QtWidgets.QCheckBox("PTMs"); cb_site = QtWidgets.QCheckBox("Functional sites")
     ll.addWidget(cb_ptm, 0, 0); ll.addWidget(cb_site, 0, 1)
 
     def tog_ptm():
-        obj = cur_obj()
         if cb_ptm.isChecked():
             if not need_uid():
                 cb_ptm.setChecked(False); return
-            ufv_ptms(obj, cur_uid())
+            ufv_ptms(cur_obj(), cur_uid())
         else:
-            _hide_layer(obj, "ptm")
+            _hide_layer(cur_obj(), "ptm")
     cb_ptm.clicked.connect(tog_ptm)
 
     def tog_site():
-        obj = cur_obj()
         if cb_site.isChecked():
             if not need_uid():
                 cb_site.setChecked(False); return
-            ufv_sites(obj, cur_uid())
+            ufv_sites(cur_obj(), cur_uid())
         else:
-            _hide_layer(obj, "site")
+            _hide_layer(cur_obj(), "site")
     cb_site.clicked.connect(tog_site)
 
+    # --- variants ---
     vbox = QtWidgets.QGroupBox("Disease variants"); vl = QtWidgets.QGridLayout(vbox); lay.addWidget(vbox)
-    cb_var = QtWidgets.QCheckBox("Show variants"); vl.addWidget(cb_var, 0, 0, 1, 2)
+    cb_var = QtWidgets.QCheckBox("Show variants"); vl.addWidget(cb_var, 0, 0)
+    cb_reviewed = QtWidgets.QCheckBox("UniProt reviewed only"); vl.addWidget(cb_reviewed, 0, 1)
     cons_cb = {}
     for i, (tok, lbl) in enumerate([("pathogenic", "Pathogenic"), ("deleterious", "Pred. deleterious"),
                                     ("benign", "Benign"), ("uncertain", "Uncertain")]):
@@ -1064,29 +1222,68 @@ def ufv_gui():
     def refresh_vars():
         obj = cur_obj()
         if not cb_var.isChecked():
-            _hide_layer(obj, "var")
-            return
+            _hide_layer(obj, "var"); return
         if not need_uid():
             cb_var.setChecked(False); return
         toks = {t for t, c in cons_cb.items() if c.isChecked()}
         ann = fetch_annotations(cur_uid())
-        _show_point_groups(obj, _variant_groups(ann, toks or None), "var")
+        _show_point_groups(obj, _variant_groups(ann, toks or None, cb_reviewed.isChecked()), "var")
     cb_var.clicked.connect(refresh_vars)
+    cb_reviewed.clicked.connect(refresh_vars)
     for c in cons_cb.values():
         c.clicked.connect(refresh_vars)
 
+    # --- cartoon colouring (mutually exclusive) ---
     cbox = QtWidgets.QGroupBox("Cartoon colouring"); cl = QtWidgets.QHBoxLayout(cbox); lay.addWidget(cbox)
-    cart = QtWidgets.QComboBox(); cart.addItems(["None", "Domains", "Topology", "AlphaMissense"]); cl.addWidget(cart)
+    cart = QtWidgets.QComboBox()
+    cart.addItems(["None", "Domains", "Topology", "pLDDT", "B-factor", "AlphaMissense", "Burden"])
+    cl.addWidget(cart)
+    _CART_FN = {"Domains": ufv_domains, "Topology": ufv_topology, "AlphaMissense": ufv_alphamissense,
+                "Burden": ufv_burden, "pLDDT": ufv_plddt, "B-factor": ufv_bfactor}
+    _CART_NEEDS_UID = {"Domains", "Topology", "AlphaMissense", "Burden"}
 
     def apply_cart():
         obj = cur_obj(); choice = cart.currentText()
         if choice == "None":
-            _reset_cartoon(obj)
-            return
-        if not need_uid():
+            _reset_cartoon(obj); return
+        if choice in _CART_NEEDS_UID and not need_uid():
             cart.setCurrentIndex(0); return
-        {"Domains": ufv_domains, "Topology": ufv_topology, "AlphaMissense": ufv_alphamissense}[choice](obj, cur_uid())
+        _CART_FN[choice](obj, cur_uid())
     cart.currentIndexChanged.connect(lambda _i: apply_cart())
+
+    # --- advanced numbering (loaded structure / trajectory) ---
+    abox = QtWidgets.QGroupBox("Advanced: numbering for a structure/trajectory you loaded yourself")
+    abox.setCheckable(True); abox.setChecked(False)
+    al = QtWidgets.QGridLayout(abox); lay.addWidget(abox)
+    rb_id = QtWidgets.QRadioButton("Identity (resi == UniProt)"); rb_id.setChecked(True)
+    rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
+    rb_man = QtWidgets.QRadioButton("Manual chain:")
+    pdb_edit = QtWidgets.QLineEdit(); pdb_edit.setMaximumWidth(70)
+    al.addWidget(rb_id, 0, 0, 1, 4)
+    al.addWidget(rb_si, 1, 0); al.addWidget(pdb_edit, 1, 1)
+    al.addWidget(rb_man, 2, 0)
+    ch_e = QtWidgets.QLineEdit("A"); ch_e.setMaximumWidth(34)
+    us_e = QtWidgets.QLineEdit(); us_e.setPlaceholderText("UniProt@"); us_e.setMaximumWidth(72)
+    rs_e = QtWidgets.QLineEdit(); rs_e.setPlaceholderText("resi@"); rs_e.setMaximumWidth(58)
+    re_e = QtWidgets.QLineEdit(); re_e.setPlaceholderText("end"); re_e.setMaximumWidth(52)
+    mh = QtWidgets.QHBoxLayout()
+    for x in (ch_e, us_e, rs_e, re_e):
+        mh.addWidget(x)
+    al.addLayout(mh, 2, 1, 1, 3)
+    apply_btn = QtWidgets.QPushButton("Apply numbering to active object"); al.addWidget(apply_btn, 3, 0, 1, 4)
+
+    def apply_map():
+        obj, uid = cur_obj(), cur_uid()
+        if not obj or not uid:
+            info.setText("Set an accession and object first."); return
+        if rb_si.isChecked():
+            ufv_map(obj, uid, "sifts", pdb_edit.text().strip())
+        elif rb_man.isChecked():
+            ufv_chain(obj, ch_e.text().strip(), us_e.text().strip(),
+                      rs_e.text().strip() or None, re_e.text().strip() or None)
+        else:
+            ufv_map(obj, uid, "identity")
+    apply_btn.clicked.connect(apply_map)
 
     lay.addWidget(info)
     clr = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(clr)
@@ -1099,11 +1296,10 @@ def ufv_gui():
     clr.clicked.connect(do_clear)
 
     if cur_uid():
-        update_info()
+        update_info(); populate_structures()
     w.show()
     _gui_ref = w
     return w
-
 
 
 def __init_plugin__(app=None):
@@ -1118,8 +1314,9 @@ def __init_plugin__(app=None):
 if _HAS_PYMOL:
     cmd.extend("ufv_gui", ufv_gui)
     print("[UFV] 3D Feature Viewer for UniProt loaded. Open the panel with: ufv_gui  |  commands: "
-          "ufv_load, ufv_fetch, ufv_map, ufv_chain, ufv_ptms, ufv_variants, ufv_sites, ufv_domains, "
-          "ufv_topology, ufv_alphamissense, ufv_hide, ufv_clear, ufv_info")
+          "ufv_fetch, ufv_structures, ufv_use, ufv_load, ufv_map, ufv_chain, ufv_ptms, ufv_variants, "
+          "ufv_sites, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt, "
+          "ufv_bfactor, ufv_hide, ufv_clear, ufv_info")
 
 
 # ----------------------------------------------------------------------------------------------
