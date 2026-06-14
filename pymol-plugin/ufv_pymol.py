@@ -605,25 +605,73 @@ def _sel_for_positions(obj, positions, ca_only=False):
     return sel
 
 
+# Per-object, per-layer registry of the named selections a layer created, so each layer can be
+# toggled off independently without disturbing the others.
+_LAYER_SELS = {}      # obj -> { tag -> [selection names] }
+_CARTOON_LAYER = {}   # obj -> name of the active cartoon-colouring layer (domains/topology/am)
+
+# Point (sphere) layers are independent and can coexist; cartoon-colour layers are mutually
+# exclusive (only one cartoon colouring at a time), matching the extension's single colour mode.
+POINT_TAGS = {"ptms": "ptm", "variants": "var", "sites": "site"}
+CARTOON_TAGS = ("domains", "topology", "alphamissense")
+
+
+def _cons_token(cons):
+    c = (cons or "").lower()
+    if "pathogenic" in c:
+        return "pathogenic"
+    if "benign" in c:
+        return "benign"
+    if "deleterious" in c:
+        return "deleterious"
+    return "uncertain"
+
+
+def _hide_layer(obj, tag):
+    """Remove the named selections of one point layer and hide their spheres."""
+    for name in _LAYER_SELS.get(obj, {}).pop(tag, []):
+        try:
+            cmd.hide("spheres", name)
+            cmd.delete(name)
+        except Exception:
+            pass
+
+
 def _show_point_groups(obj, groups, tag):
-    """groups: dict color_hex -> [positions]; draws coloured Ca spheres."""
+    """groups: dict color_hex -> [positions]; (re)draws this layer as coloured Ca spheres."""
+    _hide_layer(obj, tag)
     cmd.set("sphere_scale", 0.5, obj)
-    total = 0
+    names, total = [], 0
     for color, positions in groups.items():
         sel = _sel_for_positions(obj, positions, ca_only=True)
         if not sel:
             continue
-        name = "ufv_%s_%s" % (tag, color.lstrip("#"))
+        name = "ufv_%s_%s_%s" % (obj, tag, color.lstrip("#"))
         cmd.select(name, sel)
         cmd.show("spheres", name)
         cmd.color(_color_name(color), name)
         total += cmd.count_atoms(name)
+        names.append(name)
         cmd.deselect()
+    _LAYER_SELS.setdefault(obj, {})[tag] = names
     return total
 
 
+def _reset_cartoon(obj):
+    """Drop any cartoon-colour layer: recolour neutral grey and remove its single-residue spheres."""
+    cmd.color("gray80", obj)
+    _hide_layer(obj, "dom_pts")
+    _CARTOON_LAYER.pop(obj, None)
+
+
+def _set_cartoon_layer(obj, name):
+    _reset_cartoon(obj)
+    cmd.show("cartoon", obj)
+    _CARTOON_LAYER[obj] = name
+
+
 # ----------------------------------------------------------------------------------------------
-# Projection commands
+# Projection commands  (each is independently toggleable; pair with ufv_hide to remove)
 # ----------------------------------------------------------------------------------------------
 def ufv_ptms(obj=None, uid=None):
     """ufv_ptms [object [, uniprot_id]] — PTM Ca spheres coloured by category."""
@@ -635,31 +683,29 @@ def ufv_ptms(obj=None, uid=None):
         if p["endPosition"] != p["position"]:
             groups[p["color"]].append(p["endPosition"])
     n = _show_point_groups(obj, groups, "ptm")
-    print("[UFV] %s: drew %d PTM spheres." % (obj, n))
+    print("[UFV] %s: %d PTM spheres." % (obj, n))
 
 
-def ufv_variants(obj=None, uid=None, only=None):
-    """ufv_variants [object [, uniprot_id [, only]]]
-    Variant Ca spheres coloured by clinical consequence.
-    only: 'pathogenic' | 'benign' | 'uncertain' | 'deleterious' to filter (optional)."""
-    obj = _resolve_object(obj)
-    ann = fetch_annotations(_resolve_uid(uid))
-    flt = (only or "").lower()
+def _variant_groups(ann, tokens):
     groups = {}
     for v in ann["variants"]:
-        cons = v["consequence"].lower()
-        if flt:
-            if flt in ("pathogenic",) and "pathogenic" not in cons:
-                continue
-            if flt in ("benign",) and "benign" not in cons:
-                continue
-            if flt in ("uncertain",) and "uncertain" not in cons:
-                continue
-            if flt in ("deleterious",) and "deleterious" not in cons:
-                continue
+        if tokens and _cons_token(v["consequence"]) not in tokens:
+            continue
         groups.setdefault(v["consequenceColor"], []).append(v["position"])
-    n = _show_point_groups(obj, groups, "var")
-    print("[UFV] %s: drew %d variant spheres%s." % (obj, n, " (%s)" % only if only else ""))
+    return groups
+
+
+def ufv_variants(obj=None, uid=None, only="pathogenic"):
+    """ufv_variants [object [, uniprot_id [, only]]]
+    Variant Ca spheres coloured by clinical consequence. `only` filters by consequence and may
+    list several (space/comma separated): pathogenic | benign | uncertain | deleterious | all.
+    Defaults to pathogenic to avoid flooding the view; use 'all' for every variant."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    only = (only or "").lower()
+    tokens = None if only in ("", "all") else set(re.split(r"[ ,]+", only.strip()))
+    n = _show_point_groups(obj, _variant_groups(ann, tokens), "var")
+    print("[UFV] %s: %d variant spheres (%s)." % (obj, n, only or "all"))
 
 
 def ufv_sites(obj=None, uid=None):
@@ -672,29 +718,34 @@ def ufv_sites(obj=None, uid=None):
         if s["endPosition"] != s["position"]:
             positions.append(s["endPosition"])
     n = _show_point_groups(obj, {SITE_COLOR: positions}, "site")
-    print("[UFV] %s: drew %d functional-site spheres." % (obj, n))
+    print("[UFV] %s: %d functional-site spheres." % (obj, n))
 
 
 def ufv_domains(obj=None, uid=None):
     """ufv_domains [object [, uniprot_id]] — colour the cartoon by domain / region / repeat."""
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
-    cmd.show("cartoon", obj)
-    n = 0
+    _set_cartoon_layer(obj, "domains")
+    names, n = [], 0
     for i, d in enumerate(ann["domains"]):
         positions = list(range(d["position"], d["endPosition"] + 1))
-        sel = _sel_for_positions(obj, positions)
-        if not sel:
-            continue
-        name = "ufv_dom_%d" % i
-        cmd.select(name, sel)
         if d["isRange"]:
-            cmd.color(_color_name(d["color"]), name)
+            sel = _sel_for_positions(obj, positions)
+            if not sel:
+                continue
+            cmd.color(_color_name(d["color"]), sel)
         else:
-            cmd.show("spheres", name + " and name CA")
-            cmd.color(_color_name(d["color"]), name + " and name CA")
+            sel = _sel_for_positions(obj, positions, ca_only=True)
+            if not sel:
+                continue
+            name = "ufv_%s_dompt_%d" % (obj, i)
+            cmd.select(name, sel)
+            cmd.show("spheres", name)
+            cmd.color(_color_name(d["color"]), name)
+            names.append(name)
+            cmd.deselect()
         n += 1
-        cmd.deselect()
+    _LAYER_SELS.setdefault(obj, {})["dom_pts"] = names
     print("[UFV] %s: coloured %d domain/region features." % (obj, n))
 
 
@@ -702,17 +753,14 @@ def ufv_topology(obj=None, uid=None):
     """ufv_topology [object [, uniprot_id]] — colour the cartoon by membrane topology."""
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
-    cmd.show("cartoon", obj)
+    _set_cartoon_layer(obj, "topology")
     n = 0
-    for i, t in enumerate(ann["topology"]):
+    for t in ann["topology"]:
         sel = _sel_for_positions(obj, list(range(t["start"], t["end"] + 1)))
         if not sel:
             continue
-        name = "ufv_topo_%d" % i
-        cmd.select(name, sel)
-        cmd.color(_color_name(t["color"]), name)
+        cmd.color(_color_name(t["color"]), sel)
         n += 1
-        cmd.deselect()
     print("[UFV] %s: coloured %d topology segments." % (obj, n))
 
 
@@ -724,8 +772,8 @@ def ufv_alphamissense(obj=None, uid=None):
     if not am:
         print("[UFV] no AlphaMissense scores available for %s." % ann["uid"])
         return
-    cmd.show("cartoon", obj)
-    cmd.color(_color_name("#b9c2cf"), obj)  # neutral background
+    _set_cartoon_layer(obj, "alphamissense")
+    cmd.color(_color_name("#b9c2cf"), obj)
     buckets = {"#3d85c8": [], "#b9c2cf": [], "#e06666": [], "#b71c1c": []}
     for pos, avg in am.items():
         c = "#b71c1c" if avg >= 0.78 else "#e06666" if avg >= 0.564 else "#b9c2cf" if avg >= 0.34 else "#3d85c8"
@@ -737,12 +785,29 @@ def ufv_alphamissense(obj=None, uid=None):
     print("[UFV] %s: coloured by AlphaMissense (%d scored positions)." % (obj, len(am)))
 
 
+def ufv_hide(obj=None, layer=None):
+    """ufv_hide [object [, layer]] — hide one layer: ptms | variants | sites | domains |
+    topology | alphamissense | cartoon. With no layer, hides every UFV overlay (like ufv_clear)."""
+    obj = _resolve_object(obj)
+    layer = (layer or "").lower()
+    if not layer:
+        ufv_clear(obj)
+        return
+    if layer in CARTOON_TAGS or layer == "cartoon":
+        _reset_cartoon(obj)
+    else:
+        _hide_layer(obj, POINT_TAGS.get(layer, layer))
+    print("[UFV] %s: hid %s layer." % (obj, layer))
+
+
 def ufv_clear(obj=None):
-    """ufv_clear [object] — remove UFV selections / representations and reset colour."""
+    """ufv_clear [object] — remove all UFV overlays and reset colour."""
     obj = _resolve_object(obj)
     for name in list(cmd.get_names("selections")):
         if name.startswith("ufv_"):
             cmd.delete(name)
+    _LAYER_SELS.pop(obj, None)
+    _CARTOON_LAYER.pop(obj, None)
     if obj:
         cmd.hide("spheres", obj)
         cmd.color("gray80", obj)
@@ -788,9 +853,9 @@ def ufv_chain(obj, chain, uniprot_start, resi_start=None, resi_end=None):
 
 
 def ufv_load(uid, name=None):
-    """ufv_load uniprot_id [, name] — download the AlphaFold model, load it, and project
-    PTMs + variants + sites (identity numbering). The full annotation set is cached for the
-    other ufv_* layer commands."""
+    """ufv_load uniprot_id [, name] — download the AlphaFold model, load it as a plain grey
+    cartoon (identity numbering), and fetch the annotations. Nothing is projected automatically:
+    choose layers from ufv_gui or the ufv_* commands so the view stays legible."""
     uid = uid.strip().upper()
     name = name or uid
     url = _alphafold_url(uid)
@@ -815,12 +880,9 @@ def ufv_load(uid, name=None):
     cmd.color("gray80", name)
     _set_identity_map(name)
     fetch_annotations(uid)
-    ufv_ptms(name)
-    ufv_variants(name)
-    ufv_sites(name)
     cmd.orient(name)
-    print("[UFV] loaded and annotated %s. Try: ufv_domains %s | ufv_topology %s | ufv_alphamissense %s"
-          % (name, name, name, name))
+    print("[UFV] loaded %s. Open the panel (ufv_gui) or add layers: ufv_ptms / "
+          "ufv_variants / ufv_sites / ufv_domains / ufv_topology / ufv_alphamissense %s" % (name, name))
 
 
 def ufv_info(uid=None):
@@ -841,106 +903,207 @@ if _HAS_PYMOL:
         ("ufv_load", ufv_load), ("ufv_fetch", ufv_fetch), ("ufv_map", ufv_map),
         ("ufv_chain", ufv_chain), ("ufv_ptms", ufv_ptms), ("ufv_variants", ufv_variants),
         ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
-        ("ufv_alphamissense", ufv_alphamissense), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
+        ("ufv_alphamissense", ufv_alphamissense), ("ufv_hide", ufv_hide),
+        ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
     ]:
         cmd.extend(_name, _fn)
 
 
 # ----------------------------------------------------------------------------------------------
-# Optional Tk GUI + Plugin Manager hook
+# Qt control panel (PyMOL is Qt-based; this replaces the old Tk dialog) + Plugin Manager hook
 # ----------------------------------------------------------------------------------------------
+_gui_ref = None  # keep a reference so the window isn't garbage-collected
+
+
 def ufv_gui():
-    """ufv_gui — open the graphical control panel."""
+    """ufv_gui - open the Qt control panel: pick layers, filter variants, read annotation counts."""
+    global _gui_ref
     try:
-        import tkinter as tk
-        from tkinter import ttk, messagebox
+        from pymol.Qt import QtWidgets
     except Exception as e:
-        print("[UFV] Tk GUI unavailable (%s). Use the ufv_* commands instead." % e)
+        print("[UFV] Qt GUI unavailable (%s). Use the ufv_* commands instead." % e)
         return
+    from collections import Counter
 
-    win = tk.Toplevel()
-    win.title("3D Feature Viewer for UniProt")
-    win.geometry("420x520")
+    w = QtWidgets.QWidget()
+    w.setWindowTitle("3D Feature Viewer for UniProt")
+    w.setMinimumWidth(370)
+    lay = QtWidgets.QVBoxLayout(w)
 
-    frm = ttk.Frame(win, padding=10)
-    frm.pack(fill="both", expand=True)
-
-    ttk.Label(frm, text="UniProt accession").grid(row=0, column=0, sticky="w")
-    uid_var = tk.StringVar(value=_STATE.get("uid") or "")
-    ttk.Entry(frm, textvariable=uid_var, width=18).grid(row=0, column=1, sticky="w", pady=2)
-
-    def _obj():
-        objs = cmd.get_object_list()
-        return obj_var.get() or (objs[-1] if objs else None)
-
-    ttk.Label(frm, text="Target object").grid(row=1, column=0, sticky="w")
-    obj_var = tk.StringVar()
-    obj_box = ttk.Combobox(frm, textvariable=obj_var, width=16,
-                           values=cmd.get_object_list())
-    obj_box.grid(row=1, column=1, sticky="w", pady=2)
+    top = QtWidgets.QGridLayout(); lay.addLayout(top)
+    top.addWidget(QtWidgets.QLabel("UniProt"), 0, 0)
+    uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); top.addWidget(uid_edit, 0, 1)
+    fetch_btn = QtWidgets.QPushButton("Fetch"); top.addWidget(fetch_btn, 0, 2)
+    load_btn = QtWidgets.QPushButton("Load AF"); top.addWidget(load_btn, 0, 3)
+    top.addWidget(QtWidgets.QLabel("Object"), 1, 0)
+    obj_combo = QtWidgets.QComboBox(); obj_combo.setEditable(True); top.addWidget(obj_combo, 1, 1, 1, 2)
+    refresh_btn = QtWidgets.QPushButton("R"); refresh_btn.setMaximumWidth(28); top.addWidget(refresh_btn, 1, 3)
 
     def refresh_objs():
-        obj_box["values"] = cmd.get_object_list()
-    ttk.Button(frm, text="↻", width=3, command=refresh_objs).grid(row=1, column=2, sticky="w")
+        cur = obj_combo.currentText()
+        obj_combo.clear()
+        obj_combo.addItems(cmd.get_object_list() if _HAS_PYMOL else [])
+        if cur:
+            obj_combo.setEditText(cur)
+    refresh_objs()
 
-    # Numbering
-    ttk.Separator(frm).grid(row=2, column=0, columnspan=3, sticky="ew", pady=8)
-    ttk.Label(frm, text="Residue numbering", font=("", 10, "bold")).grid(row=3, column=0, columnspan=3, sticky="w")
-    mode_var = tk.StringVar(value="identity")
-    ttk.Radiobutton(frm, text="Identity (resi == UniProt)", variable=mode_var, value="identity").grid(row=4, column=0, columnspan=3, sticky="w")
-    sifts_row = ttk.Frame(frm); sifts_row.grid(row=5, column=0, columnspan=3, sticky="w")
-    ttk.Radiobutton(sifts_row, text="SIFTS by PDB id:", variable=mode_var, value="sifts").pack(side="left")
-    pdb_var = tk.StringVar()
-    ttk.Entry(sifts_row, textvariable=pdb_var, width=8).pack(side="left", padx=4)
+    def cur_obj():
+        return obj_combo.currentText() or _resolve_object(None)
 
-    man_row = ttk.Frame(frm); man_row.grid(row=6, column=0, columnspan=3, sticky="w")
-    ttk.Radiobutton(man_row, text="Manual chain:", variable=mode_var, value="manual").pack(side="left")
-    ch_var = tk.StringVar(value="A"); us_var = tk.StringVar(); rs_var = tk.StringVar(); re_var = tk.StringVar()
-    for lbl, v, w in [("chain", ch_var, 3), ("UniProt@", us_var, 6), ("resi@", rs_var, 5), ("end", re_var, 5)]:
-        ttk.Label(man_row, text=lbl).pack(side="left")
-        ttk.Entry(man_row, textvariable=v, width=w).pack(side="left", padx=1)
+    def cur_uid():
+        return uid_edit.text().strip().upper() or _STATE.get("uid")
+
+    info = QtWidgets.QLabel("Enter an accession and press Fetch.")
+    info.setWordWrap(True)
+    info.setStyleSheet("font-size:11px;")
+
+    def update_info():
+        ann = _CACHE.get(cur_uid() or "")
+        if not ann:
+            info.setText("Not fetched.")
+            return
+        cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
+        info.setText(
+            "%s - %d aa\nPTMs %d   Sites %d   Domains %d   Topology %d\n"
+            "Variants %d  (pathogenic %d, deleterious %d, benign %d, uncertain %d)\n"
+            "AlphaMissense: %s"
+            % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["sites"]),
+               len(ann["domains"]), len(ann["topology"]), len(ann["variants"]),
+               cons.get("pathogenic", 0), cons.get("deleterious", 0), cons.get("benign", 0),
+               cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
+
+    def need_uid():
+        uid = cur_uid()
+        if not uid:
+            info.setText("Enter an accession and press Fetch first.")
+            return False
+        fetch_annotations(uid)
+        update_info()
+        return True
+
+    def do_fetch():
+        if need_uid():
+            refresh_objs()
+    fetch_btn.clicked.connect(do_fetch)
+    refresh_btn.clicked.connect(refresh_objs)
+
+    def do_load():
+        uid = uid_edit.text().strip().upper()
+        if not uid:
+            return
+        ufv_load(uid)
+        refresh_objs()
+        obj_combo.setEditText(uid)
+        update_info()
+    load_btn.clicked.connect(do_load)
+
+    numbox = QtWidgets.QGroupBox("Residue numbering"); nl = QtWidgets.QGridLayout(numbox); lay.addWidget(numbox)
+    rb_id = QtWidgets.QRadioButton("Identity (resi == UniProt)"); rb_id.setChecked(True)
+    rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
+    rb_man = QtWidgets.QRadioButton("Manual chain:")
+    pdb_edit = QtWidgets.QLineEdit(); pdb_edit.setMaximumWidth(70)
+    nl.addWidget(rb_id, 0, 0, 1, 4)
+    nl.addWidget(rb_si, 1, 0); nl.addWidget(pdb_edit, 1, 1)
+    nl.addWidget(rb_man, 2, 0)
+    ch_e = QtWidgets.QLineEdit("A"); ch_e.setMaximumWidth(34)
+    us_e = QtWidgets.QLineEdit(); us_e.setPlaceholderText("UniProt@"); us_e.setMaximumWidth(72)
+    rs_e = QtWidgets.QLineEdit(); rs_e.setPlaceholderText("resi@"); rs_e.setMaximumWidth(58)
+    re_e = QtWidgets.QLineEdit(); re_e.setPlaceholderText("end"); re_e.setMaximumWidth(52)
+    mh = QtWidgets.QHBoxLayout()
+    for x in (ch_e, us_e, rs_e, re_e):
+        mh.addWidget(x)
+    nl.addLayout(mh, 2, 1, 1, 3)
+    apply_btn = QtWidgets.QPushButton("Apply numbering"); nl.addWidget(apply_btn, 3, 0, 1, 4)
 
     def apply_map():
-        obj = _obj()
-        uid = uid_var.get().strip()
+        obj, uid = cur_obj(), cur_uid()
         if not obj or not uid:
-            messagebox.showwarning("UFV", "Set a UniProt accession and a target object.")
+            info.setText("Set an accession and object first.")
             return
-        m = mode_var.get()
-        if m == "sifts":
-            ufv_map(obj, uid, "sifts", pdb_var.get().strip())
-        elif m == "manual":
-            ufv_chain(obj, ch_var.get().strip(), us_var.get().strip(),
-                      rs_var.get().strip() or None, re_var.get().strip() or None)
+        if rb_si.isChecked():
+            ufv_map(obj, uid, "sifts", pdb_edit.text().strip())
+        elif rb_man.isChecked():
+            ufv_chain(obj, ch_e.text().strip(), us_e.text().strip(),
+                      rs_e.text().strip() or None, re_e.text().strip() or None)
         else:
             ufv_map(obj, uid, "identity")
-    ttk.Button(frm, text="Apply numbering", command=apply_map).grid(row=7, column=0, columnspan=3, sticky="w", pady=4)
+    apply_btn.clicked.connect(apply_map)
 
-    # Layers
-    ttk.Separator(frm).grid(row=8, column=0, columnspan=3, sticky="ew", pady=8)
-    ttk.Label(frm, text="Annotation layers", font=("", 10, "bold")).grid(row=9, column=0, columnspan=3, sticky="w")
+    lbox = QtWidgets.QGroupBox("Annotation layers"); ll = QtWidgets.QGridLayout(lbox); lay.addWidget(lbox)
+    cb_ptm = QtWidgets.QCheckBox("PTMs"); cb_site = QtWidgets.QCheckBox("Functional sites")
+    ll.addWidget(cb_ptm, 0, 0); ll.addWidget(cb_site, 0, 1)
 
-    def run(fn):
-        obj = _obj(); uid = uid_var.get().strip()
-        if not uid:
-            messagebox.showwarning("UFV", "Enter a UniProt accession.")
+    def tog_ptm():
+        obj = cur_obj()
+        if cb_ptm.isChecked():
+            if not need_uid():
+                cb_ptm.setChecked(False); return
+            ufv_ptms(obj, cur_uid())
+        else:
+            _hide_layer(obj, "ptm")
+    cb_ptm.clicked.connect(tog_ptm)
+
+    def tog_site():
+        obj = cur_obj()
+        if cb_site.isChecked():
+            if not need_uid():
+                cb_site.setChecked(False); return
+            ufv_sites(obj, cur_uid())
+        else:
+            _hide_layer(obj, "site")
+    cb_site.clicked.connect(tog_site)
+
+    vbox = QtWidgets.QGroupBox("Disease variants"); vl = QtWidgets.QGridLayout(vbox); lay.addWidget(vbox)
+    cb_var = QtWidgets.QCheckBox("Show variants"); vl.addWidget(cb_var, 0, 0, 1, 2)
+    cons_cb = {}
+    for i, (tok, lbl) in enumerate([("pathogenic", "Pathogenic"), ("deleterious", "Pred. deleterious"),
+                                    ("benign", "Benign"), ("uncertain", "Uncertain")]):
+        c = QtWidgets.QCheckBox(lbl); c.setChecked(tok in ("pathogenic", "deleterious"))
+        vl.addWidget(c, 1 + i // 2, i % 2); cons_cb[tok] = c
+
+    def refresh_vars():
+        obj = cur_obj()
+        if not cb_var.isChecked():
+            _hide_layer(obj, "var")
             return
-        threading.Thread(target=lambda: fn(obj, uid), daemon=True).start()
+        if not need_uid():
+            cb_var.setChecked(False); return
+        toks = {t for t, c in cons_cb.items() if c.isChecked()}
+        ann = fetch_annotations(cur_uid())
+        _show_point_groups(obj, _variant_groups(ann, toks or None), "var")
+    cb_var.clicked.connect(refresh_vars)
+    for c in cons_cb.values():
+        c.clicked.connect(refresh_vars)
 
-    layer_btns = [
-        ("PTMs", ufv_ptms), ("Disease variants", ufv_variants), ("Functional sites", ufv_sites),
-        ("Domains / regions", ufv_domains), ("Membrane topology", ufv_topology),
-        ("AlphaMissense", ufv_alphamissense),
-    ]
-    for i, (label, fn) in enumerate(layer_btns):
-        ttk.Button(frm, text=label, width=20, command=lambda f=fn: run(f)).grid(
-            row=10 + i // 2, column=i % 2, sticky="w", pady=2, padx=2)
+    cbox = QtWidgets.QGroupBox("Cartoon colouring"); cl = QtWidgets.QHBoxLayout(cbox); lay.addWidget(cbox)
+    cart = QtWidgets.QComboBox(); cart.addItems(["None", "Domains", "Topology", "AlphaMissense"]); cl.addWidget(cart)
 
-    ttk.Separator(frm).grid(row=14, column=0, columnspan=3, sticky="ew", pady=8)
-    bottom = ttk.Frame(frm); bottom.grid(row=15, column=0, columnspan=3, sticky="w")
-    ttk.Button(bottom, text="Download AlphaFold + annotate",
-               command=lambda: threading.Thread(target=lambda: ufv_load(uid_var.get().strip()), daemon=True).start()).pack(side="left")
-    ttk.Button(bottom, text="Clear", command=lambda: ufv_clear(_obj())).pack(side="left", padx=6)
+    def apply_cart():
+        obj = cur_obj(); choice = cart.currentText()
+        if choice == "None":
+            _reset_cartoon(obj)
+            return
+        if not need_uid():
+            cart.setCurrentIndex(0); return
+        {"Domains": ufv_domains, "Topology": ufv_topology, "AlphaMissense": ufv_alphamissense}[choice](obj, cur_uid())
+    cart.currentIndexChanged.connect(lambda _i: apply_cart())
+
+    lay.addWidget(info)
+    clr = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(clr)
+
+    def do_clear():
+        ufv_clear(cur_obj())
+        for c in (cb_ptm, cb_site, cb_var):
+            c.setChecked(False)
+        cart.setCurrentIndex(0)
+    clr.clicked.connect(do_clear)
+
+    if cur_uid():
+        update_info()
+    w.show()
+    _gui_ref = w
+    return w
+
 
 
 def __init_plugin__(app=None):
@@ -954,9 +1117,9 @@ def __init_plugin__(app=None):
 
 if _HAS_PYMOL:
     cmd.extend("ufv_gui", ufv_gui)
-    print("[UFV] 3D Feature Viewer for UniProt loaded. Commands: ufv_load, ufv_fetch, ufv_map, "
-          "ufv_chain, ufv_ptms, ufv_variants, ufv_sites, ufv_domains, ufv_topology, "
-          "ufv_alphamissense, ufv_clear, ufv_info, ufv_gui")
+    print("[UFV] 3D Feature Viewer for UniProt loaded. Open the panel with: ufv_gui  |  commands: "
+          "ufv_load, ufv_fetch, ufv_map, ufv_chain, ufv_ptms, ufv_variants, ufv_sites, ufv_domains, "
+          "ufv_topology, ufv_alphamissense, ufv_hide, ufv_clear, ufv_info")
 
 
 # ----------------------------------------------------------------------------------------------

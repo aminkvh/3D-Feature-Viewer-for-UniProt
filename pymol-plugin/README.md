@@ -24,19 +24,34 @@ needs **python3 on PATH**. PyMOL uses its own bundled Python and needs nothing e
 `ufv_pymol.py`. Or `run /path/to/ufv_pymol.py`.
 
 ```
-ufv_load P35498                  # download AlphaFold model + annotate
-ufv_gui                          # graphical panel
+ufv_load P35498                  # download AlphaFold model + fetch (loads a plain grey cartoon)
+ufv_gui                          # Qt control panel — pick layers, filter variants, read counts
+```
 
+`ufv_load` no longer dumps every layer at once; you choose what to show, from the panel or
+commands, so the view stays legible. Each layer is independently toggleable:
+
+```
 # annotate something you loaded yourself:
 load mytraj.pdb, traj
 ufv_fetch P35498
 ufv_map traj, P35498, identity            # resi == UniProt position
 ufv_map traj, P35498, sifts, 7dtd         # map via PDBe/SIFTS for PDB 7DTD
 ufv_chain traj, A, 200, 5, 480            # chain A resi 5 == UniProt 200, valid 5..480
-ufv_ptms traj ; ufv_variants traj ; ufv_sites traj
-ufv_domains traj ; ufv_topology traj ; ufv_alphamissense traj
-ufv_clear traj
+
+ufv_ptms traj
+ufv_variants traj                          # defaults to pathogenic only (avoids flooding)
+ufv_variants traj, P35498, "pathogenic deleterious"   # combine consequences, or "all"
+ufv_sites traj
+ufv_domains traj ; ufv_topology traj ; ufv_alphamissense traj   # one cartoon colouring at a time
+ufv_hide traj, variants                    # toggle a single layer off
+ufv_clear traj                             # remove everything
 ```
+
+The **Qt panel** (`ufv_gui`) is the easiest way in: enter an accession → *Fetch* (it reports
+PTM/variant/site/domain counts), set numbering, then tick the layers you want. Variants have
+per-consequence checkboxes; cartoon colouring (domains/topology/AlphaMissense) is a single
+selector.
 
 ## VMD
 
@@ -74,9 +89,11 @@ A loaded object's residue numbers rarely equal UniProt positions. Choose one:
 
 ## Layers (both)
 
-`ptms` · `variants` (filter: pathogenic/benign/uncertain/deleterious) · `sites` ·
-`domains` · `topology` · `alphamissense`. Point features render as Cα spheres; ranges
-colour the cartoon. Colours and category logic mirror the browser extension exactly.
+`ptms` · `variants` (filter: pathogenic/benign/uncertain/deleterious, or several at once) ·
+`sites` · `domains` · `topology` · `alphamissense`. Point features render as Cα spheres
+(independent, stackable); the three cartoon colourings are mutually exclusive. Each layer is
+toggleable — `ufv_hide <obj>, <layer>` removes one without disturbing the others. Colours and
+category logic mirror the browser extension exactly.
 
 ## Notes / limitations
 
