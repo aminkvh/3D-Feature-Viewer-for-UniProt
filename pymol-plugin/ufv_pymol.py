@@ -42,6 +42,8 @@ All commands default to the active object when the object name is omitted.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -50,7 +52,15 @@ import tempfile
 import threading
 import urllib.request
 
-from pymol import cmd
+# This file is dual-purpose: a PyMOL plugin (when PyMOL is present) AND a standalone
+# command-line backend used by the VMD plugin (ufv_vmd.tcl) for fetching/mapping. The
+# pure data layer below has no PyMOL dependency.
+try:
+    from pymol import cmd
+    _HAS_PYMOL = True
+except Exception:  # running outside PyMOL (e.g. as the VMD backend CLI)
+    cmd = None
+    _HAS_PYMOL = False
 
 # ----------------------------------------------------------------------------------------------
 # Endpoints (mirror api.js)
@@ -826,13 +836,14 @@ def ufv_info(uid=None):
 # ----------------------------------------------------------------------------------------------
 # Register commands
 # ----------------------------------------------------------------------------------------------
-for _name, _fn in [
-    ("ufv_load", ufv_load), ("ufv_fetch", ufv_fetch), ("ufv_map", ufv_map),
-    ("ufv_chain", ufv_chain), ("ufv_ptms", ufv_ptms), ("ufv_variants", ufv_variants),
-    ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
-    ("ufv_alphamissense", ufv_alphamissense), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
-]:
-    cmd.extend(_name, _fn)
+if _HAS_PYMOL:
+    for _name, _fn in [
+        ("ufv_load", ufv_load), ("ufv_fetch", ufv_fetch), ("ufv_map", ufv_map),
+        ("ufv_chain", ufv_chain), ("ufv_ptms", ufv_ptms), ("ufv_variants", ufv_variants),
+        ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
+        ("ufv_alphamissense", ufv_alphamissense), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
+    ]:
+        cmd.extend(_name, _fn)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -932,9 +943,6 @@ def ufv_gui():
     ttk.Button(bottom, text="Clear", command=lambda: ufv_clear(_obj())).pack(side="left", padx=6)
 
 
-cmd.extend("ufv_gui", ufv_gui)
-
-
 def __init_plugin__(app=None):
     """PyMOL Plugin Manager entry point."""
     try:
@@ -944,6 +952,102 @@ def __init_plugin__(app=None):
         pass
 
 
-print("[UFV] 3D Feature Viewer for UniProt loaded. Commands: ufv_load, ufv_fetch, ufv_map, "
-      "ufv_chain, ufv_ptms, ufv_variants, ufv_sites, ufv_domains, ufv_topology, "
-      "ufv_alphamissense, ufv_clear, ufv_info, ufv_gui")
+if _HAS_PYMOL:
+    cmd.extend("ufv_gui", ufv_gui)
+    print("[UFV] 3D Feature Viewer for UniProt loaded. Commands: ufv_load, ufv_fetch, ufv_map, "
+          "ufv_chain, ufv_ptms, ufv_variants, ufv_sites, ufv_domains, ufv_topology, "
+          "ufv_alphamissense, ufv_clear, ufv_info, ufv_gui")
+
+
+# ----------------------------------------------------------------------------------------------
+# Command-line backend for the VMD plugin: emit annotations / SIFTS maps as Tcl, or download a
+# model.  All progress output is suppressed so stdout carries only the requested payload, which
+# the Tcl side captures with `exec`.
+# ----------------------------------------------------------------------------------------------
+def _quiet(fn, *a, **k):
+    with contextlib.redirect_stdout(io.StringIO()):
+        return fn(*a, **k)
+
+
+def _emit_tcl_annotations(uid):
+    ann = _quiet(fetch_annotations, uid)
+    out = ["set ::ufv::a_seqlen %d" % len(ann["sequence"])]
+
+    ptm_items = []
+    for p in ann["ptms"]:
+        ptm_items.append("{%d %s}" % (p["position"], p["color"]))
+        if p["endPosition"] != p["position"]:
+            ptm_items.append("{%d %s}" % (p["endPosition"], p["color"]))
+    out.append("set ::ufv::a_ptms { %s }" % " ".join(ptm_items))
+
+    def _cons_token(c):
+        c = c.lower()
+        if "pathogenic" in c:
+            return "pathogenic"
+        if "benign" in c:
+            return "benign"
+        if "deleterious" in c:
+            return "deleterious"
+        return "uncertain"
+    var_items = ["{%d %s %s}" % (v["position"], v["consequenceColor"], _cons_token(v["consequence"]))
+                 for v in ann["variants"]]
+    out.append("set ::ufv::a_variants { %s }" % " ".join(var_items))
+
+    site_items = []
+    for s in ann["sites"]:
+        site_items.append("{%d %s}" % (s["position"], s["color"]))
+        if s["endPosition"] != s["position"]:
+            site_items.append("{%d %s}" % (s["endPosition"], s["color"]))
+    out.append("set ::ufv::a_sites { %s }" % " ".join(site_items))
+
+    dom_items = ["{%d %d %s %d}" % (d["position"], d["endPosition"], d["color"], 1 if d["isRange"] else 0)
+                 for d in ann["domains"]]
+    out.append("set ::ufv::a_domains { %s }" % " ".join(dom_items))
+
+    topo_items = ["{%d %d %s}" % (t["start"], t["end"], t["color"]) for t in ann["topology"]]
+    out.append("set ::ufv::a_topology { %s }" % " ".join(topo_items))
+
+    am_items = ["{%d %.4f}" % (pos, avg) for pos, avg in sorted(ann["amMean"].items())]
+    out.append("set ::ufv::a_am { %s }" % " ".join(am_items))
+
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+def _emit_tcl_sifts(pdb_id, uid):
+    segs = _quiet(_sifts_segments, pdb_id, uid.upper())
+    out = ["set ::ufv::s_chains { %s }" % " ".join(segs.keys())]
+    for ch, segl in segs.items():
+        items = ["{%s %s %s %s}" % (s["u_start"], s["u_end"], s["pdb_start"], s["pdb_end"]) for s in segl]
+        out.append("set ::ufv::s_%s { %s }" % (ch, " ".join(items)))
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+def _download_model(uid):
+    url = _quiet(_alphafold_url, uid)
+    if not url:
+        sys.exit("no AlphaFold model for %s" % uid)
+    data = _quiet(_get_text, url)
+    if not data:
+        sys.exit("download failed for %s" % uid)
+    path = os.path.join(tempfile.gettempdir(), "ufv_%s.pdb" % uid.upper())
+    with open(path, "w") as fh:
+        fh.write(data)
+    sys.stdout.write(path + "\n")
+
+
+if __name__ == "__main__":
+    _args = sys.argv[1:]
+    if len(_args) >= 2 and _args[0] == "--emit-tcl":
+        _emit_tcl_annotations(_args[1])
+    elif len(_args) >= 3 and _args[0] == "--emit-sifts":
+        _emit_tcl_sifts(_args[1], _args[2])
+    elif len(_args) >= 2 and _args[0] == "--download":
+        _download_model(_args[1])
+    else:
+        sys.stderr.write(
+            "3D Feature Viewer for UniProt — backend for the VMD plugin\n"
+            "usage:\n"
+            "  python ufv_pymol.py --emit-tcl   <uniprot_id>\n"
+            "  python ufv_pymol.py --emit-sifts <pdb_id> <uniprot_id>\n"
+            "  python ufv_pymol.py --download   <uniprot_id>\n")
+        sys.exit(2)
