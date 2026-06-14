@@ -55,9 +55,10 @@ ufv_report 1378, traj                      # print nearby annotations + distance
 ufv_focus traj, 1378 ; ufv_resetview traj
 ```
 
-The **Qt panel** (`ufv_gui`) is the easiest way in. Overlays are **selection-free** (nothing
-clutters PyMOL's object panel) and sphere layers colour the *representation*, so showing PTMs/
-variants never repaints the cartoon. Network work runs off the UI thread (the panel shows a status
+The **Qt panel** (`ufv_gui`) is the easiest way in. Each sphere layer (PTMs / variants / sites)
+is drawn on its **own lightweight object** (`ufv_<obj>_<tag>` — a copy of just the annotated Cα
+atoms, no cartoon), so showing thousands of variant points never rebuilds or repaints the main
+structure's cartoon and stays fast. Network work runs off the UI thread (the panel shows a status
 and stays responsive).
 
 1. Enter an accession → **Fetch** (reports counts).

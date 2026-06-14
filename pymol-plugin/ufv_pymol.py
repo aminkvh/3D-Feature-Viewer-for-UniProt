@@ -1005,8 +1005,10 @@ def _collapse_resi(resis):
     return "+".join(out)
 
 
-def _sel_for_positions(obj, positions, ca_only=False):
-    """Build a compact PyMOL selection covering the given UniProt positions on the mapped object."""
+def _sel_for_positions(obj, positions, ca_only=False, target=None):
+    """Build a compact PyMOL selection covering the given UniProt positions. Numbering is resolved
+    with `obj`'s map; the selection is rooted at `target` (defaults to `obj`) so it can address a
+    copied sphere layer object that shares the same chain/resi numbering."""
     per_chain = {}
     for ch in _mapped_chains(obj):
         resis = []
@@ -1022,21 +1024,17 @@ def _sel_for_positions(obj, positions, ca_only=False):
     for ch, resis in per_chain.items():
         rsel = "resi " + _collapse_resi(resis)
         clauses.append("(chain {} and {})".format(ch, rsel) if ch else "({})".format(rsel))
-    sel = "({}) and ({})".format(obj, " or ".join(clauses))
+    sel = "({}) and ({})".format(target or obj, " or ".join(clauses))
     if ca_only:
         sel += " and name CA"
     return sel
 
 
-# Selection-free overlay model. Point (sphere) layers are kept as state only; redrawing hides the
-# previously-shown UFV spheres and re-shows the active layers. We colour the *representation*
-# (sphere_color), never the atom, so cartoon colouring (which follows atom colour) is untouched —
-# this is what fixes "showing variants recolours the ribbon". No named selections are created, so
-# the PyMOL object panel stays clean.
+# Each point (sphere) layer is drawn on its OWN object (a copy of just the annotated Cα atoms, no
+# cartoon) named ufv_<obj>_<tag>. This keeps the main structure's cartoon out of every sphere
+# rebuild — large variant sets no longer crawl — and keeps the object panel to a few clean names.
 _SPHERE_STATE = {}    # obj -> { tag -> {color_hex: [uniprot_positions]} }  (active sphere layers)
-_SPHERE_SHOWN = {}    # obj -> last inline selection of shown UFV spheres (so we can hide them)
 _CARTOON_LAYER = {}   # obj -> active cartoon-colouring mode (informational)
-_SPHERE_ORDER = ["site", "dom", "ptm", "var"]  # later tags win colour on a shared Ca atom
 POINT_TAGS = {"ptms": "ptm", "variants": "var", "sites": "site"}
 CARTOON_TAGS = ("domains", "topology", "alphamissense", "burden", "plddt", "bfactor")
 
@@ -1071,57 +1069,65 @@ def _batch():
             pass
 
 
-_SPHERE_TUNED = set()  # objects we've already set fast sphere settings on
+def _ufv_layer_obj(obj, tag):
+    return "ufv_%s_%s" % (re.sub(r"[^A-Za-z0-9]", "_", obj or "x"), tag)
 
 
-def _tune_spheres(obj):
-    if obj in _SPHERE_TUNED:
-        return
-    # GPU impostor spheres render thousands of points cheaply; avoids the slow CPU sphere geometry.
-    for k, v in (("sphere_mode", 9), ("sphere_quality", 1), ("sphere_scale", 0.5)):
+def _tune_sphere_obj(lobj):
+    # GPU impostor spheres render thousands of points cheaply.
+    for k, v in (("sphere_mode", 9), ("sphere_quality", 1), ("sphere_scale", 0.8)):
         try:
-            cmd.set(k, v, obj)
+            cmd.set(k, v, lobj)
         except Exception:
             pass
-    _SPHERE_TUNED.add(obj)
-
-
-def _redraw_spheres(obj):
-    """Hide the previously-shown UFV spheres, then re-show every active sphere layer (batched)."""
-    _tune_spheres(obj)
-    with _batch():
-        prev = _SPHERE_SHOWN.get(obj)
-        if prev:
-            try:
-                cmd.hide("spheres", prev)
-            except Exception:
-                pass
-        state = _SPHERE_STATE.get(obj, {})
-        shown = set()
-        for tag in _SPHERE_ORDER:
-            for color, positions in (state.get(tag) or {}).items():
-                sel = _sel_for_positions(obj, positions, ca_only=True)
-                if not sel:
-                    continue
-                cmd.show("spheres", sel)
-                cmd.set("sphere_color", _color_name(color), sel)
-                shown.update(positions)
-        _SPHERE_SHOWN[obj] = _sel_for_positions(obj, sorted(shown), ca_only=True) if shown else None
-        return len(shown)
 
 
 def _set_sphere_layer(obj, tag, groups):
-    """Turn a sphere layer on (groups = {color: [positions]}) or off (groups = None)."""
+    """Render a sphere layer on its OWN lightweight object — a copy of just the annotated Cα atoms,
+    with no cartoon. Showing / colouring / re-rendering thousands of points then never rebuilds the
+    main structure's cartoon, which is what made large variant sets crawl. groups = {color:
+    [positions]} to show, or None to remove the layer."""
+    lobj = _ufv_layer_obj(obj, tag)
+    try:
+        cmd.delete(lobj)
+    except Exception:
+        pass
     st = _SPHERE_STATE.setdefault(obj, {})
-    if groups:
-        st[tag] = groups
-    else:
+    if not groups:
         st.pop(tag, None)
-    return _redraw_spheres(obj)
+        return 0
+    allpos = sorted({p for positions in groups.values() for p in positions})
+    sel = _sel_for_positions(obj, allpos, ca_only=True)
+    if not sel:
+        st.pop(tag, None)
+        return 0
+    st[tag] = groups
+    with _batch():
+        cmd.create(lobj, sel)            # copy only the Cα atoms into a separate, cartoon-free object
+        cmd.hide("everything", lobj)
+        cmd.show("spheres", lobj)
+        _tune_sphere_obj(lobj)
+        for color, positions in groups.items():
+            csel = _sel_for_positions(obj, positions, ca_only=True, target=lobj)
+            if csel:
+                cmd.color(_color_name(color), csel)
+    return len(allpos)
 
 
 def _hide_layer(obj, tag):
     _set_sphere_layer(obj, tag, None)
+
+
+def _delete_layers(obj):
+    """Remove every sphere-layer object belonging to `obj`."""
+    prefix = _ufv_layer_obj(obj, "")
+    for name in list(cmd.get_object_list() or []):
+        if name.startswith(prefix):
+            try:
+                cmd.delete(name)
+            except Exception:
+                pass
+    _SPHERE_STATE.pop(obj, None)
 
 
 def _reset_cartoon(obj):
@@ -1512,12 +1518,10 @@ def ufv_hide(obj=None, layer=None):
 def ufv_clear(obj=None):
     """ufv_clear [object] — remove all UFV overlays and reset colour."""
     obj = _resolve_object(obj)
-    _SPHERE_STATE.pop(obj, None)
-    _SPHERE_SHOWN.pop(obj, None)
+    _delete_layers(obj)
     _CARTOON_LAYER.pop(obj, None)
     _FOCUS_SHOWN.pop(obj, None)
     if obj:
-        cmd.hide("spheres", obj)
         cmd.color("gray80", obj)
     print("[UFV] cleared UFV overlays on %s." % obj)
 
