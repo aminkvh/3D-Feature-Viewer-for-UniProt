@@ -65,15 +65,20 @@ and stays responsive).
 2. Pick a **structure** — AlphaFold, any experimental PDB chain (best-coverage first), or a
    computed model — and **Load selected**. Numbering is automatic (AlphaFold/computed → identity,
    PDB → SIFTS). `ufv_structures` / `ufv_use <key>` do the same from the command line.
-3. **Layers**: PTMs / sites checkboxes; variants with per-consequence checkboxes + **UniProt
-   reviewed only** (off = the full variant-viewer set).
+3. **Layers**: PTMs / Sites / **Ligands** checkboxes; Variants with per-consequence chips +
+   **reviewed** only (off = the full variant-viewer set).
 4. **Cartoon colouring** (single selector): Domains, Topology, pLDDT, B-factor, AlphaMissense,
-   Burden, **Hotspots**, **Contact hubs** (the last two are computed on the loaded coordinates,
-   off the UI thread).
-5. **Report**: pick an annotation type, browse the list, and click a row — the view **zooms in**
-   (residue + 5 Å neighbours as sticks) and the detail box shows PTMs, variants (ClinVar / dbSNP /
-   AlphaMissense), domains/sites, and **nearby residues with Cα–Cα distances**. Tick **Pick in 3D**
-   to populate the same report by clicking an atom in the viewport. **Reset view** zooms back out.
+   Burden, **Hotspots**, **Contact hubs**. Colours match the extension exactly; Hotspots/Contact
+   hubs are computed on the loaded coordinates off the UI thread (numpy-accelerated).
+5. **Report**: pick an annotation type and browse the **colour-coded list** (filter box included);
+   click a row and the view **zooms in** — the residue + its 5 Å neighbourhood show as sticks
+   coloured by annotation, the cartoon dims, and the colour-coded detail box shows PTMs, variants
+   (ClinVar / dbSNP / AlphaMissense / disease), sites/domains, **nearby residues with Cα–Cα
+   distances**, and **nearby ligands**. Tick **Pick 3D** to drive the report by clicking an atom in
+   the viewport. **Reset view** zooms back out.
+
+Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
+fast, and the whole panel is scrollable so it never outgrows the screen.
 
 For a structure/trajectory you loaded yourself, expand **Advanced numbering** to set identity /
 SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).

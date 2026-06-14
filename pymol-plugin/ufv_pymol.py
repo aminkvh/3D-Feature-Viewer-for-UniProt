@@ -1475,6 +1475,40 @@ def format_report(rep):
     return "\n".join(L)
 
 
+def format_report_html(rep):
+    """Colour-coded HTML version of the residue report for the GUI detail panel."""
+    if not rep:
+        return ""
+    dot = '<span style="color:%s">&#9679;</span> '
+    P = ["<b>%s &nbsp; position %d (%s)</b>" % (rep["uid"], rep["pos"], rep["aa"])]
+    for v in rep["variants"]:
+        extra = []
+        if v.get("clinVar"):
+            extra.append(v["clinVar"])
+        if v.get("alphaMissense") is not None:
+            extra.append("AM %.2f" % v["alphaMissense"])
+        if v.get("diseases"):
+            extra.append("; ".join(v["diseases"]))
+        P.append((dot % v.get("consequenceColor", "#9e9e9e")) +
+                 "%s%d%s — %s%s" % (v.get("wildType", ""), rep["pos"], v.get("mutant", ""),
+                                    v["consequence"], (" [" + " | ".join(extra) + "]") if extra else ""))
+    for p in rep["ptms"]:
+        P.append((dot % p.get("color", "#888")) + "PTM: " + p["description"])
+    for s in rep["sites"]:
+        P.append((dot % SITE_COLOR) + "Site: " + s["description"])
+    for d in rep["domains"]:
+        P.append((dot % d.get("color", "#888")) + "Domain: " + d["description"])
+    if rep["amMean"] is not None:
+        P.append("AlphaMissense mean: %.3f" % rep["amMean"])
+    if rep.get("amProfile"):
+        P.append("AM: " + ", ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
+    if rep.get("nearbyLigands"):
+        P.append("Ligands ≤5Å: " + ", ".join(rep["nearbyLigands"]))
+    if rep["nearby"]:
+        P.append("Nearby ≤12Å: " + ", ".join("%d&nbsp;(%.1f)" % (n["pos"], n["dist"]) for n in rep["nearby"][:14]))
+    return "<br>".join(P)
+
+
 def _annotation_color_map(ann):
     """uniprot pos -> annotation colour (variant > PTM > site), matching the extension's focus."""
     m = {}
@@ -1759,21 +1793,20 @@ def ufv_gui():
     """ufv_gui - open the Qt control panel (visualization driver + report generator)."""
     global _gui_ref
     try:
-        from pymol.Qt import QtWidgets, QtCore
+        from pymol.Qt import QtWidgets, QtCore, QtGui
     except Exception as e:
         print("[UFV] Qt GUI unavailable (%s). Use the ufv_* commands instead." % e)
         return
-    cls = _build_panel_class(QtWidgets, QtCore)
-    _gui_ref = cls(QtWidgets, QtCore)
+    cls = _build_panel_class(QtWidgets, QtCore, QtGui)
+    _gui_ref = cls()
     _gui_ref.show()
     return _gui_ref
 
 
-def _build_panel_class(QtWidgets, QtCore):
+def _build_panel_class(QtWidgets, QtCore, QtGui):
     from collections import Counter
 
     class _Worker(QtCore.QThread):
-        # Runs a pure-Python callable off the UI thread (no cmd.* calls inside!).
         done = QtCore.Signal(object)
 
         def __init__(self, fn):
@@ -1783,117 +1816,143 @@ def _build_panel_class(QtWidgets, QtCore):
         def run(self):
             try:
                 self.done.emit(self._fn())
-            except Exception as exc:  # surface errors instead of crashing the thread
+            except Exception as exc:
                 self.done.emit(exc)
 
     class _UFVPanel(QtWidgets.QWidget):
-        def __init__(self, _qtw, _qtc):
+        def __init__(self):
             super(_UFVPanel, self).__init__()
             self._workers = set()
             self._wizard = None
             self.setWindowTitle("3D Feature Viewer for UniProt")
-            self.setMinimumWidth(400)
-            lay = QtWidgets.QVBoxLayout(self)
+            self.resize(410, 720)
 
-            # accession + fetch
-            top = QtWidgets.QGridLayout(); lay.addLayout(top)
-            top.addWidget(QtWidgets.QLabel("UniProt"), 0, 0)
-            self.uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); top.addWidget(self.uid_edit, 0, 1)
-            self.fetch_btn = QtWidgets.QPushButton("Fetch"); top.addWidget(self.fetch_btn, 0, 2)
+            # Scrollable body so the window never grows past the screen.
+            outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
+            scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); outer.addWidget(scroll)
+            body = QtWidgets.QWidget(); scroll.setWidget(body)
+            lay = QtWidgets.QVBoxLayout(body); lay.setContentsMargins(8, 8, 8, 8); lay.setSpacing(6)
+
+            # accession + fetch (+ status)
+            row = QtWidgets.QHBoxLayout(); lay.addLayout(row)
+            row.addWidget(QtWidgets.QLabel("UniProt"))
+            self.uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); row.addWidget(self.uid_edit, 1)
+            self.fetch_btn = QtWidgets.QPushButton("Fetch"); row.addWidget(self.fetch_btn)
             self.fetch_btn.clicked.connect(self.on_fetch)
 
-            # structure
-            sbox = QtWidgets.QGroupBox("Structure"); sl = QtWidgets.QGridLayout(sbox); lay.addWidget(sbox)
-            self.struct_combo = QtWidgets.QComboBox(); sl.addWidget(self.struct_combo, 0, 0, 1, 2)
-            self.load_btn = QtWidgets.QPushButton("Load selected"); sl.addWidget(self.load_btn, 1, 0)
+            # structure selection + load + object, all on one line
+            srow = QtWidgets.QHBoxLayout(); lay.addLayout(srow)
+            srow.addWidget(QtWidgets.QLabel("Structure"))
+            self.struct_combo = QtWidgets.QComboBox(); self.struct_combo.setMinimumWidth(150)
+            srow.addWidget(self.struct_combo, 1)
+            self.load_btn = QtWidgets.QPushButton("Load"); srow.addWidget(self.load_btn)
             self.load_btn.clicked.connect(self.on_load_selected)
-            self.obj_label = QtWidgets.QLabel("Object: -"); sl.addWidget(self.obj_label, 1, 1)
+            self.obj_label = QtWidgets.QLabel("—"); self.obj_label.setStyleSheet("color:#555;")
+            srow.addWidget(self.obj_label)
 
-            # layers
-            lbox = QtWidgets.QGroupBox("Layers"); gl = QtWidgets.QGridLayout(lbox); lay.addWidget(lbox)
-            self.cb_ptm = QtWidgets.QCheckBox("PTMs"); self.cb_site = QtWidgets.QCheckBox("Functional sites")
-            gl.addWidget(self.cb_ptm, 0, 0); gl.addWidget(self.cb_site, 0, 1)
+            self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
+            lay.addWidget(self.status)
+
+            # layers (compact: one row of checkboxes)
+            lrow = QtWidgets.QHBoxLayout(); lay.addLayout(lrow)
+            self.cb_ptm = QtWidgets.QCheckBox("PTMs")
+            self.cb_site = QtWidgets.QCheckBox("Sites")
+            self.cb_lig = QtWidgets.QCheckBox("Ligands")
+            for cb in (self.cb_ptm, self.cb_site, self.cb_lig):
+                lrow.addWidget(cb)
+            lrow.addStretch(1)
             self.cb_ptm.clicked.connect(lambda: self.toggle_points("ptm", self.cb_ptm, ufv_ptms))
             self.cb_site.clicked.connect(lambda: self.toggle_points("site", self.cb_site, ufv_sites))
-            self.cb_var = QtWidgets.QCheckBox("Disease variants"); gl.addWidget(self.cb_var, 1, 0)
-            self.cb_reviewed = QtWidgets.QCheckBox("reviewed only"); gl.addWidget(self.cb_reviewed, 1, 1)
+            self.cb_lig.clicked.connect(self.toggle_ligands)
+
+            # variants: show + reviewed + consequence chips on two tight rows
+            vrow = QtWidgets.QHBoxLayout(); lay.addLayout(vrow)
+            self.cb_var = QtWidgets.QCheckBox("Variants"); vrow.addWidget(self.cb_var)
+            self.cb_reviewed = QtWidgets.QCheckBox("reviewed"); vrow.addWidget(self.cb_reviewed)
+            vrow.addStretch(1)
+            crow = QtWidgets.QHBoxLayout(); lay.addLayout(crow)
             self.cons_cb = {}
-            for i, (tok, lbl) in enumerate([("pathogenic", "Pathogenic"), ("deleterious", "Pred. deleterious"),
-                                            ("benign", "Benign"), ("uncertain", "Uncertain")]):
+            for tok, lbl, col in [("pathogenic", "Path", "#ef5350"), ("deleterious", "Delet", "#ffa726"),
+                                  ("benign", "Benign", "#66bb6a"), ("uncertain", "Uncert", "#9e9e9e")]:
                 c = QtWidgets.QCheckBox(lbl); c.setChecked(tok in ("pathogenic", "deleterious"))
-                gl.addWidget(c, 2 + i // 2, i % 2); self.cons_cb[tok] = c
+                c.setStyleSheet("color:%s;" % col); crow.addWidget(c); self.cons_cb[tok] = c
                 c.clicked.connect(self.refresh_variants)
+            crow.addStretch(1)
             self.cb_var.clicked.connect(self.refresh_variants)
             self.cb_reviewed.clicked.connect(self.refresh_variants)
 
             # cartoon colouring
-            cbox = QtWidgets.QGroupBox("Cartoon colouring"); cl = QtWidgets.QHBoxLayout(cbox); lay.addWidget(cbox)
+            ccrow = QtWidgets.QHBoxLayout(); lay.addLayout(ccrow)
+            ccrow.addWidget(QtWidgets.QLabel("Colour"))
             self.cart = QtWidgets.QComboBox()
             self.cart.addItems(["None", "Domains", "Topology", "pLDDT", "B-factor", "AlphaMissense",
                                 "Burden", "Hotspots", "Contact hubs"])
-            cl.addWidget(self.cart)
+            ccrow.addWidget(self.cart, 1)
             self.cart.currentIndexChanged.connect(lambda _i: self.apply_cartoon())
 
-            # annotation list + detail (the report generator)
-            rbox = QtWidgets.QGroupBox("Annotations / residue report"); rl = QtWidgets.QVBoxLayout(rbox); lay.addWidget(rbox)
-            row = QtWidgets.QHBoxLayout(); rl.addLayout(row)
+            # annotation list + residue report
+            trow = QtWidgets.QHBoxLayout(); lay.addLayout(trow)
             self.list_kind = QtWidgets.QComboBox(); self.list_kind.addItems(["PTMs", "Variants", "Sites", "Domains"])
             self.list_kind.currentIndexChanged.connect(lambda _i: self.refresh_table())
-            row.addWidget(QtWidgets.QLabel("List:")); row.addWidget(self.list_kind)
-            self.cb_pick = QtWidgets.QCheckBox("Pick in 3D"); row.addWidget(self.cb_pick)
+            trow.addWidget(self.list_kind)
+            self.filter_edit = QtWidgets.QLineEdit(); self.filter_edit.setPlaceholderText("filter…")
+            self.filter_edit.textChanged.connect(lambda _t: self.refresh_table())
+            trow.addWidget(self.filter_edit, 1)
+            self.cb_pick = QtWidgets.QCheckBox("Pick 3D"); trow.addWidget(self.cb_pick)
             self.cb_pick.clicked.connect(self.toggle_pick)
-            row.addStretch(1)
-            self.reset_btn = QtWidgets.QPushButton("Reset view"); row.addWidget(self.reset_btn)
-            self.reset_btn.clicked.connect(lambda: (ufv_resetview(self.obj())))
-            self.table = QtWidgets.QTableWidget(0, 3)
-            self.table.setHorizontalHeaderLabels(["Pos", "What", "Detail"])
+            self.reset_btn = QtWidgets.QPushButton("Reset view"); trow.addWidget(self.reset_btn)
+            self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
+
+            self.table = QtWidgets.QTableWidget(0, 2)
+            self.table.setHorizontalHeaderLabels(["Pos", "Annotation"])
             self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.verticalHeader().setVisible(False)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-            self.table.setMaximumHeight(150)
+            self.table.setMinimumHeight(170)
             self.table.cellClicked.connect(self.on_row)
-            rl.addWidget(self.table)
-            self.detail = QtWidgets.QPlainTextEdit(); self.detail.setReadOnly(True); self.detail.setMaximumHeight(150)
-            rl.addWidget(self.detail)
+            lay.addWidget(self.table, 1)
+
+            self.detail = QtWidgets.QTextEdit(); self.detail.setReadOnly(True); self.detail.setMinimumHeight(120)
+            lay.addWidget(self.detail)
 
             # advanced numbering (collapsible)
-            self.adv_btn = QtWidgets.QToolButton(); self.adv_btn.setText("Advanced numbering (loaded / trajectory)")
+            self.adv_btn = QtWidgets.QToolButton(); self.adv_btn.setText("Advanced numbering")
             self.adv_btn.setCheckable(True); self.adv_btn.setStyleSheet("QToolButton{border:none;}")
+            self.adv_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
             self.adv_btn.setArrowType(QtCore.Qt.RightArrow)
             lay.addWidget(self.adv_btn)
             self.adv = QtWidgets.QWidget(); al = QtWidgets.QGridLayout(self.adv); self.adv.setVisible(False)
             lay.addWidget(self.adv)
             self.rb_id = QtWidgets.QRadioButton("Identity"); self.rb_id.setChecked(True)
-            self.rb_si = QtWidgets.QRadioButton("SIFTS, PDB:")
-            self.rb_man = QtWidgets.QRadioButton("Manual chain:")
+            self.rb_si = QtWidgets.QRadioButton("SIFTS PDB:")
+            self.rb_man = QtWidgets.QRadioButton("Manual:")
             self.pdb_edit = QtWidgets.QLineEdit(); self.pdb_edit.setMaximumWidth(70)
             al.addWidget(self.rb_id, 0, 0, 1, 4)
             al.addWidget(self.rb_si, 1, 0); al.addWidget(self.pdb_edit, 1, 1)
             al.addWidget(self.rb_man, 2, 0)
-            self.ch_e = QtWidgets.QLineEdit("A"); self.ch_e.setMaximumWidth(34)
-            self.us_e = QtWidgets.QLineEdit(); self.us_e.setPlaceholderText("UniProt@"); self.us_e.setMaximumWidth(72)
-            self.rs_e = QtWidgets.QLineEdit(); self.rs_e.setPlaceholderText("resi@"); self.rs_e.setMaximumWidth(58)
-            self.re_e = QtWidgets.QLineEdit(); self.re_e.setPlaceholderText("end"); self.re_e.setMaximumWidth(52)
+            self.ch_e = QtWidgets.QLineEdit("A"); self.ch_e.setMaximumWidth(30)
+            self.us_e = QtWidgets.QLineEdit(); self.us_e.setPlaceholderText("UniProt@"); self.us_e.setMaximumWidth(66)
+            self.rs_e = QtWidgets.QLineEdit(); self.rs_e.setPlaceholderText("resi@"); self.rs_e.setMaximumWidth(52)
+            self.re_e = QtWidgets.QLineEdit(); self.re_e.setPlaceholderText("end"); self.re_e.setMaximumWidth(48)
             mh = QtWidgets.QHBoxLayout()
             for x in (self.ch_e, self.us_e, self.rs_e, self.re_e):
                 mh.addWidget(x)
             al.addLayout(mh, 2, 1, 1, 3)
-            apply_btn = QtWidgets.QPushButton("Apply numbering"); al.addWidget(apply_btn, 3, 0, 1, 4)
+            apply_btn = QtWidgets.QPushButton("Apply"); al.addWidget(apply_btn, 3, 0, 1, 4)
             apply_btn.clicked.connect(self.apply_map)
 
             def _toggle_adv():
-                vis = self.adv_btn.isChecked()
-                self.adv.setVisible(vis)
+                vis = self.adv_btn.isChecked(); self.adv.setVisible(vis)
                 self.adv_btn.setArrowType(QtCore.Qt.DownArrow if vis else QtCore.Qt.RightArrow)
             self.adv_btn.clicked.connect(_toggle_adv)
 
-            self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
-            lay.addWidget(self.status)
-            self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px;")
+            self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px; color:#555;")
             lay.addWidget(self.info)
             self.clear_btn = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(self.clear_btn)
             self.clear_btn.clicked.connect(self.on_clear)
 
+            self._QtGui = QtGui
             if self.cur_uid() and self.cur_uid() in _CACHE:
                 self.after_fetch()
 
@@ -1905,39 +1964,29 @@ def _build_panel_class(QtWidgets, QtCore):
             return _STATE.get("obj") or _resolve_object(None)
 
         def _async(self, work, apply, status):
-            self.status.setText(status)
-            self.setEnabled(False)
+            self.status.setText(status); self.setEnabled(False)
             wk = _Worker(work)
 
             def on_done(res):
-                self.setEnabled(True)
-                self.status.setText("")
-                self._workers.discard(wk)
+                self.setEnabled(True); self.status.setText(""); self._workers.discard(wk)
                 if isinstance(res, Exception):
-                    self.status.setText("Error: %s" % res)
-                    return
+                    self.status.setText("Error: %s" % res); return
                 if apply:
                     apply(res)
-            wk.done.connect(on_done)
-            self._workers.add(wk)
-            wk.start()
+            wk.done.connect(on_done); self._workers.add(wk); wk.start()
 
         def update_info(self):
             ann = _CACHE.get(self.cur_uid() or "")
             if not ann:
                 self.info.setText("Not fetched."); return
             cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
-            reviewed = sum(1 for v in ann["variants"] if v.get("reviewed"))
-            self.info.setText(
-                "%s - %d aa | PTMs %d  Sites %d  Domains %d  Topology %d  Burden %d\n"
-                "Variants %d (reviewed %d; path %d, delet %d, benign %d, uncertain %d)  AlphaMissense %s"
-                % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["sites"]),
-                   len(ann["domains"]), len(ann["topology"]), len(ann["burden"]), len(ann["variants"]),
-                   reviewed, cons.get("pathogenic", 0), cons.get("deleterious", 0),
-                   cons.get("benign", 0), cons.get("uncertain", 0), "yes" if ann["amMean"] else "no"))
+            self.info.setText("%s · %d aa · PTM %d · Var %d (path %d) · Site %d · Dom %d · AM %s"
+                              % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["variants"]),
+                                 cons.get("pathogenic", 0), len(ann["sites"]), len(ann["domains"]),
+                                 "y" if ann["amMean"] else "n"))
 
         def obj_label_refresh(self):
-            self.obj_label.setText("Object: %s" % (self.obj() or "-"))
+            self.obj_label.setText(self.obj() or "—")
 
         # ---- fetch / structures ----
         def on_fetch(self):
@@ -1948,44 +1997,42 @@ def _build_panel_class(QtWidgets, QtCore):
                         lambda res: self.after_fetch(res[1]), "Fetching %s ..." % uid)
 
         def after_fetch(self, structs=None):
-            if structs is None:
-                structs = _STATE.get("structures") or []
-            else:
-                _STATE["structures"] = structs
+            structs = structs if structs is not None else (_STATE.get("structures") or [])
+            _STATE["structures"] = structs
             self.struct_combo.clear()
             for s in structs:
                 self.struct_combo.addItem(s["label"], s)
-            self.update_info()
-            self.refresh_table()
-            self.obj_label_refresh()
+            self.update_info(); self.refresh_table(); self.obj_label_refresh()
 
         def on_load_selected(self):
             s = self.struct_combo.currentData()
             if not s:
-                self.status.setText("Press Fetch, then choose a structure."); return
+                self.status.setText("Fetch, then choose a structure."); return
             uid = self.cur_uid()
-            # Download AND fetch SIFTS off the UI thread (both are network) so load can't hang.
             self._async(lambda: _prepare_structure(s, uid),
-                        lambda prep: self._finish_load(s, prep, uid),
-                        "Downloading %s ..." % s["label"])
+                        lambda prep: self._finish_load(s, prep, uid), "Downloading %s ..." % s["label"])
 
         def _finish_load(self, struct, prep, uid):
             if not prep or not prep.get("path"):
                 self.status.setText("Download failed."); return
             _load_from_path(struct, prep["path"], uid, prep.get("segments"))
+            for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
+                cb.setChecked(False)
+            self.cart.setCurrentIndex(0)
             self.obj_label_refresh()
 
         # ---- layers ----
         def toggle_points(self, tag, cb, fn):
             o = self.obj()
             if not o or not _CACHE.get(self.cur_uid()):
-                cb.setChecked(False)
-                self.status.setText("Fetch an accession and load a structure first.")
-                return
-            if cb.isChecked():
-                fn(o, self.cur_uid())
-            else:
-                _hide_layer(o, tag)
+                cb.setChecked(False); self.status.setText("Fetch + load a structure first."); return
+            fn(o, self.cur_uid()) if cb.isChecked() else _hide_layer(o, tag)
+
+        def toggle_ligands(self):
+            o = self.obj()
+            if not o:
+                self.cb_lig.setChecked(False); return
+            ufv_ligands(o) if self.cb_lig.isChecked() else ufv_ligands_hide(o)
 
         def refresh_variants(self):
             o = self.obj()
@@ -1995,7 +2042,7 @@ def _build_panel_class(QtWidgets, QtCore):
                 _hide_layer(o, "var"); return
             ann = _CACHE.get(self.cur_uid())
             if not ann:
-                self.cb_var.setChecked(False); return
+                self.cb_var.setChecked(False); self.status.setText("Fetch first."); return
             toks = {t for t, c in self.cons_cb.items() if c.isChecked()}
             _set_sphere_layer(o, "var", _variant_groups(ann, toks or None, self.cb_reviewed.isChecked()))
 
@@ -2006,26 +2053,23 @@ def _build_panel_class(QtWidgets, QtCore):
             if choice == "None":
                 _reset_cartoon(o); return
             uid = self.cur_uid()
-            # pLDDT / B-factor read the structure only; the rest need cached annotations.
             if choice not in ("pLDDT", "B-factor") and not _CACHE.get(uid):
-                self.status.setText("Fetch an accession first.")
-                self.cart.setCurrentIndex(0); return
+                self.status.setText("Fetch first."); self.cart.setCurrentIndex(0); return
             cheap = {"Domains": ufv_domains, "Topology": ufv_topology, "pLDDT": ufv_plddt,
                      "B-factor": ufv_bfactor, "AlphaMissense": ufv_alphamissense, "Burden": ufv_burden}
             if choice in cheap:
                 cheap[choice](o, uid); return
             ann = _CACHE.get(uid) or {}
-            geom = _ca_geometry(o)  # main thread (reads structure)
+            geom = _ca_geometry(o)
             if choice == "Hotspots":
                 work = lambda: _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann.get("variants", [])))
                 colors = {"strong": "#b71c1c", "moderate": "#e64a19", "weak": "#ffa726"}
-            else:  # Contact hubs
+            else:
                 work = lambda: _per_chain_merge(geom, _betweenness_hubs)
                 colors = {"strong": "#6a1b9a", "moderate": "#ab47bc"}
 
             def apply(tiers):
-                _set_cartoon_layer(o, choice.lower())
-                _color_tiers(o, tiers, colors)
+                _set_cartoon_layer(o, choice.lower()); _color_tiers(o, tiers, colors)
                 self.status.setText("%s: %d residues." % (choice, len(tiers)))
             self._async(work, apply, "Computing %s ..." % choice)
 
@@ -2036,51 +2080,55 @@ def _build_panel_class(QtWidgets, QtCore):
             if not ann:
                 return
             kind = self.list_kind.currentText()
-            rows = []
+            flt = self.filter_edit.text().strip().lower()
+            rows = []  # (pos, text, color)
             if kind == "PTMs":
                 for p in ann["ptms"]:
-                    rows.append((p["position"], p["category"], p["description"]))
+                    rows.append((p["position"], "%s — %s" % (p["category"], p["description"]), p["color"]))
             elif kind == "Variants":
                 for v in ann["variants"]:
-                    rows.append((v["position"], "%s%d%s" % (v.get("wildType", ""), v["position"], v.get("mutant", "")),
-                                 v["consequence"] + (" | " + "; ".join(v["diseases"]) if v.get("diseases") else "")))
+                    rows.append((v["position"], "%s%d%s · %s%s" % (v.get("wildType", ""), v["position"],
+                                 v.get("mutant", ""), v["consequence"],
+                                 (" · " + "; ".join(v["diseases"])) if v.get("diseases") else ""),
+                                 v["consequenceColor"]))
             elif kind == "Sites":
                 for s in ann["sites"]:
-                    rows.append((s["position"], "site", s["description"]))
+                    rows.append((s["position"], s["description"], SITE_COLOR))
             else:
                 for d in ann["domains"]:
                     rng = "%d-%d" % (d["position"], d["endPosition"]) if d["isRange"] else str(d["position"])
-                    rows.append((d["position"], rng, d["description"]))
+                    rows.append((d["position"], "%s · %s" % (rng, d["description"]), d["color"]))
+            if flt:
+                rows = [r for r in rows if flt in r[1].lower() or flt in str(r[0])]
             self.table.setRowCount(len(rows))
-            for r, (pos, what, detail) in enumerate(rows):
-                self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(pos)))
-                self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(str(what)))
-                self.table.setItem(r, 2, QtWidgets.QTableWidgetItem(str(detail)))
+            QtGui = self._QtGui
+            for r, (pos, text, color) in enumerate(rows):
+                it0 = QtWidgets.QTableWidgetItem(str(pos))
+                it1 = QtWidgets.QTableWidgetItem(text)
+                brush = QtGui.QBrush(QtGui.QColor(color))
+                it0.setForeground(brush); it1.setForeground(brush)
+                self.table.setItem(r, 0, it0); self.table.setItem(r, 1, it1)
 
         def on_row(self, r, _c):
-            item = self.table.item(r, 0)
-            if not item:
+            it = self.table.item(r, 0)
+            if not it:
                 return
             try:
-                pos = int(item.text())
+                self.report_residue(int(it.text()))
             except ValueError:
-                return
-            self.report_residue(pos)
+                pass
 
         def report_residue(self, uni_pos):
-            o = self.obj(); uid = self.cur_uid()
+            o, uid = self.obj(), self.cur_uid()
             if not o or not uid:
                 return
             rep = residue_report(o, uid, uni_pos)
-            self.detail.setPlainText(format_report(rep))
+            self.detail.setHtml(format_report_html(rep))
             ufv_focus(o, uni_pos)
 
         # ---- 3D picking ----
         def toggle_pick(self):
-            if self.cb_pick.isChecked():
-                self._install_wizard()
-            else:
-                self._remove_wizard()
+            self._install_wizard() if self.cb_pick.isChecked() else self._remove_wizard()
 
         def _install_wizard(self):
             try:
@@ -2090,15 +2138,20 @@ def _build_panel_class(QtWidgets, QtCore):
             panel = self
 
             class _PickW(Wizard):
+                def _report(self, info):
+                    if info:
+                        ch, resi = info[0]
+                        uni = _resi_to_uni(panel.obj(), ch, resi)
+                        if uni is not None:
+                            panel.report_residue(uni)
+
                 def do_select(self, name):
                     info = []
                     try:
                         cmd.iterate(name, "info.append((chain, resi))", space={"info": info})
                     except Exception:
                         pass
-                    cmd.delete(name)
-                    self._report(info)
-                    return None
+                    cmd.delete(name); self._report(info); return None
 
                 def do_pick(self, bondFlag):
                     info = []
@@ -2106,38 +2159,24 @@ def _build_panel_class(QtWidgets, QtCore):
                         cmd.iterate("pk1", "info.append((chain, resi))", space={"info": info})
                     except Exception:
                         pass
-                    cmd.unpick()
-                    self._report(info)
-                    return None
-
-                def _report(self, info):
-                    if not info:
-                        return
-                    ch, resi = info[0]
-                    uni = _resi_to_uni(panel.obj(), ch, resi)
-                    if uni is not None:
-                        panel.report_residue(uni)
+                    cmd.unpick(); self._report(info); return None
 
                 def get_prompt(self):
                     return ["Click an atom to report its residue (UFV)."]
-            self._wizard = _PickW()
-            cmd.set_wizard(self._wizard)
+            self._wizard = _PickW(); cmd.set_wizard(self._wizard)
 
         def _remove_wizard(self):
             try:
                 cmd.unset_wizard()
             except Exception:
-                try:
-                    cmd.set_wizard()
-                except Exception:
-                    pass
+                pass
             self._wizard = None
 
         # ---- numbering / clear ----
         def apply_map(self):
             o, uid = self.obj(), self.cur_uid()
             if not o or not uid:
-                self.status.setText("Set accession and load/select an object first."); return
+                self.status.setText("Load/select an object first."); return
             if self.rb_si.isChecked():
                 ufv_map(o, uid, "sifts", self.pdb_edit.text().strip())
             elif self.rb_man.isChecked():
@@ -2149,10 +2188,9 @@ def _build_panel_class(QtWidgets, QtCore):
 
         def on_clear(self):
             ufv_clear(self.obj())
-            for c in (self.cb_ptm, self.cb_site, self.cb_var):
+            for c in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
                 c.setChecked(False)
-            self.cart.setCurrentIndex(0)
-            self.detail.setPlainText("")
+            self.cart.setCurrentIndex(0); self.detail.setHtml("")
 
         def closeEvent(self, ev):
             self._remove_wizard()
@@ -2161,8 +2199,6 @@ def _build_panel_class(QtWidgets, QtCore):
     return _UFVPanel
 
 
-# Network prep runs off the UI thread (no cmd.* here): download the coordinates AND, for a PDB,
-# fetch the SIFTS segments — so neither stalls the panel. _load_from_path then only does cmd ops.
 def _prepare_structure(struct, uid):
     data = _get_text(struct["url"])
     if not data:
@@ -2191,7 +2227,7 @@ def _load_from_path(struct, path, uid, segments=None):
     if segments:
         UFV_MAPS[name] = {"mode": "sifts", "segments": segments}
     elif struct.get("numbering") == "sifts" and struct.get("pdbId"):
-        _set_sifts_map(name, struct["pdbId"], uid)  # fallback (will fetch synchronously)
+        _set_sifts_map(name, struct["pdbId"], uid)
     else:
         _set_identity_map(name)
     _GEOM_CACHE.pop(name, None)
