@@ -465,6 +465,38 @@ def _d2(a, b):
     return dx * dx + dy * dy + dz * dz
 
 
+def _adjacency(coords, threshold):
+    """Neighbour-index lists for points within `threshold` Å. Vectorised with numpy (block-wise) so
+    the O(N²) distance scan that dominated the analyses runs in milliseconds instead of seconds;
+    falls back to a pure-Python loop if numpy is unavailable."""
+    n = len(coords)
+    th2 = threshold * threshold
+    adj = [[] for _ in range(n)]
+    try:
+        import numpy as np
+        pts = np.asarray(coords, dtype=np.float64)
+        block = 512
+        for i0 in range(0, n, block):
+            i1 = min(i0 + block, n)
+            d2 = ((pts[i0:i1, None, :] - pts[None, :, :]) ** 2).sum(-1)
+            for ii in range(i1 - i0):
+                i = i0 + ii
+                for j in np.nonzero(d2[ii] <= th2)[0].tolist():
+                    if j > i:
+                        adj[i].append(j)
+                        adj[j].append(i)
+        return adj
+    except Exception:
+        for i in range(n):
+            ax, ay, az = coords[i]
+            for j in range(i + 1, n):
+                bx, by, bz = coords[j]
+                if (ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2 <= th2:
+                    adj[i].append(j)
+                    adj[j].append(i)
+        return adj
+
+
 def _ca_by_uni(geom):
     m = {}
     for g in geom:
@@ -547,13 +579,7 @@ def _betweenness_hubs(geom, threshold=8.0):
     n = len(nodes)
     if n < 8 or n > HUB_MAX_CA:
         return {}
-    th2 = threshold * threshold
-    adj = [[] for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _d2(nodes[i], nodes[j]) <= th2:
-                adj[i].append(j)
-                adj[j].append(i)
+    adj = _adjacency([(g["x"], g["y"], g["z"]) for g in nodes], threshold)
     bc = [0.0] * n
     for s in range(n):
         stack, pred = [], [[] for _ in range(n)]
@@ -625,12 +651,8 @@ def _compute_hotspots(geom, variants, threshold=8.0):
         k = len(items)
         if k < HOTSPOT_MIN_PATH + 1:
             return {}
-        neigh = [[i] for i in range(k)]
-        for i in range(k):
-            for j in range(i + 1, k):
-                if _d2(items[i][2], items[j][2]) <= th2:
-                    neigh[i].append(j)
-                    neigh[j].append(i)
+        adj = _adjacency([(it[2]["x"], it[2]["y"], it[2]["z"]) for it in items], threshold)
+        neigh = [[i] + adj[i] for i in range(k)]  # include self, as in the JS
         labels = [it[1] for it in items]
         local = [sum(1 for j in neigh[i] if labels[j]) for i in range(k)]
         base = sum(1 for l in labels if l) / k
@@ -671,12 +693,7 @@ def _compute_hotspots(geom, variants, threshold=8.0):
     m = len(path_idx)
     if m < HOTSPOT_MIN_PATH:
         return {}
-    neigh = [[] for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _d2(universe[i], universe[j]) <= th2:
-                neigh[i].append(j)
-                neigh[j].append(i)
+    neigh = _adjacency([(u["x"], u["y"], u["z"]) for u in universe], threshold)
     is_path = [0] * n
     for i in path_idx:
         is_path[i] = 1
@@ -1196,6 +1213,41 @@ def ufv_sites(obj=None, uid=None):
     print("[UFV] %s: site layer on (%d sites)." % (obj, len(ann["sites"])))
 
 
+def _ligand_sel(obj):
+    return "(%s) and not polymer and not solvent" % obj
+
+
+def ufv_ligands(obj=None, uid=None):
+    """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water) as sticks,
+    coloured by element, with ions as small spheres."""
+    obj = _resolve_object(obj)
+    sel = _ligand_sel(obj)
+    n = cmd.count_atoms(sel)
+    if not n:
+        print("[UFV] %s: no ligands/cofactors present." % obj)
+        return 0
+    with _batch():
+        cmd.show("sticks", sel)
+        ions = "(%s) and inorganic" % obj
+        if cmd.count_atoms(ions):
+            cmd.show("spheres", ions)
+            cmd.set("sphere_scale", 0.3, ions)
+        try:
+            cmd.color("atomic", "(%s) and (not elem C)" % sel)  # CPK colour non-carbon, keep carbon
+        except Exception:
+            pass
+    print("[UFV] %s: ligands shown (%d atoms)." % (obj, n))
+    return n
+
+
+def ufv_ligands_hide(obj=None):
+    """ufv_ligands_hide [object] — hide ligand/cofactor sticks and ion spheres."""
+    obj = _resolve_object(obj)
+    with _batch():
+        cmd.hide("sticks", _ligand_sel(obj))
+        cmd.hide("spheres", "(%s) and inorganic" % obj)
+
+
 def ufv_domains(obj=None, uid=None):
     """ufv_domains [object [, uniprot_id]] — colour the cartoon by domain / region / repeat."""
     obj = _resolve_object(obj)
@@ -1268,21 +1320,27 @@ def ufv_burden(obj=None, uid=None):
 
 
 def ufv_plddt(obj=None, uid=None):
-    """ufv_plddt [object] — colour by AlphaFold pLDDT (the B-factor column of an AF model)."""
+    """ufv_plddt [object] — colour by AlphaFold pLDDT (the B-factor column), exact AFDB bins."""
     obj = _resolve_object(obj)
     _set_cartoon_layer(obj, "plddt")
-    cmd.color(_color_name("#ff7d45"), "(%s) and b<50" % obj)
-    cmd.color(_color_name("#ffdb13"), "(%s) and b>=50 and b<70" % obj)
-    cmd.color(_color_name("#65cbf3"), "(%s) and b>=70 and b<90" % obj)
-    cmd.color(_color_name("#0053d6"), "(%s) and b>=90" % obj)
+    with _batch():
+        # AlphaFold DB bins: >=90 dark blue, 70-90 light blue, 50-70 yellow, <50 orange.
+        cmd.color(_color_name("#ff7d45"), "(%s) and b<50" % obj)
+        cmd.color(_color_name("#ffdb13"), "(%s) and (b>50 or b=50) and b<70" % obj)
+        cmd.color(_color_name("#65cbf3"), "(%s) and (b>70 or b=70) and b<90" % obj)
+        cmd.color(_color_name("#0053d6"), "(%s) and (b>90 or b=90)" % obj)
     print("[UFV] %s: coloured by pLDDT." % obj)
 
 
 def ufv_bfactor(obj=None, uid=None):
-    """ufv_bfactor [object] — colour by B-factor (blue low → red high)."""
+    """ufv_bfactor [object] — colour by B-factor with the extension's exact blue-white-red gradient
+    (#313695 -> #f7f7f7 -> #d73027), clamped 0-100."""
     obj = _resolve_object(obj)
     _set_cartoon_layer(obj, "bfactor")
-    cmd.spectrum("b", "blue_white_red", obj)
+    try:
+        cmd.spectrum("b", "0x313695 0xf7f7f7 0xd73027", obj, minimum=0, maximum=100)
+    except Exception:
+        cmd.spectrum("b", "blue_white_red", obj)
     print("[UFV] %s: coloured by B-factor." % obj)
 
 
@@ -1361,6 +1419,15 @@ def residue_report(obj, uid, uni_pos):
         if nuni in var_pos:
             tags.append(_cons_token(var_pos[nuni][0]["consequence"]))
         near.append({"pos": nuni, "dist": round(dist, 1), "tags": tags})
+    # ligands/cofactors within 5 Å of this residue (read from the structure)
+    ligs = []
+    rsel = _sel_for_positions(obj, [uni_pos])
+    if rsel:
+        try:
+            cmd.iterate("(%s) and not polymer and not solvent and ((%s) around 5)" % (obj, rsel),
+                        "ligs.append(resn)", space={"ligs": ligs})
+        except Exception:
+            pass
     return {
         "uid": ann["uid"], "pos": uni_pos, "aa": aa,
         "ptms": [p for p in ann["ptms"] if p["position"] <= uni_pos <= p["endPosition"]],
@@ -1370,6 +1437,7 @@ def residue_report(obj, uid, uni_pos):
         "amMean": ann["amMean"].get(uni_pos),
         "amProfile": _am_profile(ann["amMap"], uni_pos)[:6],
         "nearby": near,
+        "nearbyLigands": sorted(set(ligs)),
     }
 
 
@@ -1398,6 +1466,8 @@ def format_report(rep):
         L.append("  AlphaMissense (mean): %.3f" % rep["amMean"])
     if rep["amProfile"]:
         L.append("  AM top: " + ", ".join("%s%s %.2f" % (wt, mt, sc) for wt, mt, sc in rep["amProfile"]))
+    if rep.get("nearbyLigands"):
+        L.append("  Nearby ligands (≤5Å): " + ", ".join(rep["nearbyLigands"]))
     if rep["nearby"]:
         near = ", ".join("%d (%.1fÅ%s)" % (n["pos"], n["dist"], " " + "/".join(n["tags"]) if n["tags"] else "")
                          for n in rep["nearby"][:12])
@@ -1405,35 +1475,86 @@ def format_report(rep):
     return "\n".join(L)
 
 
+def _annotation_color_map(ann):
+    """uniprot pos -> annotation colour (variant > PTM > site), matching the extension's focus."""
+    m = {}
+    for s in ann.get("sites", []):
+        m[s["position"]] = s["color"]
+    for p in ann.get("ptms", []):
+        m[p["position"]] = p["color"]
+    for v in ann.get("variants", []):
+        m[v["position"]] = v["consequenceColor"]
+    return m
+
+
 def ufv_focus(obj=None, uni_pos=None):
-    """ufv_focus [object,] uniprot_pos — zoom to a residue and show its 5 Å neighbourhood as sticks."""
+    """ufv_focus [object,] uniprot_pos — zoom into a residue: show it and its 5 Å neighbourhood as
+    sticks coloured by annotation, dim the cartoon, and hide the sphere markers there (shown as
+    sticks instead) — mirroring the extension's residue focus."""
     obj = _resolve_object(obj)
+    ann = _CACHE.get(_resolve_uid(None)) or {}
     sel = _sel_for_positions(obj, [int(uni_pos)])
     if not sel:
         print("[UFV] position %s not modelled in %s." % (uni_pos, obj))
         return
-    prev = _FOCUS_SHOWN.get(obj)
-    if prev:
-        try:
-            cmd.hide("sticks", prev)
-        except Exception:
-            pass
-    show = "(%s) or (byres ((%s) around 5) and polymer)" % (sel, sel)
-    cmd.show("sticks", show)
-    _FOCUS_SHOWN[obj] = show
-    cmd.zoom(show, 3)
+    ufv_resetview(obj, _zoom=False)  # clear any previous focus first
+    nb = "byres ((%s) around 5) and polymer" % sel
+    focus_sel = "(%s) or (%s)" % (sel, nb)
+    cmap = _annotation_color_map(ann)
+    with _batch():
+        cmd.set("cartoon_transparency", 0.6, obj)
+        cmd.show("sticks", focus_sel)
+        cmd.set("stick_color", "grey70", focus_sel)  # default; annotated ones overridden below
+        # colour annotated neighbours by their annotation colour (per-rep, leaves cartoon alone)
+        nb_atoms = []
+        cmd.iterate(nb + " and name CA", "nb_atoms.append((chain, resi))", space={"nb_atoms": nb_atoms})
+        by_color, per_chain = {}, {}
+        for ch, resi in set(nb_atoms):
+            per_chain.setdefault(ch, []).append(resi)
+            c = cmap.get(_resi_to_uni(obj, ch, resi))
+            if c:
+                by_color.setdefault(c, {}).setdefault(ch, []).append(resi)
+        for c, chres in by_color.items():
+            clauses = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in chres.items())
+            cmd.set("stick_color", _color_name(c), "(%s) and (%s)" % (obj, clauses))
+        # hide the sphere markers at the focused residues (they are sticks now)
+        hidden = []
+        hide_clause = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in per_chain.items())
+        objlist = cmd.get_object_list() or []
+        for tag in ("ptm", "var", "site", "dom"):
+            lobj = _ufv_layer_obj(obj, tag)
+            if lobj in objlist and hide_clause:
+                try:
+                    cmd.hide("spheres", "(%s) and (%s)" % (lobj, hide_clause))
+                    hidden.append(lobj)
+                except Exception:
+                    pass
+    _FOCUS_SHOWN[obj] = {"sticks": focus_sel, "hidden": hidden}
+    cmd.zoom(focus_sel, 3)
 
 
-def ufv_resetview(obj=None):
-    """ufv_resetview [object] — clear focus sticks and zoom back out to the whole structure."""
+def ufv_resetview(obj=None, _zoom=True):
+    """ufv_resetview [object] — clear focus sticks, restore spheres + cartoon, and zoom back out."""
     obj = _resolve_object(obj)
     prev = _FOCUS_SHOWN.pop(obj, None)
-    if prev:
+    with _batch():
+        if prev:
+            try:
+                cmd.hide("sticks", prev["sticks"])
+                cmd.unset("stick_color", prev["sticks"])
+            except Exception:
+                pass
+            for lobj in prev.get("hidden", []):
+                try:
+                    cmd.show("spheres", lobj)
+                except Exception:
+                    pass
         try:
-            cmd.hide("sticks", prev)
+            cmd.set("cartoon_transparency", 0.0, obj)
         except Exception:
             pass
-    cmd.zoom(obj)
+    if _zoom:
+        cmd.zoom(obj)
 
 
 def ufv_report(uni_pos, obj=None, uid=None):
@@ -1622,6 +1743,7 @@ if _HAS_PYMOL:
         ("ufv_hotspots", ufv_hotspots), ("ufv_contacthubs", ufv_contacthubs),
         ("ufv_structures", ufv_structures), ("ufv_use", ufv_use),
         ("ufv_report", ufv_report), ("ufv_focus", ufv_focus), ("ufv_resetview", ufv_resetview),
+        ("ufv_ligands", ufv_ligands), ("ufv_ligands_hide", ufv_ligands_hide),
         ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
     ]:
         cmd.extend(_name, _fn)
