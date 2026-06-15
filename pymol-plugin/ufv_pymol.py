@@ -1607,10 +1607,14 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
         lig = "(%s) and resn %s" % (obj, resn)
     if not cmd.count_atoms(lig):
         return
+    pocket = "byres ((%s) around 5) and polymer" % lig
     with _batch():
+        _clear_focus(obj)                       # drop any previous residue/ligand focus sticks
         cmd.show("sticks", lig)
         cmd.color("green", "%s and elem C" % lig)
-        cmd.show("sticks", "byres ((%s) around 5) and polymer" % lig)
+        cmd.show("sticks", pocket)
+        cmd.set("stick_color", "grey70", pocket)
+    _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None, "disabled": []}
     cmd.zoom(lig, 6, animate=0)
 
 
@@ -2008,7 +2012,9 @@ def format_ligand_html(resn, info, instances=1, copies=None, cur=0):
     if info.get("inchikey"):
         row("InChIKey", '<span style="font-family:monospace; font-size:11px;">%s</span>' % esc(info["inchikey"]))
     if info.get("drugbank"):
-        row("DrugBank", esc(info["drugbank"]))
+        db = esc(info["drugbank"])
+        row("DrugBank", '<a href="https://go.drugbank.com/drugs/%s" '
+                        'style="color:#1565c0; text-decoration:none;">%s ↗</a>' % (db, db))
     sims = info.get("similar") or []
     if sims:
         T.append('<tr><td colspan="2" style="border-top:1px solid #ccc; padding-top:5px;">'
@@ -2093,12 +2099,17 @@ def ufv_focus(obj=None, uni_pos=None):
         for c, chres in by_color.items():
             clauses = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in chres.items())
             cmd.set("stick_color", _color_name(c), "(%s) and (%s)" % (obj, clauses))
-        # The selected residue itself: ball-and-stick coloured by element (atom types).
+        # The selected residue: ball-and-stick with atom-type colours. Carbons take the residue's
+        # DISEASE annotation colour (variant/PTM/site) or neutral grey — never the active cartoon
+        # colouring (hub/burden/pocket), which we explicitly override here so it can't bleed onto the
+        # sidechain. Heteroatoms keep element colours.
+        dcol = cmap.get(int(uni_pos))
+        ccol = _color_name(dcol) if dcol else "gray85"
         cmd.show("spheres", sel)
         cmd.set("sphere_scale", 0.28, sel)
         cmd.color("atomic", "(%s) and (not elem C)" % sel)
-        cmd.color("gray85", "(%s) and elem C" % sel)
-        cmd.unset("stick_color", sel)  # let element colours show on the selected residue's sticks
+        cmd.color(ccol, "(%s) and elem C" % sel)
+        cmd.unset("stick_color", sel)  # let element/disease colours show on the selected residue's sticks
         # Hide ALL annotation sphere layers while zoomed in (declutters; cmd.disable is instant —
         # no rebuild). Restored on reset / next clear.
         disabled = []
@@ -2514,11 +2525,14 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.table.cellDoubleClicked.connect(self.on_row_zoom)  # double click = zoom in
             agl.addWidget(self.table, 1)
 
-            hint = QtWidgets.QLabel("Click a row to view it · double-click to zoom in")
+            hint = QtWidgets.QLabel("Row: click = view · double-click = zoom · 3D: click an atom then 'Report picked'")
             hint.setStyleSheet("color:#888; font-size:10px;"); agl.addWidget(hint)
             br = QtWidgets.QHBoxLayout(); agl.addLayout(br)
             self.cb_pick = QtWidgets.QCheckBox("Pick 3D"); br.addWidget(self.cb_pick)
             self.cb_pick.clicked.connect(self.toggle_pick)
+            self.pick_btn = QtWidgets.QPushButton("Report picked")
+            self.pick_btn.setToolTip("Click an atom in the PyMOL viewer, then this — reports that residue/ligand")
+            self.pick_btn.clicked.connect(self.report_picked); br.addWidget(self.pick_btn)
             br.addStretch(1)
             self.zoom_btn = QtWidgets.QPushButton("Zoom selected"); self.zoom_btn.clicked.connect(self.zoom_selected)
             br.addWidget(self.zoom_btn)
@@ -2911,6 +2925,13 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             """Handle in-report links: ufv:res:<n> (jump to residue), ufv:evi (toggle evidence),
             ufv:lig:prev / ufv:lig:next (circulate same-named ligand copies)."""
             s = url.toString() if hasattr(url, "toString") else str(url)
+            if s.startswith("http://") or s.startswith("https://"):
+                try:
+                    import webbrowser
+                    webbrowser.open(s)
+                except Exception:
+                    pass
+                return
             if s.startswith("ufv:res:"):
                 try:
                     self.report_residue(int(s.rsplit(":", 1)[1]), focus=True)
@@ -2960,6 +2981,33 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                                                    copies=self._lig_copies, cur=self._lig_idx))
 
         # ---- 3D picking ----
+        def report_picked(self):
+            """Report whatever atom is currently picked in the viewer (pk1 / sele). This is the
+            reliable path: click an atom in PyMOL (it becomes pk1/sele), then press this — it works
+            regardless of whether the live pick wizard fired on this PyMOL build."""
+            o = self.obj()
+            if not o:
+                self.status.setText("Load a structure first."); return
+            info = []
+            for src in ("pk1", "sele", "(sele)"):
+                try:
+                    if cmd.count_atoms(src):
+                        cmd.iterate(src, "info.append((chain, resi, resn, hetatm))", space={"info": info})
+                        if info:
+                            break
+                except Exception:
+                    pass
+            if not info:
+                self.status.setText("No atom picked — click an atom in the viewer first."); return
+            ch, resi, resn, het = info[0]
+            if het:
+                self.on_ligand(resn, pick=(ch, resi)); return
+            uni = _resi_to_uni(o, ch, resi)
+            if uni is not None:
+                self.report_residue(uni, focus=True)
+            else:
+                self.status.setText("Picked %s/%s — not mapped to a UniProt position." % (ch, resi))
+
         def toggle_pick(self):
             self._install_wizard() if self.cb_pick.isChecked() else self._remove_wizard()
 
@@ -3019,13 +3067,19 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 def get_panel(self):
                     return [[1, "UFV residue pick", ""], [2, "Done", "cmd.set_wizard()"]]
 
+            try:
+                view = cmd.get_view()       # setting a wizard can yank the camera; pin it
+            except Exception:
+                view = None
             self._wizard = _PickW(cmd)
             cmd.set_wizard(self._wizard)
             try:
                 cmd.refresh_wizard()
+                if view is not None:
+                    cmd.set_view(view)
             except Exception:
                 pass
-            self.status.setText("Pick 3D on — click an atom in the viewer.")
+            self.status.setText("Pick 3D on — click an atom, then 'Report picked' if needed.")
 
         def _remove_wizard(self):
             try:

@@ -82,10 +82,11 @@ and stays responsive).
    AlphaMissense mean + the full substitution grid, nearby ligands, and **clickable** nearby residues
    split into **≤ 8 Å** and **8–12 Å** bands (click one to jump the report there). Click a **ligand**
    row to zoom to it and see its chemistry (name / formula / SMILES / DrugBank) and the most
-   **Tanimoto-similar** ligands; when a component occurs several times, a **◂ i/N ▸** stepper
-   circulates the copies. Tick **Pick 3D** then click an atom in the viewer to drive the report
-   (protein → residue, ligand → that copy); **Reset view** zooms back out; **Align** superposes
-   multiple loaded structures.
+   **Tanimoto-similar** ligands (DrugBank links out); when a component occurs several times, a
+   **◂ i/N ▸** stepper circulates the copies. To drive the report from the 3D view, click an atom in
+   the PyMOL viewer and press **Report picked** (protein → residue, ligand → that copy) — this works
+   on every PyMOL build; the **Pick 3D** live-wizard checkbox does the same on builds that support it.
+   **Reset view** zooms back out; **Align** superposes multiple loaded structures.
 
 Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
 fast, and the whole panel is scrollable so it never outgrows the screen.
