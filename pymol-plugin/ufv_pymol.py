@@ -2244,14 +2244,15 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.load_btn.clicked.connect(self.on_load_selected)
             self.align_btn = QtWidgets.QPushButton("Align"); self.align_btn.setToolTip("Superpose all loaded structures")
             self.align_btn.clicked.connect(lambda: ufv_align()); r2.addWidget(self.align_btn)
-            r3 = QtWidgets.QHBoxLayout(); sgl.addLayout(r3)
-            r3.addWidget(QtWidgets.QLabel("Loaded:"))
-            self.obj_combo = QtWidgets.QComboBox(); r3.addWidget(self.obj_combo, 1)
-            self.obj_combo.currentIndexChanged.connect(self.on_obj_change)
+            hr = QtWidgets.QHBoxLayout(); sgl.addLayout(hr)
+            hr.addWidget(QtWidgets.QLabel("Loaded structures"))
             self.obj_label = QtWidgets.QLabel(""); self.obj_label.setStyleSheet("color:#357; font-size:11px;")
-            r3.addWidget(self.obj_label)
-            self.remove_btn = QtWidgets.QPushButton("Remove"); self.remove_btn.setToolTip("Delete the active structure")
-            self.remove_btn.clicked.connect(self.remove_structure); r3.addWidget(self.remove_btn)
+            hr.addWidget(self.obj_label, 1)
+            self.cb_apply_all = QtWidgets.QCheckBox("apply to all")
+            self.cb_apply_all.setToolTip("Apply layers / colouring / zoom to every loaded structure (e.g. aligned copies)")
+            hr.addWidget(self.cb_apply_all)
+            self.obj_list = QtWidgets.QListWidget(); self.obj_list.setMaximumHeight(96)
+            sgl.addWidget(self.obj_list)
             self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
             sgl.addWidget(self.status)
 
@@ -2369,30 +2370,61 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                                  cons.get("pathogenic", 0), len(ann["sites"]), len(ann["domains"]),
                                  "y" if ann["amMean"] else "n"))
 
+        def loaded_objs(self):
+            return [o for o in (cmd.get_object_list() or []) if not o.startswith("ufv_")]
+
+        def target_objs(self):
+            """Objects layer/colour/zoom operations act on: all loaded if 'apply to all', else active."""
+            if self.cb_apply_all.isChecked():
+                return self.loaded_objs()
+            o = self.obj()
+            return [o] if o else []
+
         def refresh_objs(self):
-            cur = self.obj()
-            objs = [o for o in (cmd.get_object_list() or []) if not o.startswith("ufv_")]
-            self.obj_combo.blockSignals(True)
-            self.obj_combo.clear()
-            self.obj_combo.addItems(objs)
-            if cur in objs:
-                self.obj_combo.setCurrentText(cur)
-            self.obj_combo.blockSignals(False)
+            active = self.obj()
+            self.obj_list.clear()
+            for o in self.loaded_objs():
+                item = QtWidgets.QListWidgetItem()
+                w = self._obj_row(o, active)
+                item.setSizeHint(w.sizeHint())
+                self.obj_list.addItem(item)
+                self.obj_list.setItemWidget(item, w)
         obj_label_refresh = refresh_objs
 
-        def on_obj_change(self, _i):
-            name = self.obj_combo.currentText()
-            if not name:
-                return
+        def _obj_row(self, name, active):
+            w = QtWidgets.QWidget(); h = QtWidgets.QHBoxLayout(w); h.setContentsMargins(2, 0, 2, 0); h.setSpacing(4)
+            vis = QtWidgets.QCheckBox(); vis.setChecked(True); vis.setToolTip("Show / hide")
+            vis.clicked.connect(lambda checked, n=name: self.toggle_visible(n, checked))
+            h.addWidget(vis)
+            btn = QtWidgets.QPushButton(name); btn.setFlat(True)
+            btn.setStyleSheet("text-align:left; border:none;" + ("font-weight:bold; color:#1565c0;" if name == active else ""))
+            btn.setToolTip("Click to make active")
+            btn.clicked.connect(lambda _=False, n=name: self.set_active(n))
+            h.addWidget(btn, 1)
+            x = QtWidgets.QToolButton(); x.setText("✕"); x.setToolTip("Remove structure")
+            x.clicked.connect(lambda _=False, n=name: self.remove_structure(n))
+            h.addWidget(x)
+            return w
+
+        def set_active(self, name):
             _STATE["obj"] = name
             self.update_colour_modes()
             ann = _CACHE.get(self.cur_uid()) or {}
             cov = actual_coverage(name, len(ann.get("sequence", "")))
-            self.obj_label.setText(("%.0f%% modelled" % cov) if cov is not None else "")
-            self.refresh_table()
+            self.obj_label.setText(("%s · %.0f%% modelled" % (name, cov)) if cov is not None else name)
+            self.refresh_objs(); self.refresh_table()
 
-        def remove_structure(self):
-            name = self.obj_combo.currentText()
+        def toggle_visible(self, name, checked):
+            try:
+                (cmd.enable if checked else cmd.disable)(name)
+                for tag in ("ptm", "var", "site", "dom", "filt"):
+                    lobj = _ufv_layer_obj(name, tag)
+                    if lobj in (cmd.get_object_list() or []):
+                        (cmd.enable if checked else cmd.disable)(lobj)
+            except Exception:
+                pass
+
+        def remove_structure(self, name):
             if not name:
                 return
             ufv_clear(name)
@@ -2403,7 +2435,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             (_STATE.get("sources") or {}).pop(name, None)
             _GEOM_CACHE.pop(name, None)
             if _STATE.get("obj") == name:
-                _STATE["obj"] = None
+                _STATE["obj"] = (self.loaded_objs() or [None])[0]
             self.refresh_objs()
 
         # ---- fetch / structures ----
@@ -2437,8 +2469,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
                 cb.setChecked(False)
             self.cart.setCurrentIndex(0)
-            self.refresh_objs()
-            self.obj_combo.setCurrentText(name)  # triggers on_obj_change (sets active, coverage, modes)
+            self.set_active(name)
 
         def update_colour_modes(self):
             predicted = _structure_is_predicted(self.obj())
@@ -2454,16 +2485,18 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
         # ---- layers ----
         def toggle_points(self, tag, cb, fn):
-            o = self.obj()
-            if not o or not _CACHE.get(self.cur_uid()):
+            objs = self.target_objs()
+            if not objs or not _CACHE.get(self.cur_uid()):
                 cb.setChecked(False); self.status.setText("Fetch + load a structure first."); return
-            fn(o, self.cur_uid()) if cb.isChecked() else _hide_layer(o, tag)
+            for o in objs:
+                fn(o, self.cur_uid()) if cb.isChecked() else _hide_layer(o, tag)
 
         def toggle_ligands(self):
-            o = self.obj()
-            if not o:
+            objs = self.target_objs()
+            if not objs:
                 self.cb_lig.setChecked(False); return
-            ufv_ligands(o) if self.cb_lig.isChecked() else ufv_ligands_hide(o)
+            for o in objs:
+                ufv_ligands(o) if self.cb_lig.isChecked() else ufv_ligands_hide(o)
 
         def on_var_filter(self):
             if not self.cb_var.isChecked():
@@ -2471,47 +2504,56 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.refresh_variants()
 
         def refresh_variants(self):
-            o = self.obj()
-            if not o:
+            objs = self.target_objs()
+            if not objs:
                 self.cb_var.setChecked(False); return
             if not self.cb_var.isChecked():
-                _hide_layer(o, "var"); return
+                for o in objs:
+                    _hide_layer(o, "var")
+                return
             ann = _CACHE.get(self.cur_uid())
             if not ann:
                 self.cb_var.setChecked(False); self.status.setText("Fetch first."); return
             toks = {t for t, c in self.cons_cb.items() if c.isChecked()}
-            _set_sphere_layer(o, "var", _variant_groups(ann, toks or None, self.cb_reviewed.isChecked()))
+            groups = _variant_groups(ann, toks or None, self.cb_reviewed.isChecked())
+            for o in objs:
+                _set_sphere_layer(o, "var", groups)
 
         def apply_cartoon(self):
-            o = self.obj(); choice = self.cart.currentText()
-            if not o:
+            objs = self.target_objs(); choice = self.cart.currentText()
+            if not objs:
                 return
             if choice == "None":
-                _reset_cartoon(o); return
+                for o in objs:
+                    _reset_cartoon(o)
+                return
             uid = self.cur_uid()
             if choice not in ("pLDDT", "B-factor") and not _CACHE.get(uid):
                 self.status.setText("Fetch first."); self.cart.setCurrentIndex(0); return
             cheap = {"Domains": ufv_domains, "Topology": ufv_topology, "pLDDT": ufv_plddt,
                      "B-factor": ufv_bfactor, "AlphaMissense": ufv_alphamissense, "Burden": ufv_burden}
             if choice in cheap:
-                cheap[choice](o, uid); return
+                for o in objs:
+                    cheap[choice](o, uid)
+                return
             ann = _CACHE.get(uid) or {}
-            geom = _ca_geometry(o)
+            if choice == "Constraint pocket" and not ann.get("amMean"):
+                self.status.setText("Constraint pocket needs AlphaMissense data."); self.cart.setCurrentIndex(0); return
+            geoms = {o: _ca_geometry(o) for o in objs}    # read coords on the UI thread
             if choice == "Hotspots":
-                work = lambda: _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann.get("variants", [])))
                 colors = {"strong": "#b71c1c", "moderate": "#e64a19", "weak": "#ffa726"}
+                work = lambda: {o: _per_chain_merge(g, lambda gs: _compute_hotspots(gs, ann.get("variants", []))) for o, g in geoms.items()}
             elif choice == "Contact hubs":
-                work = lambda: _per_chain_merge(geom, _betweenness_hubs)
                 colors = {"strong": "#6a1b9a", "moderate": "#ab47bc"}
+                work = lambda: {o: _per_chain_merge(g, _betweenness_hubs) for o, g in geoms.items()}
             else:
-                if not ann.get("amMean"):
-                    self.status.setText("Constraint pocket needs AlphaMissense data."); self.cart.setCurrentIndex(0); return
-                work = lambda: _compute_pockets(geom, ann["amMean"])
                 colors = {"pocket": "#00897b", "exposed": "#8e24aa"}
+                work = lambda: {o: _compute_pockets(g, ann["amMean"]) for o, g in geoms.items()}
 
-            def apply(tiers):
-                _set_cartoon_layer(o, choice.lower()); _color_tiers(o, tiers, colors)
-                self.status.setText("%s: %d residues." % (choice, len(tiers)))
+            def apply(res):
+                for o, tiers in res.items():
+                    _set_cartoon_layer(o, choice.lower()); _color_tiers(o, tiers, colors)
+                self.status.setText("%s applied to %d structure(s)." % (choice, len(res)))
             self._async(work, apply, "Computing %s ..." % choice)
 
         # ---- list table + report ----
@@ -2582,17 +2624,19 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
         def zoom_selected(self):
             if self._last_pos is not None:
-                ufv_focus(self.obj(), self._last_pos)
+                for o in self.target_objs():
+                    ufv_focus(o, self._last_pos)
 
         def report_residue(self, uni_pos, focus=False):
-            o, uid = self.obj(), self.cur_uid()
-            if not o or not uid:
+            objs, uid = self.target_objs(), self.cur_uid()
+            if not objs or not uid:
                 return
             self._last_pos = uni_pos
-            rep = residue_report(o, uid, uni_pos)
+            rep = residue_report(objs[0], uid, uni_pos)
             self.detail.setHtml(format_report_html(rep))
             if focus:
-                ufv_focus(o, uni_pos)
+                for o in objs:  # aligned copies overlap, so the last zoom frames them all
+                    ufv_focus(o, uni_pos)
 
         def on_ligand(self, resn):
             o = self.obj()
