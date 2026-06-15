@@ -23,6 +23,10 @@ const UFVApi = (() => {
     const LIGAND_CCD = (ccd) => `https://data.rcsb.org/rest/v1/core/chemcomp/${encodeURIComponent(String(ccd).toUpperCase())}`;
     // PubChem PUG-REST: the published 881-bit CACTVS 2D substructure fingerprint, by InChIKey.
     const PUBCHEM_FP = (ikey) => `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/${encodeURIComponent(ikey)}/property/Fingerprint2D/JSON`;
+    // ProtVar (EMBL-EBI) per-residue predictors that complement AlphaMissense: conservation, EVE,
+    // ESM1b, M3D structural effect and FoldX ΔΔG stability — keyed by UniProt accession + position.
+    const PROTVAR_SCORE = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/score/${acc}/${pos}`;
+    const PROTVAR_FOLDX = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/${acc}/${pos}`;
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -499,6 +503,48 @@ const UFVApi = (() => {
         return [...byPdb.values()];
     }
 
+    const _protVarCache = new Map();
+    function _summ(vals) {
+        const v = vals.filter(x => Number.isFinite(x));
+        if (!v.length) return null;
+        return { min: Math.min(...v), max: Math.max(...v), mean: v.reduce((a, b) => a + b, 0) / v.length, n: v.length };
+    }
+
+    /**
+     * ProtVar per-residue predictors for a UniProt accession + position. /score gives a flat array
+     * of typed objects (one CONSERV per position; ~19 EVE and ~19 ESM per substitution but WITHOUT
+     * amino-acid labels, so we summarise; ~19 AM — we already have AlphaMissense; one M3D structural
+     * effect). /prediction/foldx gives per-substitution FoldX ΔΔG WITH wt/mut labels. Cached.
+     */
+    async function fetchProtVar(acc, pos) {
+        const key = `${acc}:${pos}`;
+        if (_protVarCache.has(key)) return _protVarCache.get(key);
+        const [scoreArr, foldxArr] = await Promise.all([
+            fetchOptionalJson(PROTVAR_SCORE(acc, pos)),
+            fetchOptionalJson(PROTVAR_FOLDX(acc, pos)),
+        ]);
+        let conservation = null, m3d = null; const eve = [], esm = [], eveCls = [];
+        for (const o of (scoreArr || [])) {
+            if (o.type === 'CONSERV') conservation = o.score;
+            else if (o.type === 'EVE') { eve.push(o.score); if (o.eveClass) eveCls.push(o.eveClass); }
+            else if (o.type === 'ESM') esm.push(o.score);
+            else if (o.type === 'M3D' && !m3d) m3d = { prediction: o.prediction, feature: o.damagingFeature };
+        }
+        const byMut = {}; const ddg = [];
+        for (const o of (foldxArr || [])) {
+            if (o.mutatedType && Number.isFinite(o.foldxDdg)) { byMut[o.mutatedType] = o.foldxDdg; ddg.push(o.foldxDdg); }
+        }
+        const result = {
+            score: {
+                conservation, m3d, eve: _summ(eve), esm: _summ(esm),
+                evePath: eveCls.filter(c => String(c).toUpperCase() === 'PATHOGENIC').length, eveN: eveCls.length,
+            },
+            foldx: { byMut, summary: _summ(ddg) },
+        };
+        _protVarCache.set(key, result);
+        return result;
+    }
+
     async function loadFeatureData(id) {
         const [featuresData, variationData, proteomicsPtmData, uniprotData, amCsvText] = await Promise.all([
             fetchOptionalJson(FEATURES_URL(id)),
@@ -812,5 +858,5 @@ const UFVApi = (() => {
 
     // getPrimaryStructure: just the canonical AlphaFold model, fetched fast so the viewer can paint
     // immediately while getStructures streams in the experimental/isoform/computed list behind it.
-    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint };
+    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint, fetchProtVar };
 })();

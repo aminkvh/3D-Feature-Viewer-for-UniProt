@@ -78,6 +78,10 @@ PDBe_PDB = "https://www.ebi.ac.uk/pdbe/entry-files/download/pdb{}.ent"
 BEACONS_SUMMARY = "https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/{}.json"
 LIGAND_CCD = "https://data.rcsb.org/rest/v1/core/chemcomp/{}"
 PUBCHEM_FP = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{}/property/Fingerprint2D/JSON"
+# ProtVar (EMBL-EBI) per-residue predictors that complement AlphaMissense: conservation, EVE, ESM1b,
+# M3D structural effect, and FoldX ΔΔG stability. Keyed by UniProt accession + position.
+PROTVAR_SCORE = "https://www.ebi.ac.uk/ProtVar/api/score/{}/{}"
+PROTVAR_FOLDX = "https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/{}/{}"
 
 _USER_AGENT = "UFV-PyMOL-plugin/1.0 (https://github.com/aminkvh/3D-Feature-Viewer-for-UniProt)"
 
@@ -1871,6 +1875,64 @@ def ufv_pockets(obj=None, uid=None):
     print("[UFV] %s: %d constraint-pocket residues." % (obj, n))
 
 
+_PROTVAR_CACHE = {}
+
+
+def _summ(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return {"min": min(vals), "max": max(vals), "mean": sum(vals) / len(vals), "n": len(vals)}
+
+
+def _parse_protvar_score(arr):
+    """ProtVar /score returns a flat array of typed objects: one CONSERV (per-position), ~19 EVE and
+    ~19 ESM (per-substitution, but with no amino-acid label so we summarise across substitutions),
+    ~19 AM (we already have AlphaMissense), and M3D structural effect."""
+    conserv, eve, esm, eve_cls, m3d = None, [], [], [], None
+    for o in arr or []:
+        t = o.get("type")
+        if t == "CONSERV":
+            conserv = o.get("score")
+        elif t == "EVE":
+            eve.append(o.get("score"))
+            if o.get("eveClass"):
+                eve_cls.append(o["eveClass"])
+        elif t == "ESM":
+            esm.append(o.get("score"))
+        elif t == "M3D" and m3d is None:
+            m3d = {"prediction": o.get("prediction"), "feature": o.get("damagingFeature")}
+    return {"conservation": conserv, "eve": _summ(eve), "esm": _summ(esm), "m3d": m3d,
+            "evePath": sum(1 for c in eve_cls if str(c).upper() == "PATHOGENIC"), "eveN": len(eve_cls)}
+
+
+def _parse_protvar_foldx(arr):
+    """ProtVar /prediction/foldx returns per-substitution FoldX ΔΔG (kcal/mol) WITH wt/mut labels, so
+    we can show the value for a specific variant and the per-position range. ΔΔG > ~2 destabilising."""
+    by_mut, vals = {}, []
+    for o in arr or []:
+        m, d = o.get("mutatedType"), o.get("foldxDdg")
+        if m and d is not None:
+            by_mut[m] = d
+            vals.append(d)
+    return {"byMut": by_mut, "summary": _summ(vals)}
+
+
+def fetch_protvar(uid, pos):
+    """ProtVar per-residue predictors (conservation / EVE / ESM1b / M3D / FoldX) for a position.
+    Network — call off the UI thread. Cached per (accession, position)."""
+    key = (uid, int(pos))
+    if key in _PROTVAR_CACHE:
+        return _PROTVAR_CACHE[key]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fs = ex.submit(_get_json, PROTVAR_SCORE.format(uid, pos))
+        ff = ex.submit(_get_json, PROTVAR_FOLDX.format(uid, pos))
+        out = {"score": _parse_protvar_score(fs.result()), "foldx": _parse_protvar_foldx(ff.result())}
+    _PROTVAR_CACHE[key] = out
+    return out
+
+
 def residue_report(obj, uid, uni_pos):
     """Everything the extension's detail panel shows for one residue, as a plain dict."""
     ann = fetch_annotations(uid)
@@ -1954,11 +2016,12 @@ def _am_color(score):
     return "#d32f2f" if score >= 0.564 else "#4caf50" if score <= 0.34 else "#f5a623"
 
 
-def format_report_html(rep, expanded=False):
+def format_report_html(rep, expanded=False, protvar="off"):
     """Clean label/value layout for the GUI detail panel, mirroring the extension's residue card:
     a header, then colour-coded section headers with aligned 'label : value' rows (no indentation).
     `expanded` controls whether each variant's evidence (ClinVar / review / dbSNP / disease) is shown
-    or folded behind a toggle link. Nearby residues are clickable (ufv:res: anchors)."""
+    or folded behind a toggle link. Nearby residues are clickable (ufv:res: anchors). `protvar` is
+    'off' (no section), 'loading', or a fetch_protvar() dict (renders the ProtVar predictors)."""
     if not rep:
         return ""
 
@@ -2029,6 +2092,45 @@ def format_report_html(rep, expanded=False):
                              % (_am_color(sc), esc(m), _am_color(sc), sc))
             cells.append('</tr></table></td></tr>')
             T.append("".join(cells))
+
+    if protvar != "off":
+        hdr("ProtVar predictors", "#00695c")
+        if protvar == "loading":
+            row("Loading", "fetching EVE / ESM1b / conservation / FoldX …")
+        elif protvar:
+            sc = protvar.get("score") or {}
+            fx = protvar.get("foldx") or {}
+            if sc.get("conservation") is not None:
+                row("Conservation", "%.2f <span style='color:#888;'>(0 variable – 1 conserved)</span>" % sc["conservation"])
+            if sc.get("eve"):
+                e = sc["eve"]
+                cls = (" · <span style='color:#d32f2f;'>%d/%d pathogenic</span>" % (sc["evePath"], sc["eveN"])) if sc.get("eveN") else ""
+                row("EVE", "mean %.3f <span style='color:#888;'>(%.2f–%.2f)</span>%s" % (e["mean"], e["min"], e["max"], cls))
+            if sc.get("esm"):
+                e = sc["esm"]
+                row("ESM1b", "mean %.1f <span style='color:#888;'>(min %.1f · lower = more deleterious)</span>" % (e["mean"], e["min"]))
+            if sc.get("m3d"):
+                md = sc["m3d"]
+                feat = (" — %s" % esc(md["feature"])) if md.get("feature") else ""
+                col = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
+                row("M3D structural", "<span style='color:%s;'>%s</span>%s" % (col, esc(md.get("prediction", "?")), feat))
+            # FoldX ΔΔG: tie to the residue's actual variants when possible, else the per-position range.
+            by_mut = fx.get("byMut") or {}
+            shown_fx = False
+            for v in rep.get("variants", []):
+                mt = v.get("mutant")
+                if mt and mt in by_mut:
+                    d = by_mut[mt]
+                    col = "#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c"
+                    note = "destabilising" if d >= 2 else "mild" if d >= 1 else "tolerated"
+                    row("FoldX ΔΔG (%s%d%s)" % (esc(v.get("wildType", "")), rep["pos"], esc(mt)),
+                        "<span style='color:%s;'>%+.1f kcal/mol</span> <span style='color:#888;'>(%s)</span>" % (col, d, note))
+                    shown_fx = True
+            if not shown_fx and fx.get("summary"):
+                s = fx["summary"]
+                row("FoldX ΔΔG", "%+.1f to %+.1f kcal/mol <span style='color:#888;'>(across substitutions; >2 destabilising)</span>" % (s["min"], s["max"]))
+        else:
+            row("ProtVar", "<span style='color:#888;'>no predictor data for this position.</span>")
 
     if rep.get("nearbyLigands"):
         hdr("Nearby ligands (≤5 Å)", "#6d4c41")
@@ -2631,6 +2733,10 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.cb_pick = QtWidgets.QCheckBox("Pick 3D"); br.addWidget(self.cb_pick)
             self.cb_pick.setToolTip("Click any atom in the PyMOL viewer to zoom to its residue/ligand")
             self.cb_pick.clicked.connect(self.toggle_pick)
+            self.cb_protvar = QtWidgets.QCheckBox("ProtVar")
+            self.cb_protvar.setToolTip("Add ProtVar per-residue predictors (EVE / ESM1b / conservation / "
+                                       "FoldX ΔΔG / M3D) to the residue report")
+            self.cb_protvar.clicked.connect(self.toggle_protvar); br.addWidget(self.cb_protvar)
             br.addStretch(1)
             self.reset_btn = QtWidgets.QPushButton("Reset view"); br.addWidget(self.reset_btn)
             self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
@@ -2650,6 +2756,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self._sel = None               # unified current selection: {"kind":"res","pos":n} or
                                            # {"kind":"lig","resn":r} — drives 'Zoom selected'
             self._last_rep = None          # cached residue_report dict for re-rendering (evidence toggle)
+            self._last_protvar = None      # cached ProtVar fetch for the current residue ('off'/'loading'/dict)
             self._show_evidence = False    # variant-evidence fold state in the detail panel
             self._lig_resn = None          # ligand component currently shown
             self._lig_copies = []          # [(chain, resi), ...] occurrences of that component
@@ -3044,10 +3151,50 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 self._last_rep = residue_report(objs[0], uid, uni_pos)
                 self._lig_resn = None      # leaving ligand context
                 self._show_evidence = False
-                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence))
+                want_pv = self.cb_protvar.isChecked()
+                self._last_protvar = "loading" if want_pv else "off"
+                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, self._last_protvar))
+                if want_pv:
+                    self._fetch_protvar_async(uid, uni_pos)
             except Exception as exc:
                 self._last_rep = None
                 self.detail.setHtml("<i>Report error: %s</i>" % exc)
+
+        def toggle_protvar(self):
+            # Re-render the current residue with / without the ProtVar section.
+            if self._last_rep is None:
+                return
+            if self.cb_protvar.isChecked():
+                self._last_protvar = "loading"
+                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "loading"))
+                self._fetch_protvar_async(self.cur_uid(), self._last_rep["pos"])
+            else:
+                self._last_protvar = "off"
+                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "off"))
+
+        def _fetch_protvar_async(self, uid, pos):
+            pos = int(pos)
+
+            def work():
+                return fetch_protvar(uid, pos)
+
+            def done(res):
+                if self._last_pos != pos or not self.cb_protvar.isChecked():
+                    return                                   # stale (user moved on / turned it off)
+                self._last_protvar = res if not isinstance(res, Exception) else None
+                if self._last_rep:
+                    self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, self._last_protvar))
+            self._bg(work, done)
+
+        def _bg(self, work, done):
+            """Run `work` off the UI thread WITHOUT disabling the panel (unlike _async), for background
+            enrichment like ProtVar that shouldn't freeze interaction."""
+            wk = _Worker(work)
+
+            def on_done(res):
+                self._workers.discard(wk)
+                done(res)
+            wk.done.connect(on_done); self._workers.add(wk); wk.start()
 
         def on_anchor(self, url):
             """Handle in-report links: ufv:res:<n> (jump to residue), ufv:evi (toggle evidence),
@@ -3068,7 +3215,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             elif s == "ufv:evi":
                 self._show_evidence = not self._show_evidence
                 if self._last_rep:
-                    self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence))
+                    self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence,
+                                                           self._last_protvar or "off"))
             elif s in ("ufv:lig:prev", "ufv:lig:next") and self._lig_copies:
                 self._lig_idx = (self._lig_idx + (1 if s.endswith("next") else -1)) % len(self._lig_copies)
                 ch, resi = self._lig_copies[self._lig_idx]

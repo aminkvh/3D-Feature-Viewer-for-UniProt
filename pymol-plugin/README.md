@@ -83,7 +83,9 @@ and stays responsive).
    **sectioned, colour-coded detail panel** shows variants (with **collapsible evidence** — ClinVar /
    review status / dbSNP / disease behind a *show evidence* toggle), features, AlphaMissense mean +
    the full substitution grid, nearby ligands, and **clickable** nearby residues split into **≤ 8 Å**
-   and **8–12 Å** bands (click one to jump the report there). Click a **ligand** row to zoom to it and
+   and **8–12 Å** bands (click one to jump the report there). Tick **ProtVar** to add EMBL-EBI
+   ProtVar per-residue predictors to the report — **conservation, EVE, ESM1b, FoldX ΔΔG** (tied to the
+   residue's variants) and the **M3D** structural effect — complementing AlphaMissense. Click a **ligand** row to zoom to it and
    see its chemistry (name / formula / SMILES / DrugBank links out) and the most **Tanimoto-similar**
    ligands; when a component occurs several times, a **◂ i/N ▸** stepper circulates the copies (each
    highlighted in 3D with a label). The button row under the list is **Show · Hide** (the
