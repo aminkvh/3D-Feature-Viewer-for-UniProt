@@ -77,12 +77,15 @@ and stays responsive).
    browse the **colour-coded list** (filter box — large sets are capped to the first 600 rows for
    responsiveness; narrow with the filter to see the rest — plus Show/Hide all filtered, tooltips). Click a residue
    row and the view **zooms in** (residue + 5 Å neighbourhood as annotation-coloured sticks, cartoon
-   dimmed) while a **sectioned, colour-coded detail panel** shows variants (ClinVar / dbSNP /
-   AlphaMissense / disease), features, AlphaMissense mean + profile, nearby ligands, and nearby
-   residues with Cα–Cα distances. Click a **ligand** row to zoom to it and see its chemistry
-   (name / formula / SMILES / DrugBank) and the most **Tanimoto-similar** ligands in the structure.
-   Tick **Pick 3D** to drive the report by clicking an atom; **Reset view** zooms back out;
-   **Align** superposes multiple loaded structures.
+   dimmed) while a **sectioned, colour-coded detail panel** shows variants (with **collapsible
+   evidence** — ClinVar / review status / dbSNP / disease behind a *show evidence* toggle), features,
+   AlphaMissense mean + the full substitution grid, nearby ligands, and **clickable** nearby residues
+   split into **≤ 8 Å** and **8–12 Å** bands (click one to jump the report there). Click a **ligand**
+   row to zoom to it and see its chemistry (name / formula / SMILES / DrugBank) and the most
+   **Tanimoto-similar** ligands; when a component occurs several times, a **◂ i/N ▸** stepper
+   circulates the copies. Tick **Pick 3D** then click an atom in the viewer to drive the report
+   (protein → residue, ligand → that copy); **Reset view** zooms back out; **Align** superposes
+   multiple loaded structures.
 
 Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
 fast, and the whole panel is scrollable so it never outgrows the screen.

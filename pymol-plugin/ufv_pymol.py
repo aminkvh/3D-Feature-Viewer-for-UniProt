@@ -1357,6 +1357,21 @@ def _ufv_layer_obj(obj, tag):
     return "ufv_%s_%s" % (re.sub(r"[^A-Za-z0-9]", "_", obj or "x"), tag)
 
 
+def _ca_scaffold(obj):
+    """A persistent, hidden CA-only copy of `obj` (ufv_<obj>_ca), built once. Marker layers are then
+    carved out of THIS small object instead of re-scanning the full structure (which is slow for big
+    models, e.g. AlphaFill) on every toggle. Returns the scaffold name, or `obj` if it can't be built."""
+    name = _ufv_layer_obj(obj, "ca")
+    if name not in (cmd.get_object_list() or []):
+        try:
+            cmd.create(name, "(%s) and name CA and polymer" % obj)
+            cmd.hide("everything", name)
+            cmd.disable(name)
+        except Exception:
+            return obj
+    return name
+
+
 def _tune_sphere_obj(lobj):
     # GPU impostor spheres render thousands of points cheaply.
     for k, v in (("sphere_mode", 9), ("sphere_quality", 1), ("sphere_scale", 0.8)):
@@ -1381,7 +1396,8 @@ def _set_sphere_layer(obj, tag, groups):
         st.pop(tag, None)
         return 0
     allpos = sorted({p for positions in groups.values() for p in positions})
-    sel = _sel_for_positions(obj, allpos, ca_only=True)
+    scaffold = _ca_scaffold(obj)                 # carve the layer out of the small CA-only copy
+    sel = _sel_for_positions(obj, allpos, ca_only=True, target=scaffold)
     if not sel:
         st.pop(tag, None)
         return 0
@@ -1563,10 +1579,32 @@ def ligand_chemistry(obj):
     return out
 
 
-def ufv_ligand_focus(obj=None, resn=None):
-    """ufv_ligand_focus [object,] resn — zoom to a ligand and show it + its 5 Å pocket as sticks."""
+def ligand_instances(obj, resn):
+    """Distinct copies of a ligand by name -> sorted [(chain, resi), ...] so the GUI can step through
+    each occurrence of the same component (e.g. several HEM/ATP in one structure)."""
+    rows = []
+    try:
+        cmd.iterate("(%s) and resn %s and not solvent" % (obj, resn),
+                    "rows.append((chain, resi))", space={"rows": rows})
+    except Exception:
+        pass
+    seen, out = set(), []
+    for ch, resi in rows:
+        key = (ch, resi)
+        if key not in seen:
+            seen.add(key); out.append(key)
+    out.sort(key=lambda x: (x[0], int(re.sub(r"[^0-9-]", "", x[1]) or 0)))
+    return out
+
+
+def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
+    """ufv_ligand_focus [object,] resn [, chain, resi] — zoom to a ligand and show it + its 5 Å pocket
+    as sticks. With chain+resi, focus that single copy; otherwise all copies of the named component."""
     obj = _resolve_object(obj)
-    lig = "(%s) and resn %s" % (obj, resn)
+    if chain is not None and resi is not None:
+        lig = "(%s) and resn %s and chain %s and resi %s" % (obj, resn, chain, resi)
+    else:
+        lig = "(%s) and resn %s" % (obj, resn)
     if not cmd.count_atoms(lig):
         return
     with _batch():
@@ -1834,9 +1872,11 @@ def _am_color(score):
     return "#d32f2f" if score >= 0.564 else "#4caf50" if score <= 0.34 else "#f5a623"
 
 
-def format_report_html(rep):
+def format_report_html(rep, expanded=False):
     """Clean label/value layout for the GUI detail panel, mirroring the extension's residue card:
-    a header, then colour-coded section headers with aligned 'label : value' rows (no indentation)."""
+    a header, then colour-coded section headers with aligned 'label : value' rows (no indentation).
+    `expanded` controls whether each variant's evidence (ClinVar / review / dbSNP / disease) is shown
+    or folded behind a toggle link. Nearby residues are clickable (ufv:res: anchors)."""
     if not rep:
         return ""
 
@@ -1861,20 +1901,28 @@ def format_report_html(rep):
 
     if rep["variants"]:
         hdr("Variants", "#c62828")
+        has_evidence = any(v.get("clinVar") or v.get("clinVarReview") or v.get("rsIds") or v.get("diseases")
+                           for v in rep["variants"])
         for v in rep["variants"]:
             mut = "%s%d%s" % (esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")))
             c = v.get("consequenceColor", "#9e9e9e")
             row('<span style="color:%s;">%s</span>' % (c, mut), esc(v["consequence"]), c, bold=True)
-            if v.get("clinVar"):
-                row("ClinVar", esc(v["clinVar"]))
-            if v.get("clinVarReview"):
-                row("Review", esc(v["clinVarReview"]))
-            if v.get("rsIds"):
-                row("dbSNP", esc(", ".join(v["rsIds"])))
             if v.get("alphaMissense") is not None:
                 row("AlphaMissense", "%.2f" % v["alphaMissense"], _am_color(v["alphaMissense"]))
-            if v.get("diseases"):
-                row("Disease", esc("; ".join(v["diseases"])))
+            if expanded:  # evidence rows, folded by default
+                if v.get("clinVar"):
+                    row("ClinVar", esc(v["clinVar"]))
+                if v.get("clinVarReview"):
+                    row("Review", esc(v["clinVarReview"]))
+                if v.get("rsIds"):
+                    row("dbSNP", esc(", ".join(v["rsIds"])))
+                if v.get("diseases"):
+                    row("Disease", esc("; ".join(v["diseases"])))
+        if has_evidence:
+            link = "▾ hide evidence" if expanded else "▸ show evidence"
+            T.append('<tr><td colspan="2" style="padding-top:2px;">'
+                     '<a href="ufv:evi" style="color:#1565c0; text-decoration:none; font-size:11px;">%s</a>'
+                     '</td></tr>' % link)
 
     if rep["ptms"] or rep["sites"] or rep["domains"]:
         hdr("Features", "#1565c0")
@@ -1889,13 +1937,13 @@ def format_report_html(rep):
         hdr("AlphaMissense", "#6a1b9a")
         row("Mean", "%.3f" % rep["amMean"], _am_color(rep["amMean"]))
         if rep.get("amProfile"):
-            # full substitution grid, 3 per row, coloured by pathogenicity
+            # full substitution grid, 10 per row, coloured by pathogenicity
             cells = ['<tr><td colspan="2"><table cellspacing="2"><tr>']
             for i, (w, m, sc) in enumerate(rep["amProfile"]):
-                if i and i % 3 == 0:
+                if i and i % 10 == 0:
                     cells.append('</tr><tr>')
-                cells.append('<td style="background:#f3f3f3; padding:2px 5px;">'
-                             '<b style="color:%s;">%s</b>&nbsp;<span style="color:%s;">%.3f</span></td>'
+                cells.append('<td style="background:#f3f3f3; padding:2px 4px; text-align:center;">'
+                             '<b style="color:%s;">%s</b><br><span style="color:%s; font-size:10px;">%.2f</span></td>'
                              % (_am_color(sc), esc(m), _am_color(sc), sc))
             cells.append('</tr></table></td></tr>')
             T.append("".join(cells))
@@ -1905,29 +1953,48 @@ def format_report_html(rep):
         row("Ligands", esc(", ".join(rep["nearbyLigands"])))
 
     if rep["nearby"]:
-        hdr("Nearby (≤12 Å)", "#37474f")
         tagcol = {"pathogenic": "#ef5350", "deleterious": "#ffa726", "benign": "#66bb6a"}
-        chips = []
-        for n in rep["nearby"][:18]:
-            col = "#888"
+
+        def chip(n):
+            col = "#37474f"
             for t in n["tags"]:
                 col = "#b87800" if t == "PTM" else tagcol.get(t, col)
-            chips.append('<span style="color:%s;">%d&nbsp;(%.1f)</span>' % (col, n["pos"], n["dist"]))
-        row("Residues", ", ".join(chips))
+            tip = ("  " + "/".join(n["tags"])) if n["tags"] else ""
+            # clickable: jumps the report to that residue (ufv:res anchor)
+            return ('<a href="ufv:res:%d" title="residue %d%s" style="color:%s; text-decoration:none;">'
+                    '%d&nbsp;(%.1f)</a>' % (n["pos"], n["pos"], esc(tip), col, n["pos"], n["dist"]))
+
+        inner = [n for n in rep["nearby"] if n["dist"] <= 8.0]
+        outer = [n for n in rep["nearby"] if 8.0 < n["dist"] <= 12.0]
+        hdr("Nearby residues", "#37474f")
+        if inner:
+            row("≤ 8 Å", ", ".join(chip(n) for n in inner[:24]))
+        if outer:
+            row("8–12 Å", ", ".join(chip(n) for n in outer[:24]))
 
     T.append("</table>")
     return "".join(T)
 
 
-def format_ligand_html(resn, info, instances=1):
-    """Clean label/value table for a ligand's chemistry + Tanimoto similars (extension-like)."""
+def format_ligand_html(resn, info, instances=1, copies=None, cur=0):
+    """Clean label/value table for a ligand's chemistry + Tanimoto similars (extension-like).
+    When the component occurs multiple times, `copies` = [(chain, resi), ...] and `cur` is the focused
+    copy index; a ◂ i/N ▸ stepper (ufv:lig anchors) lets the user circulate the occurrences."""
     def esc(s):
         return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    n = instances if not copies else len(copies)
     T = ['<table cellspacing="0" cellpadding="3" style="font-family:sans-serif; font-size:12px;">']
-    title = "%s%s" % (esc(resn), (" ×%d" % instances) if instances > 1 else "")
+    title = "%s%s" % (esc(resn), (" ×%d" % n) if n > 1 else "")
     T.append('<tr><td colspan="2" style="font-size:14px;"><b style="color:#2e7d32;">%s</b> '
              '<span style="color:#888;">(CCD)</span></td></tr>' % title)
+    if copies and len(copies) > 1:
+        ch, resi = copies[cur % len(copies)]
+        T.append('<tr><td colspan="2" style="font-size:11px;">'
+                 '<a href="ufv:lig:prev" style="color:#1565c0; text-decoration:none;">◂</a>&nbsp;'
+                 'copy %d/%d <span style="color:#888;">(chain %s · %s)</span>&nbsp;'
+                 '<a href="ufv:lig:next" style="color:#1565c0; text-decoration:none;">▸</a>'
+                 '</td></tr>' % (cur % len(copies) + 1, len(copies), esc(ch or "?"), esc(resi)))
 
     def row(label, value):
         T.append('<tr><td style="color:#888; vertical-align:top; white-space:nowrap;">%s</td>'
@@ -2458,7 +2525,9 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.reset_btn = QtWidgets.QPushButton("Reset view"); br.addWidget(self.reset_btn)
             self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
 
-            self.detail = QtWidgets.QTextEdit(); self.detail.setReadOnly(True); self.detail.setMinimumHeight(150)
+            self.detail = QtWidgets.QTextBrowser(); self.detail.setMinimumHeight(150)
+            self.detail.setOpenLinks(False); self.detail.setOpenExternalLinks(False)
+            self.detail.anchorClicked.connect(self.on_anchor)
             agl.addWidget(self.detail)
 
             self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px; color:#555;")
@@ -2468,6 +2537,12 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
             self._QtGui = QtGui
             self._last_pos = None
+            self._last_rep = None          # cached residue_report dict for re-rendering (evidence toggle)
+            self._show_evidence = False    # variant-evidence fold state in the detail panel
+            self._lig_resn = None          # ligand component currently shown
+            self._lig_copies = []          # [(chain, resi), ...] occurrences of that component
+            self._lig_idx = 0              # focused occurrence
+            self._lig_chem = {}            # cached chemistry for the current ligand
             if self.cur_uid() and self.cur_uid() in _CACHE:
                 self.after_fetch()
 
@@ -2824,24 +2899,65 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                     except Exception as exc:
                         self.status.setText("Focus error: %s" % exc)
             try:
-                rep = residue_report(objs[0], uid, uni_pos)
-                self.detail.setHtml(format_report_html(rep))
+                self._last_rep = residue_report(objs[0], uid, uni_pos)
+                self._lig_resn = None      # leaving ligand context
+                self._show_evidence = False
+                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence))
             except Exception as exc:
+                self._last_rep = None
                 self.detail.setHtml("<i>Report error: %s</i>" % exc)
 
-        def on_ligand(self, resn):
+        def on_anchor(self, url):
+            """Handle in-report links: ufv:res:<n> (jump to residue), ufv:evi (toggle evidence),
+            ufv:lig:prev / ufv:lig:next (circulate same-named ligand copies)."""
+            s = url.toString() if hasattr(url, "toString") else str(url)
+            if s.startswith("ufv:res:"):
+                try:
+                    self.report_residue(int(s.rsplit(":", 1)[1]), focus=True)
+                except ValueError:
+                    pass
+            elif s == "ufv:evi":
+                self._show_evidence = not self._show_evidence
+                if self._last_rep:
+                    self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence))
+            elif s in ("ufv:lig:prev", "ufv:lig:next") and self._lig_copies:
+                self._lig_idx = (self._lig_idx + (1 if s.endswith("next") else -1)) % len(self._lig_copies)
+                ch, resi = self._lig_copies[self._lig_idx]
+                o = self.obj()
+                if o:
+                    ufv_ligand_focus(o, self._lig_resn, ch, resi)
+                self._render_ligand()
+
+        def on_ligand(self, resn, pick=None):
             o = self.obj()
             if not o:
                 return
-            ufv_ligand_focus(o, resn)
+            self._lig_resn = resn
+            self._lig_copies = ligand_instances(o, resn)
+            self._lig_idx = 0
+            if pick is not None and pick in self._lig_copies:
+                self._lig_idx = self._lig_copies.index(pick)
+            if self._lig_copies:
+                ch, resi = self._lig_copies[self._lig_idx]
+                ufv_ligand_focus(o, resn, ch, resi)
+            else:
+                ufv_ligand_focus(o, resn)
             self.detail.setHtml("<b>%s</b> — fetching chemistry…" % resn)
             self._async(lambda: ligand_chemistry(o),
                         lambda chem: self.show_ligand(resn, chem), "Fetching ligand chemistry ...")
 
         def show_ligand(self, resn, chem):
-            self.detail.setHtml(format_ligand_html(resn, chem.get(resn, {}),
-                                                    enumerate_ligands(self.obj() or "").get(resn, 1)))
+            self._lig_chem = chem
+            self._render_ligand()
             self.refresh_table()
+
+        def _render_ligand(self):
+            if not self._lig_resn:
+                return
+            info = (self._lig_chem or {}).get(self._lig_resn, {})
+            self.detail.setHtml(format_ligand_html(self._lig_resn, info,
+                                                   instances=len(self._lig_copies) or 1,
+                                                   copies=self._lig_copies, cur=self._lig_idx))
 
         # ---- 3D picking ----
         def toggle_pick(self):
@@ -2855,49 +2971,69 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             panel = self
 
             class _PickW(Wizard):
+                def __init__(self, _self=cmd):
+                    Wizard.__init__(self, _self)
+                    self.cmd.unpick()
+
                 def _report(self, info):
                     if not info:
                         return
                     ch, resi, resn, het = info[0]
                     o = panel.obj()
-                    if het:  # picked a ligand/cofactor → focus the ligand
-                        ufv_ligand_focus(o, resn)
-                        panel.on_ligand(resn)
+                    if het:  # picked a ligand/cofactor → focus that copy + show chemistry
+                        panel.on_ligand(resn, pick=(ch, resi))
                         return
-                    try:
-                        cmd.select("sele", "(%s) and chain %s and resi %s" % (o, ch, resi))
-                    except Exception:
-                        pass
                     uni = _resi_to_uni(o, ch, resi)
                     if uni is not None:
                         panel.report_residue(uni, focus=True)  # picking zooms in (extension-like)
-
-                def do_select(self, name):
-                    info = []
-                    try:
-                        cmd.iterate(name, "info.append((chain, resi, resn, hetatm))", space={"info": info})
-                    except Exception:
-                        pass
-                    cmd.delete(name); self._report(info); return None
+                    else:
+                        panel.status.setText("Picked %s%s — not mapped to a UniProt position." % (ch, resi))
 
                 def do_pick(self, bondFlag):
                     info = []
                     try:
-                        cmd.iterate("pk1", "info.append((chain, resi, resn, hetatm))", space={"info": info})
+                        self.cmd.iterate("pk1", "info.append((chain, resi, resn, hetatm))", space={"info": info})
                     except Exception:
                         pass
-                    cmd.unpick(); self._report(info); return None
+                    self.cmd.unpick()
+                    self._report(info)
+                    self.cmd.refresh_wizard()
+                    return None
+
+                def do_select(self, name):
+                    info = []
+                    try:
+                        self.cmd.iterate(name, "info.append((chain, resi, resn, hetatm))", space={"info": info})
+                    except Exception:
+                        pass
+                    try:
+                        self.cmd.delete(name)
+                    except Exception:
+                        pass
+                    self._report(info)
+                    return None
 
                 def get_prompt(self):
-                    return ["Click an atom to report its residue (UFV)."]
-            self._wizard = _PickW(); cmd.set_wizard(self._wizard)
+                    return ["Click an atom to report its residue (UFV pick mode)."]
+
+                def get_panel(self):
+                    return [[1, "UFV residue pick", ""], [2, "Done", "cmd.set_wizard()"]]
+
+            self._wizard = _PickW(cmd)
+            cmd.set_wizard(self._wizard)
+            try:
+                cmd.refresh_wizard()
+            except Exception:
+                pass
+            self.status.setText("Pick 3D on — click an atom in the viewer.")
 
         def _remove_wizard(self):
             try:
-                cmd.unset_wizard()
+                cmd.set_wizard()   # clear the active wizard
             except Exception:
                 pass
             self._wizard = None
+            self.status.setText("")
 
         # ---- filtered show/hide ----
         def show_filtered(self):
