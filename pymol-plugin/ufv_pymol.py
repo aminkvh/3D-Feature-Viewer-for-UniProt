@@ -76,6 +76,8 @@ PDBe_SIFTS = "https://www.ebi.ac.uk/pdbe/api/mappings/uniprot/{}"
 PDBe_BEST = "https://www.ebi.ac.uk/pdbe/api/mappings/best_structures/{}"
 PDBe_PDB = "https://www.ebi.ac.uk/pdbe/entry-files/download/pdb{}.ent"
 BEACONS_SUMMARY = "https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/uniprot/summary/{}.json"
+LIGAND_CCD = "https://data.rcsb.org/rest/v1/core/chemcomp/{}"
+PUBCHEM_FP = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{}/property/Fingerprint2D/JSON"
 
 _USER_AGENT = "UFV-PyMOL-plugin/1.0 (https://github.com/aminkvh/3D-Feature-Viewer-for-UniProt)"
 
@@ -888,6 +890,61 @@ def _compute_pockets(geom, am_mean, q_threshold=0.10):
 
 
 # ----------------------------------------------------------------------------------------------
+# Ligand chemistry + Tanimoto similarity (ported from api.js getLigandInfo / getLigandFingerprint)
+# ----------------------------------------------------------------------------------------------
+_LIG_CACHE = {}
+_FP_CACHE = {}
+
+
+def ligand_info(ccd):
+    """RCSB Chemical Component Dictionary entry for a CCD code: name/formula/SMILES/InChIKey/DrugBank."""
+    key = str(ccd).upper()
+    if key in _LIG_CACHE:
+        return _LIG_CACHE[key]
+    import urllib.parse
+    j = _get_json(LIGAND_CCD.format(urllib.parse.quote(key))) or {}
+    d = j.get("rcsb_chem_comp_descriptor") or {}
+    db = next((x for x in (j.get("rcsb_chem_comp_related") or []) if x.get("resource_name") == "DrugBank"), None)
+    info = {"id": key, "name": (j.get("chem_comp") or {}).get("name"),
+            "formula": (j.get("chem_comp") or {}).get("formula"),
+            "smiles": d.get("SMILES_stereo") or d.get("SMILES"), "inchikey": d.get("InChIKey"),
+            "drugbank": (db or {}).get("resource_accession_code")}
+    _LIG_CACHE[key] = info
+    return info
+
+
+def ligand_fingerprint(inchikey):
+    """PubChem 881-bit CACTVS 2D substructure fingerprint (decoded) for an InChIKey, or None."""
+    if not inchikey:
+        return None
+    if inchikey in _FP_CACHE:
+        return _FP_CACHE[inchikey]
+    import base64
+    import urllib.parse
+    j = _get_json(PUBCHEM_FP.format(urllib.parse.quote(inchikey)))
+    b64 = (((j or {}).get("PropertyTable") or {}).get("Properties") or [{}])[0].get("Fingerprint2D")
+    fp = None
+    if b64:
+        raw = base64.b64decode(b64)  # first 4 bytes are a length prefix, then 881 bits
+        fp = bytes(((raw[4 + (i >> 3)] if 4 + (i >> 3) < len(raw) else 0) >> (7 - (i & 7))) & 1 for i in range(881))
+    _FP_CACHE[inchikey] = fp
+    return fp
+
+
+def tanimoto(a, b):
+    """Tanimoto coefficient between two bit vectors (bytes of 0/1), or None if either is missing."""
+    if not a or not b:
+        return None
+    inter = union = 0
+    for x, y in zip(a, b):
+        if x and y:
+            inter += 1
+        if x or y:
+            union += 1
+    return inter / union if union else 0.0
+
+
+# ----------------------------------------------------------------------------------------------
 # Fetch orchestration
 # ----------------------------------------------------------------------------------------------
 def fetch_annotations(uid, force=False):
@@ -1388,6 +1445,52 @@ def ufv_ligands_hide(obj=None):
     with _batch():
         cmd.hide("sticks", _ligand_sel(obj))
         cmd.hide("spheres", "(%s) and inorganic" % obj)
+
+
+def enumerate_ligands(obj):
+    """Distinct ligand/cofactor components in the structure -> {resn: atom_count} (no water)."""
+    rows = []
+    try:
+        cmd.iterate(_ligand_sel(obj), "rows.append(resn)", space={"rows": rows})
+    except Exception:
+        pass
+    counts = {}
+    for r in rows:
+        counts[r] = counts.get(r, 0) + 1
+    return counts
+
+
+def ligand_chemistry(obj):
+    """For each distinct ligand in the structure, fetch CCD chemistry + PubChem fingerprint and rank
+    the others by Tanimoto similarity. Returns {resn: {info..., 'similar': [(resn, score)]}}.
+    Network-heavy — call off the UI thread."""
+    codes = sorted(enumerate_ligands(obj))
+    info = {c: ligand_info(c) for c in codes}
+    fps = {c: ligand_fingerprint(info[c].get("inchikey")) for c in codes}
+    out = {}
+    for c in codes:
+        sims = []
+        for d in codes:
+            if d == c:
+                continue
+            t = tanimoto(fps.get(c), fps.get(d))
+            if t is not None:
+                sims.append((d, round(t, 3)))
+        sims.sort(key=lambda x: -x[1])
+        out[c] = dict(info[c], similar=sims)
+    return out
+
+
+def ufv_ligand_focus(obj=None, resn=None):
+    """ufv_ligand_focus [object,] resn — zoom to a ligand and show it + its 5 Å pocket as sticks."""
+    obj = _resolve_object(obj)
+    lig = "(%s) and resn %s" % (obj, resn)
+    if not cmd.count_atoms(lig):
+        return
+    with _batch():
+        cmd.show("sticks", lig)
+        cmd.show("sticks", "byres ((%s) around 5) and polymer" % lig)
+    cmd.zoom(lig, 6)
 
 
 def ufv_domains(obj=None, uid=None):
@@ -2000,6 +2103,7 @@ if _HAS_PYMOL:
         ("ufv_report", ufv_report), ("ufv_focus", ufv_focus), ("ufv_resetview", ufv_resetview),
         ("ufv_align", ufv_align),
         ("ufv_ligands", ufv_ligands), ("ufv_ligands_hide", ufv_ligands_hide),
+        ("ufv_ligand_focus", ufv_ligand_focus),
         ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
     ]:
         cmd.extend(_name, _fn)
@@ -2120,7 +2224,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
             # annotation list + residue report
             trow = QtWidgets.QHBoxLayout(); lay.addLayout(trow)
-            self.list_kind = QtWidgets.QComboBox(); self.list_kind.addItems(["PTMs", "Variants", "Sites", "Domains"])
+            self.list_kind = QtWidgets.QComboBox(); self.list_kind.addItems(["PTMs", "Variants", "Sites", "Domains", "Ligands"])
             self.list_kind.currentIndexChanged.connect(lambda _i: self.refresh_table())
             trow.addWidget(self.list_kind)
             self.filter_edit = QtWidgets.QLineEdit(); self.filter_edit.setPlaceholderText("filter…")
@@ -2325,10 +2429,14 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             elif kind == "Sites":
                 for s in ann["sites"]:
                     rows.append((s["position"], s["description"], SITE_COLOR))
-            else:
+            elif kind == "Domains":
                 for d in ann["domains"]:
                     rng = "%d-%d" % (d["position"], d["endPosition"]) if d["isRange"] else str(d["position"])
                     rows.append((d["position"], "%s · %s" % (rng, d["description"]), d["color"]))
+            else:  # Ligands (from the loaded structure)
+                for resn, cnt in sorted(enumerate_ligands(self.obj() or "").items()):
+                    nm = (_LIG_CACHE.get(resn) or {}).get("name") or "(click for chemistry)"
+                    rows.append((resn, "%s — %s" % (resn, nm), "#8d6e63"))
             if flt:
                 rows = [r for r in rows if flt in r[1].lower() or flt in str(r[0])]
             self._filtered_rows = [(r[0], r[2]) for r in rows]
@@ -2346,10 +2454,40 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             it = self.table.item(r, 0)
             if not it:
                 return
+            if self.list_kind.currentText() == "Ligands":
+                self.on_ligand(it.text())
+                return
             try:
                 self.report_residue(int(it.text()))
             except ValueError:
                 pass
+
+        def on_ligand(self, resn):
+            o = self.obj()
+            if not o:
+                return
+            ufv_ligand_focus(o, resn)
+            self.detail.setHtml("<b>%s</b> — fetching chemistry…" % resn)
+            self._async(lambda: ligand_chemistry(o),
+                        lambda chem: self.show_ligand(resn, chem), "Fetching ligand chemistry ...")
+
+        def show_ligand(self, resn, chem):
+            info = chem.get(resn, {})
+            P = ['<b>%s</b> — %s' % (resn, info.get("name") or "?")]
+            if info.get("formula"):
+                P.append("Formula: %s" % info["formula"])
+            if info.get("smiles"):
+                P.append("SMILES: %s" % info["smiles"])
+            if info.get("inchikey"):
+                P.append("InChIKey: %s" % info["inchikey"])
+            if info.get("drugbank"):
+                P.append("DrugBank: %s" % info["drugbank"])
+            sims = info.get("similar") or []
+            if sims:
+                P.append("Similar in structure (Tanimoto): "
+                         + ", ".join("%s&nbsp;%.2f" % (d, s) for d, s in sims[:8]))
+            self.detail.setHtml("<br>".join(P))
+            self.refresh_table()  # ligand names are cached now
 
         def report_residue(self, uni_pos):
             o, uid = self.obj(), self.cur_uid()
@@ -2408,7 +2546,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
         # ---- filtered show/hide ----
         def show_filtered(self):
             o = self.obj()
-            rows = getattr(self, "_filtered_rows", None)
+            rows = [(p, c) for p, c in getattr(self, "_filtered_rows", []) if isinstance(p, int)]
             if not o or not rows:
                 return
             groups = {}
