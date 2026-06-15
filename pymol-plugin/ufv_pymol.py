@@ -572,16 +572,25 @@ def _ptm_variant_proximity(ptms, variants, geom):
     return result
 
 
+HUB_SAMPLE_SOURCES = 400  # Brandes is O(V·E); sampling sources makes it O(k·E) with ~same z-scores
+
+
 def _betweenness_hubs(geom, threshold=8.0):
     """Port of analysis.js betweennessHubs: Brandes' betweenness on the Cα contact graph, tiers by
-    absolute z-score. Returns {uniPos: 'strong'|'moderate'}."""
+    absolute z-score. For large chains betweenness is estimated from a random sample of source
+    nodes (k=HUB_SAMPLE_SOURCES) — the tiering uses z-scores, which the sampling preserves — so a
+    2000-residue chain drops from ~5 s to ~1 s. Returns {uniPos: 'strong'|'moderate'}."""
     nodes = [g for g in geom if g["uniPos"] is not None]
     n = len(nodes)
     if n < 8 or n > HUB_MAX_CA:
         return {}
     adj = _adjacency([(g["x"], g["y"], g["z"]) for g in nodes], threshold)
     bc = [0.0] * n
-    for s in range(n):
+    if n > HUB_SAMPLE_SOURCES:
+        sources = _random.Random(HOTSPOT_SEED).sample(range(n), HUB_SAMPLE_SOURCES)
+    else:
+        sources = range(n)
+    for s in sources:
         stack, pred = [], [[] for _ in range(n)]
         sigma = [0.0] * n
         sigma[s] = 1.0
@@ -748,6 +757,136 @@ def _am_profile(am_map, pos):
     return out
 
 
+# Constraint-pocket (port of algorithms.js UFVPocket.computePockets). Getis-Ord Gi* on the
+# residual of per-residue AlphaMissense mean after regressing out structural burial (coordination
+# number) — residues more evolutionarily constrained than their burial explains, clustered in 3D.
+PRISM_HSE = 13.0     # Å coordination-sphere radius (burial)
+PRISM_CUT = 13.0     # Å spatial-weight neighbourhood
+PRISM_SIGMA = 5.0    # Å Gaussian bandwidth
+PRISM_MAXN = 3000
+
+
+def _perm_count(n):
+    return 999 if n <= 600 else 599 if n <= 1200 else 399
+
+
+def _loess(X, Y, np, f=0.3):
+    n = len(X)
+    k = max(2, min(n, int(round(f * n))))
+    pred = np.empty(n)
+    for i in range(n):
+        d = np.abs(X - X[i])
+        h = np.partition(d, min(k - 1, n - 1))[min(k - 1, n - 1)] or 1e-9
+        u = d / h
+        w = np.where(u < 1, (1 - u ** 3) ** 3, 0.0)
+        sw = w.sum(); swx = (w * X).sum(); swy = (w * Y).sum()
+        swxx = (w * X * X).sum(); swxy = (w * X * Y).sum()
+        denom = sw * swxx - swx * swx
+        if abs(denom) < 1e-12:
+            pred[i] = swy / sw if sw else Y[i]
+        else:
+            b = (sw * swxy - swx * swy) / denom
+            pred[i] = (swy - b * swx) / sw + b * X[i]
+    return pred
+
+
+def _compute_pockets(geom, am_mean, q_threshold=0.10):
+    """{uniPos: 'pocket'|'exposed'} for constraint-pocket candidates with BH-FDR q <= threshold.
+    Burial context is the whole model (all chains); scored residues are those with an AlphaMissense
+    mean. PAE is not used (pure Euclidean weights), unlike the web app's optional PAE gating."""
+    try:
+        import numpy as np
+    except Exception:
+        return {}
+    C = np.array([(g["x"], g["y"], g["z"]) for g in geom], float)
+    recs = [(i, g) for i, g in enumerate(geom) if g["uniPos"] is not None and g["uniPos"] in am_mean]
+    n = len(recs)
+    if n < 12 or n > PRISM_MAXN:
+        return {}
+    ctx_idx = np.array([i for i, _ in recs])
+    P = C[ctx_idx]
+    am = np.array([am_mean[g["uniPos"]] for _, g in recs], float)
+
+    by_cr = {(g["chain"], g["resi"]): k for k, (_, g) in enumerate(recs)}
+    dirs = np.zeros((n, 3))
+    for k, (_, g) in enumerate(recs):
+        pv = by_cr.get((g["chain"], g["resi"] - 1))
+        nx = by_cr.get((g["chain"], g["resi"] + 1))
+        v = None
+        if pv is not None and nx is not None:
+            v = 2 * P[k] - P[pv] - P[nx]
+        elif pv is not None:
+            v = P[k] - P[pv]
+        elif nx is not None:
+            v = P[k] - P[nx]
+        if v is not None:
+            L = float(np.linalg.norm(v)) or 1.0
+            dirs[k] = v / L
+
+    hse2 = PRISM_HSE ** 2
+    cn = np.zeros(n); hse_up = np.zeros(n); hse_down = np.zeros(n)
+    blk = 256
+    for i0 in range(0, n, blk):
+        i1 = min(i0 + blk, n)
+        d = C[None, :, :] - P[i0:i1, None, :]           # (b, nctx, 3)
+        d2 = (d ** 2).sum(-1)
+        within = d2 <= hse2
+        for ii in range(i1 - i0):
+            k = i0 + ii
+            within[ii, ctx_idx[k]] = False
+            cn[k] = within[ii].sum()
+            if dirs[k].any():
+                proj = (d[ii] * dirs[k]).sum(-1)
+                hse_up[k] = (within[ii] & (proj > 0)).sum()
+                hse_down[k] = (within[ii] & (proj <= 0)).sum()
+
+    cut2 = PRISM_CUT ** 2
+    two_sig2 = 2 * PRISM_SIGMA ** 2
+    W = np.zeros((n, n))
+    for i0 in range(0, n, blk):
+        i1 = min(i0 + blk, n)
+        d2 = ((P[i0:i1, None, :] - P[None, :, :]) ** 2).sum(-1)
+        W[i0:i1] = np.where(d2 <= cut2, np.exp(-d2 / two_sig2), 0.0)
+    np.fill_diagonal(W, 0.0)
+    W[W < 1e-6] = 0.0
+
+    rp = am - _loess(cn, am, np, 0.3)
+    M = W + np.eye(n)                 # Gi*_i = rp[i] + Σ w_ij rp[j]
+    gi_obs = M.dot(rp)
+
+    perm = _perm_count(n)
+    rng = np.random.RandomState(HOTSPOT_SEED)
+    Rp = np.empty((n, perm))
+    for p in range(perm):
+        Rp[:, p] = rng.permutation(rp)
+    ge = (M.dot(Rp) >= gi_obs[:, None]).sum(1)
+
+    med_cn = float(np.median(cn))
+    best = {}  # uniPos -> (idx, p)
+    for k, (_, g) in enumerate(recs):
+        if rp[k] <= 0:
+            continue
+        p = (ge[k] + 1) / (perm + 1)
+        u = g["uniPos"]
+        if u not in best or p < best[u][1]:
+            best[u] = (k, p)
+    cands = sorted(best.items(), key=lambda kv: kv[1][1])  # by p
+    nc = len(cands)
+    qs = {}
+    for rank, (u, (k, p)) in enumerate(cands):
+        qs[u] = min(p * nc / (rank + 1), 1.0)
+    keys = [u for u, _ in cands]
+    for r in range(nc - 2, -1, -1):
+        qs[keys[r]] = min(qs[keys[r]], qs[keys[r + 1]])
+
+    out = {}
+    for u, (k, p) in cands:
+        if qs[u] <= q_threshold:
+            concavity = hse_up[k] / (hse_down[k] + 1)
+            out[u] = "pocket" if (cn[k] >= med_cn or concavity >= 1.3) else "exposed"
+    return out
+
+
 # ----------------------------------------------------------------------------------------------
 # Fetch orchestration
 # ----------------------------------------------------------------------------------------------
@@ -861,12 +1000,15 @@ def list_structures(uid, seqlen=0):
         seen.add((pid, ch))
         cov = it.get("coverage")
         covpct = round(cov * 100, 1) if cov is not None else None
+        res = it.get("resolution")
+        # Don't show the SIFTS-range coverage here (it overstates); the real modelled coverage is
+        # computed and shown after the structure loads.
         exp.append({"key": "%s_%s" % (pid, ch),
-                    "label": "%s chain %s%s — %s" % (pid, ch, " (%.0f%%)" % covpct if covpct else "",
-                                                     it.get("experimental_method", "experimental")),
+                    "label": "%s chain %s — %s%s" % (pid, ch, it.get("experimental_method", "experimental"),
+                                                     (" %.1f Å" % res) if res else ""),
                     "source": "PDB", "url": PDBe_PDB.format(pid.lower()), "fmt": "pdb",
                     "pdbId": pid, "chainId": ch, "numbering": "sifts", "cov": covpct,
-                    "_res": it.get("resolution") or 99.0})
+                    "_res": res or 99.0})
     # Proteins like insulin map to hundreds of PDB chains; sort best-coverage/-resolution first
     # and cap the list so the selector stays usable.
     exp.sort(key=lambda s: (-(s["cov"] or 0), s["_res"]))
@@ -1408,6 +1550,21 @@ def ufv_contacthubs(obj=None, uid=None):
     print("[UFV] %s: %d contact-hub residues." % (obj, n))
 
 
+def ufv_pockets(obj=None, uid=None):
+    """ufv_pockets [object [, uniprot_id]] — constraint-pocket prioritisation: residues more
+    evolutionarily constrained (AlphaMissense) than their structural burial explains, clustered in
+    3D. Buried/concave candidates are teal ('pocket'), exposed ones purple."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    if not ann.get("amMean"):
+        print("[UFV] no AlphaMissense data — constraint-pocket needs it.")
+        return
+    _set_cartoon_layer(obj, "pockets")
+    cats = _compute_pockets(_ca_geometry(obj), ann["amMean"])
+    n = _color_tiers(obj, cats, {"pocket": "#00897b", "exposed": "#8e24aa"})
+    print("[UFV] %s: %d constraint-pocket residues." % (obj, n))
+
+
 def residue_report(obj, uid, uni_pos):
     """Everything the extension's detail panel shows for one residue, as a plain dict."""
     ann = fetch_annotations(uid)
@@ -1838,7 +1995,7 @@ if _HAS_PYMOL:
         ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
         ("ufv_alphamissense", ufv_alphamissense), ("ufv_burden", ufv_burden),
         ("ufv_plddt", ufv_plddt), ("ufv_bfactor", ufv_bfactor),
-        ("ufv_hotspots", ufv_hotspots), ("ufv_contacthubs", ufv_contacthubs),
+        ("ufv_hotspots", ufv_hotspots), ("ufv_contacthubs", ufv_contacthubs), ("ufv_pockets", ufv_pockets),
         ("ufv_structures", ufv_structures), ("ufv_use", ufv_use),
         ("ufv_report", ufv_report), ("ufv_focus", ufv_focus), ("ufv_resetview", ufv_resetview),
         ("ufv_align", ufv_align),
@@ -1957,7 +2114,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             ccrow.addWidget(QtWidgets.QLabel("Colour"))
             self.cart = QtWidgets.QComboBox()
             self.cart.addItems(["None", "Domains", "Topology", "pLDDT", "B-factor", "AlphaMissense",
-                                "Burden", "Hotspots", "Contact hubs"])
+                                "Burden", "Hotspots", "Contact hubs", "Constraint pocket"])
             ccrow.addWidget(self.cart, 1)
             self.cart.currentIndexChanged.connect(lambda _i: self.apply_cartoon())
 
@@ -2132,9 +2289,15 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             if choice == "Hotspots":
                 work = lambda: _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann.get("variants", [])))
                 colors = {"strong": "#b71c1c", "moderate": "#e64a19", "weak": "#ffa726"}
-            else:
+            elif choice == "Contact hubs":
                 work = lambda: _per_chain_merge(geom, _betweenness_hubs)
                 colors = {"strong": "#6a1b9a", "moderate": "#ab47bc"}
+            else:  # Constraint pocket
+                if not ann.get("amMean"):
+                    self.status.setText("Constraint pocket needs AlphaMissense data.")
+                    self.cart.setCurrentIndex(0); return
+                work = lambda: _compute_pockets(geom, ann["amMean"])
+                colors = {"pocket": "#00897b", "exposed": "#8e24aa"}
 
             def apply(tiers):
                 _set_cartoon_layer(o, choice.lower()); _color_tiers(o, tiers, colors)
@@ -2354,8 +2517,8 @@ if _HAS_PYMOL:
     print("[UFV] 3D Feature Viewer for UniProt loaded. Open the panel with: ufv_gui  |  commands: "
           "ufv_fetch, ufv_structures, ufv_use, ufv_load, ufv_map, ufv_chain, ufv_ptms, ufv_variants, "
           "ufv_sites, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt, ufv_bfactor, "
-          "ufv_hotspots, ufv_contacthubs, ufv_ligands, ufv_report, ufv_focus, ufv_resetview, ufv_align, "
-          "ufv_hide, ufv_clear, ufv_info")
+          "ufv_hotspots, ufv_contacthubs, ufv_pockets, ufv_ligands, ufv_report, ufv_focus, "
+          "ufv_resetview, ufv_align, ufv_hide, ufv_clear, ufv_info")
 
 
 # ----------------------------------------------------------------------------------------------
