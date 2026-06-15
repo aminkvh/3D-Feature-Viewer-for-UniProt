@@ -2438,7 +2438,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
         def __init__(self):
             super(_UFVPanel, self).__init__()
             self._workers = set()
-            self._wizard = None
+            self._pick_timer = None
             self.setWindowTitle("3D Feature Viewer for UniProt")
             self.resize(540, 790)
             self.setMinimumWidth(500)
@@ -2529,10 +2529,6 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self._filter_timer.timeout.connect(self.refresh_table)
             self.filter_edit.textChanged.connect(lambda _t: self._filter_timer.start())
             tr.addWidget(self.filter_edit, 1)
-            self.show_filt_btn = QtWidgets.QPushButton("Show"); self.show_filt_btn.setToolTip("Show all filtered rows as markers")
-            self.show_filt_btn.clicked.connect(self.show_filtered); tr.addWidget(self.show_filt_btn)
-            self.hide_filt_btn = QtWidgets.QPushButton("Hide"); self.hide_filt_btn.clicked.connect(self.hide_filtered)
-            tr.addWidget(self.hide_filt_btn)
 
             self.table = QtWidgets.QTableWidget(0, 2)
             self.table.setHorizontalHeaderLabels(["Pos", "Annotation"])
@@ -2541,21 +2537,21 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
             self.table.setMinimumHeight(150)
-            self.table.cellClicked.connect(self.on_row)            # single click = report (no zoom)
-            self.table.cellDoubleClicked.connect(self.on_row_zoom)  # double click = zoom in
+            self.table.cellClicked.connect(self.on_row)            # click a row = zoom in
+            self.table.cellDoubleClicked.connect(self.on_row)
             agl.addWidget(self.table, 1)
 
-            hint = QtWidgets.QLabel("Row: click = view · double-click = zoom · 3D: click an atom then 'Report picked'")
+            hint = QtWidgets.QLabel("Click a row to zoom in · turn on Pick 3D and click an atom in the viewer")
             hint.setStyleSheet("color:#888; font-size:10px;"); agl.addWidget(hint)
             br = QtWidgets.QHBoxLayout(); agl.addLayout(br)
+            self.show_filt_btn = QtWidgets.QPushButton("Show"); self.show_filt_btn.setToolTip("Show all filtered rows as markers")
+            self.show_filt_btn.clicked.connect(self.show_filtered); br.addWidget(self.show_filt_btn)
+            self.hide_filt_btn = QtWidgets.QPushButton("Hide"); self.hide_filt_btn.setToolTip("Hide the filtered-row markers")
+            self.hide_filt_btn.clicked.connect(self.hide_filtered); br.addWidget(self.hide_filt_btn)
             self.cb_pick = QtWidgets.QCheckBox("Pick 3D"); br.addWidget(self.cb_pick)
+            self.cb_pick.setToolTip("Click any atom in the PyMOL viewer to zoom to its residue/ligand")
             self.cb_pick.clicked.connect(self.toggle_pick)
-            self.pick_btn = QtWidgets.QPushButton("Report picked")
-            self.pick_btn.setToolTip("Click an atom in the PyMOL viewer, then this — reports that residue/ligand")
-            self.pick_btn.clicked.connect(self.report_picked); br.addWidget(self.pick_btn)
             br.addStretch(1)
-            self.zoom_btn = QtWidgets.QPushButton("Zoom selected"); self.zoom_btn.clicked.connect(self.zoom_selected)
-            br.addWidget(self.zoom_btn)
             self.reset_btn = QtWidgets.QPushButton("Reset view"); br.addWidget(self.reset_btn)
             self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
 
@@ -2899,17 +2895,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             return it.text() if it else None
 
         def on_row(self, r, _c):
-            val = self._row_pos(r)
-            if val is None:
-                return
-            if self.list_kind.currentText() == "Ligands":
-                self.on_ligand(val); return
-            try:
-                self.report_residue(int(val), focus=False)
-            except ValueError:
-                pass
-
-        def on_row_zoom(self, r, _c):
+            """Clicking a row zooms straight in (residue or ligand)."""
             val = self._row_pos(r)
             if val is None:
                 return
@@ -2919,25 +2905,6 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 self.report_residue(int(val), focus=True)
             except ValueError:
                 pass
-
-        def zoom_selected(self):
-            """Re-zoom to the current selection — residue OR ligand copy — so the button and 3D pick
-            follow the same logic regardless of what was last selected."""
-            sel = self._sel
-            if not sel:
-                self.status.setText("Select a residue or ligand first."); return
-            if sel["kind"] == "res":
-                for o in self.target_objs():
-                    ufv_focus(o, sel["pos"])
-            elif sel["kind"] == "lig":
-                o = self.obj()
-                if not o:
-                    return
-                if self._lig_copies:
-                    ch, resi = self._lig_copies[self._lig_idx % len(self._lig_copies)]
-                    ufv_ligand_focus(o, sel["resn"], ch, resi)
-                else:
-                    ufv_ligand_focus(o, sel["resn"])
 
         def report_residue(self, uni_pos, focus=False):
             objs, uid = self.target_objs(), self.cur_uid()
@@ -3021,113 +2988,58 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                                                    copies=self._lig_copies, cur=self._lig_idx))
 
         # ---- 3D picking ----
-        def report_picked(self):
-            """Report whatever atom is currently picked in the viewer (pk1 / sele). This is the
-            reliable path: click an atom in PyMOL (it becomes pk1/sele), then press this — it works
-            regardless of whether the live pick wizard fired on this PyMOL build."""
-            o = self.obj()
-            if not o:
-                self.status.setText("Load a structure first."); return
-            info = []
-            for src in ("pk1", "sele", "(sele)"):
+        # Implemented by polling PyMOL's own selection rather than a Wizard. Wizard pick callbacks
+        # proved unreliable across builds (and the wizard recoloured the scene on activation). Here,
+        # turning Pick 3D on just watches the "sele" PyMOL creates whenever the user clicks an atom:
+        # we read that atom, zoom to its residue/ligand, and clear the selection. Nothing is recoloured.
+        def toggle_pick(self):
+            if self.cb_pick.isChecked():
+                t = getattr(self, "_pick_timer", None)
+                if t is None:
+                    t = QtCore.QTimer(self); t.setInterval(250)
+                    t.timeout.connect(self._poll_pick); self._pick_timer = t
                 try:
-                    if cmd.count_atoms(src):
-                        cmd.iterate(src, "info.append((chain, resi, resn, hetatm))", space={"info": info})
-                        if info:
-                            break
+                    cmd.deselect()
                 except Exception:
                     pass
-            if not info:
-                self.status.setText("No atom picked — click an atom in the viewer first."); return
-            ch, resi, resn, het = info[0]
-            if het:
-                self.on_ligand(resn, pick=(ch, resi)); return
-            uni = _resi_to_uni(o, ch, resi)
-            if uni is not None:
-                self.report_residue(uni, focus=True)
+                t.start()
+                self.status.setText("Pick 3D on — click any atom (protein or ligand) to zoom in.")
             else:
-                self.status.setText("Picked %s/%s — not mapped to a UniProt position." % (ch, resi))
+                t = getattr(self, "_pick_timer", None)
+                if t is not None:
+                    t.stop()
+                self.status.setText("")
 
-        def toggle_pick(self):
-            self._install_wizard() if self.cb_pick.isChecked() else self._remove_wizard()
-
-        def _install_wizard(self):
+        def _poll_pick(self):
+            o = self.obj()
+            if not o:
+                return
             try:
-                from pymol.wizard import Wizard
-            except Exception as e:
-                self.status.setText("3D pick unavailable (%s)" % e); self.cb_pick.setChecked(False); return
-            panel = self
-
-            class _PickW(Wizard):
-                def __init__(self, _self=cmd):
-                    Wizard.__init__(self, _self)
-                    self.cmd.unpick()
-
-                def _report(self, info):
-                    if not info:
-                        return
-                    ch, resi, resn, het = info[0]
-                    o = panel.obj()
-                    if het:  # picked a ligand/cofactor → focus that copy + show chemistry
-                        panel.on_ligand(resn, pick=(ch, resi))
-                        return
-                    uni = _resi_to_uni(o, ch, resi)
-                    if uni is not None:
-                        panel.report_residue(uni, focus=True)  # picking zooms in (extension-like)
-                    else:
-                        panel.status.setText("Picked %s%s — not mapped to a UniProt position." % (ch, resi))
-
-                def do_pick(self, bondFlag):
-                    info = []
-                    try:
-                        self.cmd.iterate("pk1", "info.append((chain, resi, resn, hetatm))", space={"info": info})
-                    except Exception:
-                        pass
-                    self.cmd.unpick()
-                    self._report(info)
-                    self.cmd.refresh_wizard()
-                    return None
-
-                def do_select(self, name):
-                    info = []
-                    try:
-                        self.cmd.iterate(name, "info.append((chain, resi, resn, hetatm))", space={"info": info})
-                    except Exception:
-                        pass
-                    try:
-                        self.cmd.delete(name)
-                    except Exception:
-                        pass
-                    self._report(info)
-                    return None
-
-                def get_prompt(self):
-                    return ["Click an atom to report its residue (UFV pick mode)."]
-
-                def get_panel(self):
-                    return [[1, "UFV residue pick", ""], [2, "Done", "cmd.set_wizard()"]]
-
-            try:
-                view = cmd.get_view()       # setting a wizard can yank the camera; pin it
+                if cmd.count_atoms("sele") == 0:
+                    return
             except Exception:
-                view = None
-            self._wizard = _PickW(cmd)
-            cmd.set_wizard(self._wizard)
+                return
+            info = []
             try:
-                cmd.refresh_wizard()
-                if view is not None:
-                    cmd.set_view(view)
+                cmd.iterate("sele", "info.append((chain, resi, resn, hetatm, model))", space={"info": info})
+            except Exception:
+                return
+            try:
+                cmd.deselect()      # clear the click so it isn't re-read and the pink dots disappear
             except Exception:
                 pass
-            self.status.setText("Pick 3D on — click an atom, then 'Report picked' if needed.")
-
-        def _remove_wizard(self):
-            try:
-                cmd.set_wizard()   # clear the active wizard
-            except Exception:
-                pass
-            self._wizard = None
-            self.status.setText("")
+            info = [t for t in info if t[4] != _UFV_LIGLABEL]   # ignore the focus label pseudoatom
+            if not info:
+                return
+            ch, resi, resn, het, _model = info[0]
+            if het:
+                self.on_ligand(resn, pick=(ch, resi))
+            else:
+                uni = _resi_to_uni(o, ch, resi)
+                if uni is not None:
+                    self.report_residue(uni, focus=True)
+                else:
+                    self.status.setText("Picked %s/%s — not mapped to a UniProt position." % (ch, resi))
 
         # ---- filtered show/hide ----
         def show_filtered(self):
@@ -3183,7 +3095,9 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.cart.setCurrentIndex(0); self.detail.setHtml("")
 
         def closeEvent(self, ev):
-            self._remove_wizard()
+            t = getattr(self, "_pick_timer", None)
+            if t is not None:
+                t.stop()
             super(_UFVPanel, self).closeEvent(ev)
 
     return _UFVPanel

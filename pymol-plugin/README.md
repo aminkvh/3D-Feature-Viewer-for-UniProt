@@ -75,18 +75,17 @@ and stays responsive).
    hubs sampled for large chains).
 5. **Report**: pick an annotation type — PTMs / Variants / Sites / Domains / **Ligands** — and
    browse the **colour-coded list** (filter box — large sets are capped to the first 600 rows for
-   responsiveness; narrow with the filter to see the rest — plus Show/Hide all filtered, tooltips). Click a residue
-   row and the view **zooms in** (residue + 5 Å neighbourhood as annotation-coloured sticks, cartoon
-   dimmed) while a **sectioned, colour-coded detail panel** shows variants (with **collapsible
-   evidence** — ClinVar / review status / dbSNP / disease behind a *show evidence* toggle), features,
-   AlphaMissense mean + the full substitution grid, nearby ligands, and **clickable** nearby residues
-   split into **≤ 8 Å** and **8–12 Å** bands (click one to jump the report there). Click a **ligand**
-   row to zoom to it and see its chemistry (name / formula / SMILES / DrugBank) and the most
-   **Tanimoto-similar** ligands (DrugBank links out); when a component occurs several times, a
-   **◂ i/N ▸** stepper circulates the copies. To drive the report from the 3D view, click an atom in
-   the PyMOL viewer and press **Report picked** (protein → residue, ligand → that copy) — this works
-   on every PyMOL build; the **Pick 3D** live-wizard checkbox does the same on builds that support it.
-   **Reset view** zooms back out; **Align** superposes multiple loaded structures.
+   responsiveness; narrow with the filter to see the rest). **Click any row to zoom in**: the view
+   focuses the residue + its 5 Å neighbourhood as annotation-coloured sticks (cartoon dimmed) while a
+   **sectioned, colour-coded detail panel** shows variants (with **collapsible evidence** — ClinVar /
+   review status / dbSNP / disease behind a *show evidence* toggle), features, AlphaMissense mean +
+   the full substitution grid, nearby ligands, and **clickable** nearby residues split into **≤ 8 Å**
+   and **8–12 Å** bands (click one to jump the report there). Click a **ligand** row to zoom to it and
+   see its chemistry (name / formula / SMILES / DrugBank links out) and the most **Tanimoto-similar**
+   ligands; when a component occurs several times, a **◂ i/N ▸** stepper circulates the copies (each
+   highlighted in 3D with a label). The button row under the list is **Show · Hide** (the
+   filtered-row markers), **Pick 3D**, and **Reset view**. Tick **Pick 3D** then click any atom in the
+   PyMOL viewer to zoom straight to its residue/ligand. **Align** superposes multiple loaded structures.
 
 Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
 fast, and the whole panel is scrollable so it never outgrows the screen.
