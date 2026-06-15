@@ -1345,7 +1345,10 @@ def _batch():
             cmd.set("suspend_updates", "off")
             if az is not None:
                 cmd.set("auto_zoom", az)
-            cmd.refresh()
+            # NB: no cmd.refresh() here. refresh() forces a synchronous re-render of the WHOLE
+            # scene (every loaded structure) on every action — the main reason actions felt slow
+            # with several structures loaded. Turning suspend_updates off already marks the scene
+            # dirty; PyMOL repaints on its normal cycle.
         except Exception:
             pass
 
@@ -1383,15 +1386,27 @@ def _set_sphere_layer(obj, tag, groups):
         st.pop(tag, None)
         return 0
     st[tag] = groups
+    # Map every UniProt position to its colour index once, then colour the (small) layer object in a
+    # SINGLE alter pass. Re-deriving a big resi-list selection per consequence colour and letting
+    # PyMOL re-parse it was the remaining cost for large variant sets — alter walks only the copied
+    # Cα atoms (a few hundred/thousand) with no selection-string parsing.
+    pos_color = {}
+    for color, positions in groups.items():
+        idx = cmd.get_color_index(_color_name(color))
+        for p in positions:
+            pos_color[int(p)] = idx
+    base_idx = cmd.get_color_index("gray80")
+
+    def _idx(chain, resi):
+        return pos_color.get(_resi_to_uni(obj, chain, resi), base_idx)
+
     with _batch():
         cmd.create(lobj, sel)            # copy only the Cα atoms into a separate, cartoon-free object
         cmd.hide("everything", lobj)
         cmd.show("spheres", lobj)
         _tune_sphere_obj(lobj)
-        for color, positions in groups.items():
-            csel = _sel_for_positions(obj, positions, ca_only=True, target=lobj)
-            if csel:
-                cmd.color(_color_name(color), csel)
+        cmd.alter(lobj, "color = _idx(chain, resi)", space={"_idx": _idx})
+        cmd.recolor(lobj)
     return len(allpos)
 
 
@@ -2349,6 +2364,9 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.struct_combo = QtWidgets.QComboBox(); r2.addWidget(self.struct_combo, 1)
             self.load_btn = QtWidgets.QPushButton("Load"); r2.addWidget(self.load_btn)
             self.load_btn.clicked.connect(self.on_load_selected)
+            self.loadall_btn = QtWidgets.QPushButton("Load all")
+            self.loadall_btn.setToolTip("Download and load every listed structure")
+            self.loadall_btn.clicked.connect(self.on_load_all); r2.addWidget(self.loadall_btn)
             self.align_btn = QtWidgets.QPushButton("Align"); self.align_btn.setToolTip("Superpose all loaded structures")
             self.align_btn.clicked.connect(lambda: ufv_align()); r2.addWidget(self.align_btn)
             hr = QtWidgets.QHBoxLayout(); sgl.addLayout(hr)
@@ -2406,7 +2424,12 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.list_kind.currentIndexChanged.connect(lambda _i: self.refresh_table())
             tr.addWidget(self.list_kind)
             self.filter_edit = QtWidgets.QLineEdit(); self.filter_edit.setPlaceholderText("filter…")
-            self.filter_edit.textChanged.connect(lambda _t: self.refresh_table())
+            # Debounce: rebuilding a multi-thousand-row table on every keystroke is what made the
+            # filter feel laggy. Coalesce keystrokes and refresh once the user pauses (250 ms).
+            self._filter_timer = QtCore.QTimer(self); self._filter_timer.setSingleShot(True)
+            self._filter_timer.setInterval(250)
+            self._filter_timer.timeout.connect(self.refresh_table)
+            self.filter_edit.textChanged.connect(lambda _t: self._filter_timer.start())
             tr.addWidget(self.filter_edit, 1)
             self.show_filt_btn = QtWidgets.QPushButton("Show"); self.show_filt_btn.setToolTip("Show all filtered rows as markers")
             self.show_filt_btn.clicked.connect(self.show_filtered); tr.addWidget(self.show_filt_btn)
@@ -2578,6 +2601,39 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.cart.setCurrentIndex(0)
             self.set_active(name)
 
+        def on_load_all(self):
+            structs = _STATE.get("structures") or []
+            if not structs:
+                self.status.setText("Fetch, then load."); return
+            uid = self.cur_uid()
+
+            def work():
+                out = []
+                for s in structs:
+                    try:
+                        out.append((s, _prepare_structure(s, uid)))
+                    except Exception:
+                        out.append((s, None))
+                return out
+
+            def apply(results):
+                first = None
+                for s, prep in results:
+                    if prep and prep.get("path"):
+                        try:
+                            nm = _load_from_path(s, prep["path"], uid, prep.get("segments"))
+                            first = first or nm
+                        except Exception:
+                            pass
+                for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
+                    cb.setChecked(False)
+                self.cart.setCurrentIndex(0)
+                if first:
+                    self.set_active(first)
+                self.refresh_objs()
+                self.status.setText("Loaded %d of %d structures." % (len(self.loaded_objs()), len(results)))
+            self._async(work, apply, "Downloading %d structures ..." % len(structs))
+
         def update_colour_modes(self):
             predicted = _structure_is_predicted(self.obj())
             model = self.cart.model()
@@ -2703,9 +2759,14 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 modelled = {g["uniPos"] for g in _ca_geometry(o) if g["uniPos"] is not None}
             self._filtered_rows = [(r[0], r[2]) for r in rows
                                    if modelled is None or not isinstance(r[0], int) or r[0] in modelled]
-            self.table.setRowCount(len(rows))
+            # Cap how many rows we actually build as widgets. Creating thousands of QTableWidgetItems
+            # (e.g. the full variant set) is slow and freezes the panel; the marker overlay and
+            # "Show all filtered" still use the complete set above. Narrow with the filter box to see more.
+            MAX_ROWS = 600
+            shown = rows[:MAX_ROWS]
+            self.table.setRowCount(len(shown))
             QtGui = self._QtGui
-            for r, (pos, text, color) in enumerate(rows):
+            for r, (pos, text, color) in enumerate(shown):
                 it0 = QtWidgets.QTableWidgetItem(str(pos)); it1 = QtWidgets.QTableWidgetItem(text)
                 unmod = modelled is not None and isinstance(pos, int) and pos not in modelled
                 if unmod:
@@ -2719,6 +2780,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                     tip = text
                 it0.setToolTip(tip); it1.setToolTip(tip)
                 self.table.setItem(r, 0, it0); self.table.setItem(r, 1, it1)
+            if len(rows) > len(shown):
+                self.status.setText("Showing %d of %d — use the filter to narrow." % (len(shown), len(rows)))
 
         def _row_pos(self, r):
             it = self.table.item(r, 0)
@@ -2754,11 +2817,17 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             if not objs or not uid:
                 return
             self._last_pos = uni_pos
-            rep = residue_report(objs[0], uid, uni_pos)
-            self.detail.setHtml(format_report_html(rep))
-            if focus:
+            if focus:  # zoom FIRST so a slow/failing report compute can never swallow the double-click
                 for o in objs:  # aligned copies overlap, so the last zoom frames them all
-                    ufv_focus(o, uni_pos)
+                    try:
+                        ufv_focus(o, uni_pos)
+                    except Exception as exc:
+                        self.status.setText("Focus error: %s" % exc)
+            try:
+                rep = residue_report(objs[0], uid, uni_pos)
+                self.detail.setHtml(format_report_html(rep))
+            except Exception as exc:
+                self.detail.setHtml("<i>Report error: %s</i>" % exc)
 
         def on_ligand(self, resn):
             o = self.obj()

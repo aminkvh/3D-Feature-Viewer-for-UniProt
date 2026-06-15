@@ -63,8 +63,9 @@ and stays responsive).
 
 1. Enter an accession → **Fetch** (reports counts).
 2. Pick a **structure** — AlphaFold, any experimental PDB chain (best-coverage first), or a
-   computed model — and **Load selected**. Numbering is automatic (AlphaFold/computed → identity,
-   PDB → SIFTS). `ufv_structures` / `ufv_use <key>` do the same from the command line.
+   computed model — and **Load** (or **Load all** to pull every listed structure at once).
+   Numbering is automatic (AlphaFold/computed → identity, PDB → SIFTS). `ufv_structures` /
+   `ufv_use <key>` do the same from the command line.
 3. **Layers**: PTMs / Sites / **Ligands** checkboxes; Variants with per-consequence chips +
    **reviewed** only (off = the full variant-viewer set).
 4. **Cartoon colouring** (single selector): Domains, Topology, pLDDT (predicted only), B-factor
@@ -73,7 +74,8 @@ and stays responsive).
    loaded coordinates off the UI thread (numpy-accelerated — hotspots/pockets ≈0.5 s, contact
    hubs sampled for large chains).
 5. **Report**: pick an annotation type — PTMs / Variants / Sites / Domains / **Ligands** — and
-   browse the **colour-coded list** (filter box, Show/Hide all filtered, tooltips). Click a residue
+   browse the **colour-coded list** (filter box — large sets are capped to the first 600 rows for
+   responsiveness; narrow with the filter to see the rest — plus Show/Hide all filtered, tooltips). Click a residue
    row and the view **zooms in** (residue + 5 Å neighbourhood as annotation-coloured sticks, cartoon
    dimmed) while a **sectioned, colour-coded detail panel** shows variants (ClinVar / dbSNP /
    AlphaMissense / disease), features, AlphaMissense mean + profile, nearby ligands, and nearby
