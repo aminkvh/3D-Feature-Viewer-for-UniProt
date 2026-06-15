@@ -297,6 +297,7 @@ def _extract_variants(variation, am_map):
             "reviewed": _classify_provenance(f) == "UniProt reviewed",
             "diseases": _disease_labels(f),
             "clinVar": ", ".join(s.get("type", "") for s in sigs if s.get("type")),
+            "clinVarReview": ", ".join(filter(None, (s.get("reviewStatus") or s.get("review_status") or "" for s in sigs))),
             "rsIds": sorted(rs),
             "alphaMissense": am,
         })
@@ -1056,26 +1057,55 @@ def _sifts_segments(pdb_id, uid):
     return segs
 
 
+def _isoform_structures(uid):
+    """Non-canonical isoform AlphaFold models (e.g. AF-P35498-2). Their AlphaFold model URL comes
+    from each isoform's 3D-Beacons summary. Numbering follows the isoform sequence; canonical
+    annotations are assumed identical except in spliced regions (no VSP remapping here)."""
+    base = uid.split("-")[0]
+    u = _get_json(UNIPROT_URL.format(base)) or {}
+    iso_ids = []
+    for c in (u.get("comments") or []):
+        if c.get("commentType") == "ALTERNATIVE PRODUCTS":
+            for iso in (c.get("isoforms") or []):
+                for iid in (iso.get("isoformIds") or []):
+                    if iid and iid not in (base, base + "-1"):
+                        iso_ids.append(iid)
+    out = []
+    for iid in iso_ids:
+        d = _get_json(BEACONS_SUMMARY.format(iid)) or {}
+        af = next((sm for e in (d.get("structures") or []) for sm in [e.get("summary") or e]
+                   if sm.get("model_url") and re.search("alphafold", sm.get("provider", ""), re.I)), None)
+        if not af:
+            continue
+        fmt = str(af.get("model_format", "")).upper()
+        out.append({"key": "AF-%s" % iid, "label": "AlphaFold isoform %s" % iid, "source": "AlphaFold",
+                    "url": af["model_url"], "fmt": "pdb" if fmt == "PDB" else "mmcif",
+                    "pdbId": None, "chainId": None, "numbering": "identity", "cov": None})
+    return out
+
+
 def list_structures(uid, seqlen=0):
     """Available structures for an accession (for the structure selector): the canonical AlphaFold
-    model, experimental PDB chains (PDBe best_structures, numbered via SIFTS on load), and computed
-    models (3D-Beacons). Each item carries how to number it. Mirrors api.js getStructures (the
-    common cases)."""
+    model, non-canonical isoform AlphaFold models, experimental PDB chains (PDBe best_structures,
+    numbered via SIFTS on load), and computed models (3D-Beacons). Mirrors api.js getStructures."""
     uid = uid.upper()
     out = []
-    # AlphaFold model URL, PDBe best_structures and 3D-Beacons summary fetched concurrently.
+    # AlphaFold URL, isoform models, PDBe best_structures and 3D-Beacons summary fetched concurrently.
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         f_af = ex.submit(_alphafold_url, uid)
+        f_iso = ex.submit(_isoform_structures, uid)
         f_best = ex.submit(_get_json, PDBe_BEST.format(uid))
         f_summ = ex.submit(_get_json, BEACONS_SUMMARY.format(uid))
         af = f_af.result()
+        isoforms = f_iso.result()
         best = f_best.result() or {}
         summ_data = f_summ.result() or {}
     if af:
         out.append({"key": "AF-%s" % uid, "label": "AlphaFold — predicted, full length",
                     "source": "AlphaFold", "url": af, "fmt": "pdb",
                     "pdbId": None, "chainId": None, "numbering": "identity", "cov": 100.0})
+    out.extend(isoforms)
     items = best.get(uid) or best.get(uid.upper()) or []
     seen = set()
     exp = []
@@ -1297,10 +1327,14 @@ def _cons_token(cons):
 
 @contextlib.contextmanager
 def _batch():
-    """Suspend PyMOL scene updates while running many cmd ops, then rebuild once. Without this,
-    every show/set/color triggers a full rebuild — painting thousands of variant spheres one
-    selection at a time froze the viewer."""
+    """Suspend PyMOL scene updates while running many cmd ops, then rebuild once. Also disables
+    auto_zoom for the duration: PyMOL zooms to any newly created object/selection by default, so
+    creating a marker layer (cmd.create) used to yank the camera ("it zooms when I enable PTMs").
+    The user's auto_zoom setting is restored afterwards."""
+    az = None
     try:
+        az = cmd.get("auto_zoom")
+        cmd.set("auto_zoom", 0)
         cmd.set("suspend_updates", "on")
     except Exception:
         pass
@@ -1309,6 +1343,8 @@ def _batch():
     finally:
         try:
             cmd.set("suspend_updates", "off")
+            if az is not None:
+                cmd.set("auto_zoom", az)
             cmd.refresh()
         except Exception:
             pass
@@ -1478,15 +1514,16 @@ def ufv_ligands_hide(obj=None):
 
 
 def enumerate_ligands(obj):
-    """Distinct ligand/cofactor components in the structure -> {resn: atom_count} (no water)."""
+    """Ligand/cofactor components in the structure -> {resn: instance_count} (distinct chain+resi
+    copies, no water) so multiple copies of the same ligand are counted."""
     rows = []
     try:
-        cmd.iterate(_ligand_sel(obj), "rows.append(resn)", space={"rows": rows})
+        cmd.iterate(_ligand_sel(obj), "rows.append((resn, chain, resi))", space={"rows": rows})
     except Exception:
         pass
     counts = {}
-    for r in rows:
-        counts[r] = counts.get(r, 0) + 1
+    for resn in set(rows):
+        counts[resn[0]] = counts.get(resn[0], 0) + 1
     return counts
 
 
@@ -1734,7 +1771,7 @@ def residue_report(obj, uid, uni_pos):
         "sites": [s for s in ann["sites"] if s["position"] <= uni_pos <= s["endPosition"]],
         "domains": [d for d in ann["domains"] if d["position"] <= uni_pos <= d["endPosition"]],
         "amMean": ann["amMean"].get(uni_pos),
-        "amProfile": ann.get("amByPos", {}).get(uni_pos, [])[:6],
+        "amProfile": ann.get("amByPos", {}).get(uni_pos, []),  # full 19-substitution profile
         "nearby": near,
         "nearbyLigands": sorted(set(ligs)),
     }
@@ -1774,6 +1811,14 @@ def format_report(rep):
     return "\n".join(L)
 
 
+def _am_color(score):
+    """AlphaMissense colour: red likely-pathogenic (>=0.564), green likely-benign (<=0.34), amber
+    ambiguous between — matching the extension's substitution grid."""
+    if score is None:
+        return "#888"
+    return "#d32f2f" if score >= 0.564 else "#4caf50" if score <= 0.34 else "#f5a623"
+
+
 def format_report_html(rep):
     """Clean label/value layout for the GUI detail panel, mirroring the extension's residue card:
     a header, then colour-coded section headers with aligned 'label : value' rows (no indentation)."""
@@ -1785,29 +1830,34 @@ def format_report_html(rep):
 
     T = ['<table cellspacing="0" cellpadding="3" '
          'style="font-family:sans-serif; font-size:12px; border-collapse:collapse;">']
-    T.append('<tr><td colspan="2" style="font-size:13px; padding-bottom:2px;">'
-             '<b>%s</b> &nbsp; residue <b>%s%d</b></td></tr>' % (esc(rep["uid"]), esc(rep["aa"]), rep["pos"]))
+    T.append('<tr><td colspan="2" style="font-size:15px; padding-bottom:2px;">'
+             '<b>%s%d</b></td></tr>' % (esc(rep["aa"]), rep["pos"]))
 
     def hdr(title, color):
         T.append('<tr><td colspan="2" style="border-top:1px solid #ccc; padding-top:5px;">'
                  '<b style="color:%s;">%s</b></td></tr>' % (color, esc(title)))
 
-    def row(label, value, vcolor=None):
+    def row(label, value, vcolor=None, bold=False):
+        # label is a controlled string / pre-built HTML (variant mutations); value is caller-escaped
         v = ('<span style="color:%s;">%s</span>' % (vcolor, value)) if vcolor else value
-        T.append('<tr><td style="color:#888; vertical-align:top; white-space:nowrap;">%s</td>'
-                 '<td style="vertical-align:top;">%s</td></tr>' % (esc(label), v))
+        lab = ('<b>%s</b>' % label) if bold else ('<span style="color:#888;">%s</span>' % label)
+        T.append('<tr><td style="vertical-align:top; white-space:nowrap;">%s</td>'
+                 '<td style="vertical-align:top;">%s</td></tr>' % (lab, v))
 
     if rep["variants"]:
         hdr("Variants", "#c62828")
         for v in rep["variants"]:
             mut = "%s%d%s" % (esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")))
-            row(mut, esc(v["consequence"]), v.get("consequenceColor", "#9e9e9e"))
+            c = v.get("consequenceColor", "#9e9e9e")
+            row('<span style="color:%s;">%s</span>' % (c, mut), esc(v["consequence"]), c, bold=True)
             if v.get("clinVar"):
                 row("ClinVar", esc(v["clinVar"]))
+            if v.get("clinVarReview"):
+                row("Review", esc(v["clinVarReview"]))
             if v.get("rsIds"):
                 row("dbSNP", esc(", ".join(v["rsIds"])))
             if v.get("alphaMissense") is not None:
-                row("AlphaMissense", "%.2f" % v["alphaMissense"])
+                row("AlphaMissense", "%.2f" % v["alphaMissense"], _am_color(v["alphaMissense"]))
             if v.get("diseases"):
                 row("Disease", esc("; ".join(v["diseases"])))
 
@@ -1822,9 +1872,18 @@ def format_report_html(rep):
 
     if rep["amMean"] is not None:
         hdr("AlphaMissense", "#6a1b9a")
-        row("Mean", "%.3f" % rep["amMean"])
+        row("Mean", "%.3f" % rep["amMean"], _am_color(rep["amMean"]))
         if rep.get("amProfile"):
-            row("Top subs", " · ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
+            # full substitution grid, 3 per row, coloured by pathogenicity
+            cells = ['<tr><td colspan="2"><table cellspacing="2"><tr>']
+            for i, (w, m, sc) in enumerate(rep["amProfile"]):
+                if i and i % 3 == 0:
+                    cells.append('</tr><tr>')
+                cells.append('<td style="background:#f3f3f3; padding:2px 5px;">'
+                             '<b style="color:%s;">%s</b>&nbsp;<span style="color:%s;">%.3f</span></td>'
+                             % (_am_color(sc), esc(m), _am_color(sc), sc))
+            cells.append('</tr></table></td></tr>')
+            T.append("".join(cells))
 
     if rep.get("nearbyLigands"):
         hdr("Nearby ligands (≤5 Å)", "#6d4c41")
@@ -1841,6 +1900,45 @@ def format_report_html(rep):
             chips.append('<span style="color:%s;">%d&nbsp;(%.1f)</span>' % (col, n["pos"], n["dist"]))
         row("Residues", ", ".join(chips))
 
+    T.append("</table>")
+    return "".join(T)
+
+
+def format_ligand_html(resn, info, instances=1):
+    """Clean label/value table for a ligand's chemistry + Tanimoto similars (extension-like)."""
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    T = ['<table cellspacing="0" cellpadding="3" style="font-family:sans-serif; font-size:12px;">']
+    title = "%s%s" % (esc(resn), (" ×%d" % instances) if instances > 1 else "")
+    T.append('<tr><td colspan="2" style="font-size:14px;"><b style="color:#2e7d32;">%s</b> '
+             '<span style="color:#888;">(CCD)</span></td></tr>' % title)
+
+    def row(label, value):
+        T.append('<tr><td style="color:#888; vertical-align:top; white-space:nowrap;">%s</td>'
+                 '<td style="vertical-align:top;">%s</td></tr>' % (esc(label), value))
+    if info.get("name"):
+        row("Name", esc(info["name"]))
+    if info.get("formula"):
+        row("Formula", esc(info["formula"]))
+    if info.get("smiles"):
+        row("SMILES", '<span style="font-family:monospace; font-size:11px;">%s</span>' % esc(info["smiles"]))
+    if info.get("inchikey"):
+        row("InChIKey", '<span style="font-family:monospace; font-size:11px;">%s</span>' % esc(info["inchikey"]))
+    if info.get("drugbank"):
+        row("DrugBank", esc(info["drugbank"]))
+    sims = info.get("similar") or []
+    if sims:
+        T.append('<tr><td colspan="2" style="border-top:1px solid #ccc; padding-top:5px;">'
+                 '<b style="color:#6d4c41;">Similar in structure (Tanimoto)</b></td></tr>')
+        cells = ['<tr><td colspan="2"><table cellspacing="2"><tr>']
+        for i, (d, s) in enumerate(sims[:12]):
+            if i and i % 3 == 0:
+                cells.append('</tr><tr>')
+            cells.append('<td style="background:#f3f3f3; padding:2px 6px;">'
+                         '<b style="color:#2e7d32;">%s</b>&nbsp;%.2f</td>' % (esc(d), s))
+        cells.append('</tr></table></td></tr>')
+        T.append("".join(cells))
     T.append("</table>")
     return "".join(T)
 
@@ -1868,6 +1966,9 @@ def _clear_focus(obj, restore_spheres=True):
     try:
         cmd.hide("sticks", prev["sticks"])
         cmd.unset("stick_color", prev["sticks"])
+        if prev.get("sel"):
+            cmd.hide("spheres", prev["sel"])
+            cmd.color("gray80", prev["sel"])  # undo the element colouring of the selected residue
     except Exception:
         pass
     if restore_spheres:
@@ -1910,6 +2011,12 @@ def ufv_focus(obj=None, uni_pos=None):
         for c, chres in by_color.items():
             clauses = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in chres.items())
             cmd.set("stick_color", _color_name(c), "(%s) and (%s)" % (obj, clauses))
+        # The selected residue itself: ball-and-stick coloured by element (atom types).
+        cmd.show("spheres", sel)
+        cmd.set("sphere_scale", 0.28, sel)
+        cmd.color("atomic", "(%s) and (not elem C)" % sel)
+        cmd.color("gray85", "(%s) and elem C" % sel)
+        cmd.unset("stick_color", sel)  # let element colours show on the selected residue's sticks
         # Hide ALL annotation sphere layers while zoomed in (declutters; cmd.disable is instant —
         # no rebuild). Restored on reset / next clear.
         disabled = []
@@ -1922,7 +2029,7 @@ def ufv_focus(obj=None, uni_pos=None):
                     disabled.append(lobj)
                 except Exception:
                     pass
-    _FOCUS_SHOWN[obj] = {"sticks": focus_sel, "disabled": disabled}
+    _FOCUS_SHOWN[obj] = {"sticks": focus_sel, "sel": sel, "disabled": disabled}
     cmd.zoom(focus_sel, 3, animate=0)
 
 
@@ -2585,17 +2692,32 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             else:
                 for resn, cnt in sorted(enumerate_ligands(self.obj() or "").items()):
                     nm = (_LIG_CACHE.get(resn) or {}).get("name") or "(click for chemistry)"
-                    rows.append((resn, "%s — %s" % (resn, nm), "#8d6e63"))
+                    tag = " ×%d" % cnt if cnt > 1 else ""
+                    rows.append((resn, "%s%s — %s" % (resn, tag, nm), "#2e7d32"))
             if flt:
                 rows = [r for r in rows if flt in r[1].lower() or flt in str(r[0])]
-            self._filtered_rows = [(r[0], r[2]) for r in rows]
+            # Which UniProt positions are actually modelled in the active structure (grey out the rest).
+            modelled = None
+            o = self.obj()
+            if o and kind != "Ligands":
+                modelled = {g["uniPos"] for g in _ca_geometry(o) if g["uniPos"] is not None}
+            self._filtered_rows = [(r[0], r[2]) for r in rows
+                                   if modelled is None or not isinstance(r[0], int) or r[0] in modelled]
             self.table.setRowCount(len(rows))
             QtGui = self._QtGui
             for r, (pos, text, color) in enumerate(rows):
                 it0 = QtWidgets.QTableWidgetItem(str(pos)); it1 = QtWidgets.QTableWidgetItem(text)
-                brush = QtGui.QBrush(QtGui.QColor(color))
-                it0.setForeground(brush); it1.setForeground(brush)
-                it0.setToolTip(text); it1.setToolTip(text)
+                unmod = modelled is not None and isinstance(pos, int) and pos not in modelled
+                if unmod:
+                    grey = QtGui.QBrush(QtGui.QColor("#bbbbbb"))
+                    it0.setForeground(grey); it1.setForeground(grey)
+                    it0.setFlags(QtCore.Qt.NoItemFlags); it1.setFlags(QtCore.Qt.NoItemFlags)
+                    tip = text + "  (not modelled in this structure)"
+                else:
+                    brush = QtGui.QBrush(QtGui.QColor(color))
+                    it0.setForeground(brush); it1.setForeground(brush)
+                    tip = text
+                it0.setToolTip(tip); it1.setToolTip(tip)
                 self.table.setItem(r, 0, it0); self.table.setItem(r, 1, it1)
 
         def _row_pos(self, r):
@@ -2648,16 +2770,9 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                         lambda chem: self.show_ligand(resn, chem), "Fetching ligand chemistry ...")
 
         def show_ligand(self, resn, chem):
-            info = chem.get(resn, {})
-            P = ['<b>%s</b> — %s' % (resn, info.get("name") or "?")]
-            for k in ("formula", "smiles", "inchikey", "drugbank"):
-                if info.get(k):
-                    P.append("%s: %s" % (k.capitalize(), info[k]))
-            sims = info.get("similar") or []
-            if sims:
-                P.append("Similar in structure (Tanimoto): "
-                         + ", ".join("%s&nbsp;%.2f" % (d, s) for d, s in sims[:8]))
-            self.detail.setHtml("<br>".join(P)); self.refresh_table()
+            self.detail.setHtml(format_ligand_html(resn, chem.get(resn, {}),
+                                                    enumerate_ligands(self.obj() or "").get(resn, 1)))
+            self.refresh_table()
 
         # ---- 3D picking ----
         def toggle_pick(self):
@@ -2672,20 +2787,26 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
             class _PickW(Wizard):
                 def _report(self, info):
-                    if info:
-                        ch, resi = info[0]
-                        try:
-                            cmd.select("sele", "(%s) and chain %s and resi %s" % (panel.obj(), ch, resi))
-                        except Exception:
-                            pass
-                        uni = _resi_to_uni(panel.obj(), ch, resi)
-                        if uni is not None:
-                            panel.report_residue(uni, focus=True)  # picking zooms in (extension-like)
+                    if not info:
+                        return
+                    ch, resi, resn, het = info[0]
+                    o = panel.obj()
+                    if het:  # picked a ligand/cofactor → focus the ligand
+                        ufv_ligand_focus(o, resn)
+                        panel.on_ligand(resn)
+                        return
+                    try:
+                        cmd.select("sele", "(%s) and chain %s and resi %s" % (o, ch, resi))
+                    except Exception:
+                        pass
+                    uni = _resi_to_uni(o, ch, resi)
+                    if uni is not None:
+                        panel.report_residue(uni, focus=True)  # picking zooms in (extension-like)
 
                 def do_select(self, name):
                     info = []
                     try:
-                        cmd.iterate(name, "info.append((chain, resi))", space={"info": info})
+                        cmd.iterate(name, "info.append((chain, resi, resn, hetatm))", space={"info": info})
                     except Exception:
                         pass
                     cmd.delete(name); self._report(info); return None
@@ -2693,7 +2814,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 def do_pick(self, bondFlag):
                     info = []
                     try:
-                        cmd.iterate("pk1", "info.append((chain, resi))", space={"info": info})
+                        cmd.iterate("pk1", "info.append((chain, resi, resn, hetatm))", space={"info": info})
                     except Exception:
                         pass
                     cmd.unpick(); self._report(info); return None
