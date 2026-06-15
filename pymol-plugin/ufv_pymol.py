@@ -2439,6 +2439,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             super(_UFVPanel, self).__init__()
             self._workers = set()
             self._pick_timer = None
+            self._picker = None
             self.setWindowTitle("3D Feature Viewer for UniProt")
             self.resize(540, 790)
             self.setMinimumWidth(500)
@@ -2988,15 +2989,17 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                                                    copies=self._lig_copies, cur=self._lig_idx))
 
         # ---- 3D picking ----
-        # Implemented by polling PyMOL's own selection rather than a Wizard. Wizard pick callbacks
-        # proved unreliable across builds (and the wizard recoloured the scene on activation). Here,
-        # turning Pick 3D on just watches the "sele" PyMOL creates whenever the user clicks an atom:
-        # we read that atom, zoom to its residue/ligand, and clear the selection. Nothing is recoloured.
+        # Two capture paths feed one handler so picking works regardless of PyMOL build:
+        #   1. a native Wizard (do_select / do_pick) — fires the instant you click an atom;
+        #   2. a QTimer that watches the "sele" PyMOL creates on a click — a fallback if (1) is quiet.
+        # _handle_pick is debounced so the two paths never double-act, ALWAYS zooms (it does not depend
+        # on an accession being fetched), and writes a status line so it's obvious the click registered.
         def toggle_pick(self):
             if self.cb_pick.isChecked():
+                self._install_picker()
                 t = getattr(self, "_pick_timer", None)
                 if t is None:
-                    t = QtCore.QTimer(self); t.setInterval(250)
+                    t = QtCore.QTimer(self); t.setInterval(200)
                     t.timeout.connect(self._poll_pick); self._pick_timer = t
                 try:
                     cmd.deselect()
@@ -3005,15 +3008,73 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 t.start()
                 self.status.setText("Pick 3D on — click any atom (protein or ligand) to zoom in.")
             else:
+                self._remove_picker()
                 t = getattr(self, "_pick_timer", None)
                 if t is not None:
                     t.stop()
                 self.status.setText("")
 
-        def _poll_pick(self):
-            o = self.obj()
-            if not o:
+        def _install_picker(self):
+            try:
+                from pymol.wizard import Wizard
+            except Exception:
+                self._picker = None
                 return
+            panel = self
+
+            class _Picker(Wizard):
+                def get_prompt(self):
+                    return ["Click any atom to zoom to its residue / ligand."]
+
+                def get_panel(self):
+                    return [[1, "UFV pick", ""], [2, "Stop picking", "cmd.set_wizard()"]]
+
+                def _grab(self, selection):
+                    atoms = []
+                    try:
+                        m = self.cmd.get_model(selection)
+                        atoms = list(getattr(m, "atom", []))
+                    except Exception:
+                        pass
+                    try:
+                        self.cmd.deselect()
+                    except Exception:
+                        pass
+                    if atoms:
+                        a = atoms[0]
+                        panel._handle_pick(a.chain, a.resi, a.resn, int(getattr(a, "hetatm", 0) or 0))
+
+                def do_select(self, selection):
+                    self._grab(selection)
+                    try:
+                        self.cmd.refresh_wizard()
+                    except Exception:
+                        pass
+                    return None
+
+                def do_pick(self, bondFlag):
+                    self._grab("pk1")
+                    try:
+                        self.cmd.unpick()
+                    except Exception:
+                        pass
+                    return None
+
+            try:
+                self._picker = _Picker()
+                cmd.set_wizard(self._picker)
+            except Exception:
+                self._picker = None
+
+        def _remove_picker(self):
+            if getattr(self, "_picker", None) is not None:
+                try:
+                    cmd.set_wizard()
+                except Exception:
+                    pass
+                self._picker = None
+
+        def _poll_pick(self):
             try:
                 if cmd.count_atoms("sele") == 0:
                     return
@@ -3022,24 +3083,45 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             info = []
             try:
                 cmd.iterate("sele", "info.append((chain, resi, resn, hetatm, model))", space={"info": info})
-            except Exception:
-                return
-            try:
                 cmd.deselect()      # clear the click so it isn't re-read and the pink dots disappear
             except Exception:
-                pass
-            info = [t for t in info if t[4] != _UFV_LIGLABEL]   # ignore the focus label pseudoatom
-            if not info:
                 return
-            ch, resi, resn, het, _model = info[0]
+            info = [t for t in info if t[4] != _UFV_LIGLABEL]   # ignore the focus label pseudoatom
+            if info:
+                ch, resi, resn, het, _model = info[0]
+                self._handle_pick(ch, resi, resn, het)
+
+        def _handle_pick(self, ch, resi, resn, het):
+            import time
+            key = (ch, resi, resn, het)
+            now = time.time()
+            if key == getattr(self, "_last_pick", None) and now - getattr(self, "_last_pick_t", 0) < 0.6:
+                return                                  # debounce: the two capture paths firing together
+            self._last_pick, self._last_pick_t = key, now
+            o = self.obj()
+            if not o:
+                self.status.setText("Pick: load a structure first."); return
             if het:
                 self.on_ligand(resn, pick=(ch, resi))
-            else:
-                uni = _resi_to_uni(o, ch, resi)
-                if uni is not None:
-                    self.report_residue(uni, focus=True)
-                else:
-                    self.status.setText("Picked %s/%s — not mapped to a UniProt position." % (ch, resi))
+                self.status.setText("Picked ligand %s (%s/%s)" % (resn, ch, resi)); return
+            uni = _resi_to_uni(o, ch, resi)
+            if uni is None:
+                self.status.setText("Picked %s/%s — not mapped to a UniProt position." % (ch, resi)); return
+            self._sel = {"kind": "res", "pos": uni}; self._last_pos = uni
+            try:                                        # ALWAYS zoom — independent of fetched annotations
+                for ob in self.target_objs() or [o]:
+                    ufv_focus(ob, uni)
+            except Exception as exc:
+                self.status.setText("Focus error: %s" % exc); return
+            uid = self.cur_uid()
+            if uid:                                     # detail panel is best-effort
+                try:
+                    self._last_rep = residue_report(o, uid, uni)
+                    self._show_evidence = False
+                    self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence))
+                except Exception:
+                    pass
+            self.status.setText("Picked residue %s%d" % (resn[:1] if resn else "", uni))
 
         # ---- filtered show/hide ----
         def show_filtered(self):
@@ -3098,6 +3180,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             t = getattr(self, "_pick_timer", None)
             if t is not None:
                 t.stop()
+            self._remove_picker()
             super(_UFVPanel, self).closeEvent(ev)
 
     return _UFVPanel
