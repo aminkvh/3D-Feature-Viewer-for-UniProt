@@ -72,7 +72,8 @@ and stays responsive).
    (experimental only), AlphaMissense, Burden, **Hotspots**, **Contact hubs**, **Constraint
    pocket**. Colours match the extension exactly; the structure-dependent analyses run on the
    loaded coordinates off the UI thread (numpy-accelerated — hotspots/pockets ≈0.5 s, contact
-   hubs sampled for large chains).
+   hubs sampled for large chains). Applying a colouring is a single `alter` pass over the atoms
+   (no per-residue selection parsing), so it stays fast even on large/AlphaFill models.
 5. **Report**: pick an annotation type — PTMs / Variants / Sites / Domains / **Ligands** — and
    browse the **colour-coded list** (filter box — large sets are capped to the first 600 rows for
    responsiveness; narrow with the filter to see the rest). **Click any row to zoom in**: the view

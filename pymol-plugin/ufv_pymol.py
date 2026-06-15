@@ -1245,10 +1245,15 @@ def _resi_to_uni(obj, chain, resi):
 # ----------------------------------------------------------------------------------------------
 # Projection helpers
 # ----------------------------------------------------------------------------------------------
+_COLOR_REGISTERED = set()
+
+
 def _color_name(hex_str):
     h = hex_str.lstrip("#")
     name = "ufv_%s" % h
-    cmd.set_color(name, [int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0])
+    if name not in _COLOR_REGISTERED:   # set_color is cheap but this is called per colour per redraw
+        cmd.set_color(name, [int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0])
+        _COLOR_REGISTERED.add(name)
     return name
 
 
@@ -1635,18 +1640,17 @@ def ufv_domains(obj=None, uid=None):
     ann = fetch_annotations(_resolve_uid(uid))
     _set_cartoon_layer(obj, "domains")
     dom_spheres = {}
+    pos_color = {}
     n = 0
-    with _batch():
-        for d in ann["domains"]:
-            positions = list(range(d["position"], d["endPosition"] + 1))
-            if d["isRange"]:
-                sel = _sel_for_positions(obj, positions)
-                if not sel:
-                    continue
-                cmd.color(_color_name(d["color"]), sel)  # cartoon = atom colour (intended here)
-            else:
-                dom_spheres.setdefault(d["color"], []).append(d["position"])
-            n += 1
+    for d in ann["domains"]:
+        if d["isRange"]:
+            for p in range(d["position"], d["endPosition"] + 1):
+                pos_color[p] = d["color"]
+        else:
+            dom_spheres.setdefault(d["color"], []).append(d["position"])
+        n += 1
+    if pos_color:
+        _recolor_positions(obj, pos_color)
     _set_sphere_layer(obj, "dom", dom_spheres or None)
     print("[UFV] %s: coloured %d domain/region features." % (obj, n))
 
@@ -1656,15 +1660,12 @@ def ufv_topology(obj=None, uid=None):
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
     _set_cartoon_layer(obj, "topology")
-    n = 0
-    with _batch():
-        for t in ann["topology"]:
-            sel = _sel_for_positions(obj, list(range(t["start"], t["end"] + 1)))
-            if not sel:
-                continue
-            cmd.color(_color_name(t["color"]), sel)
-            n += 1
-    print("[UFV] %s: coloured %d topology segments." % (obj, n))
+    pos_color = {}
+    for t in ann["topology"]:
+        for p in range(t["start"], t["end"] + 1):
+            pos_color[p] = t["color"]
+    _recolor_positions(obj, pos_color)
+    print("[UFV] %s: coloured %d topology segments." % (obj, len(ann["topology"])))
 
 
 def ufv_alphamissense(obj=None, uid=None):
@@ -1676,16 +1677,11 @@ def ufv_alphamissense(obj=None, uid=None):
         print("[UFV] no AlphaMissense scores available for %s." % ann["uid"])
         return
     _set_cartoon_layer(obj, "alphamissense")
-    buckets = {"#3d85c8": [], "#b9c2cf": [], "#e06666": [], "#b71c1c": []}
+    pos_color = {}
     for pos, avg in am.items():
-        c = "#b71c1c" if avg >= 0.78 else "#e06666" if avg >= 0.564 else "#b9c2cf" if avg >= 0.34 else "#3d85c8"
-        buckets[c].append(pos)
-    with _batch():
-        cmd.color(_color_name("#b9c2cf"), obj)
-        for color, positions in buckets.items():
-            sel = _sel_for_positions(obj, positions)
-            if sel:
-                cmd.color(_color_name(color), sel)
+        pos_color[pos] = ("#b71c1c" if avg >= 0.78 else "#e06666" if avg >= 0.564
+                          else "#b9c2cf" if avg >= 0.34 else "#3d85c8")
+    _recolor_positions(obj, pos_color, base_hex="#b9c2cf")
     print("[UFV] %s: coloured by AlphaMissense (%d scored positions)." % (obj, len(am)))
 
 
@@ -1694,9 +1690,7 @@ def ufv_burden(obj=None, uid=None):
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
     _set_cartoon_layer(obj, "burden")
-    sel = _sel_for_positions(obj, sorted(ann["burden"]))
-    if sel:
-        cmd.color(_color_name("#e65100"), sel)
+    _recolor_positions(obj, {p: "#e65100" for p in ann["burden"]})
     print("[UFV] %s: %d burden-positive residues." % (obj, len(ann["burden"])))
 
 
@@ -1756,17 +1750,43 @@ def _ca_geometry(obj, refresh=False):
     return geom
 
 
+def _recolor_positions(obj, pos_color, base_hex=None):
+    """Colour `obj`'s polymer atoms from a {uniProtPos: hex} map in ONE `alter` pass. This replaces
+    the old 'one cmd.color per colour group with a big resi-list selection' pattern, whose repeated
+    selection parsing over the whole structure was the slow part of every cartoon-colouring mode.
+    `alter` walks the atoms once in C; `_resi_to_uni` is memoised per residue. Atoms not in the map
+    keep their colour, or take `base_hex` if given. Returns how many positions were coloured."""
+    idx_map = {}
+    for pos, hexc in pos_color.items():
+        idx_map[int(pos)] = cmd.get_color_index(_color_name(hexc))
+    if not idx_map and base_hex is None:
+        return 0
+    base_idx = cmd.get_color_index(_color_name(base_hex)) if base_hex else None
+    memo = {}
+
+    def _idx(chain, resi, color):
+        key = (chain, resi)
+        if key not in memo:
+            w = idx_map.get(_resi_to_uni(obj, chain, resi))
+            if w is None:
+                w = base_idx
+            memo[key] = w
+        v = memo[key]
+        return color if v is None else v
+
+    with _batch():
+        cmd.alter("(%s) and polymer" % obj, "color = _idx(chain, resi, color)", space={"_idx": _idx})
+        cmd.recolor(obj)
+    return len(idx_map)
+
+
 def _color_tiers(obj, tiers, colors):
-    groups = {}
+    pos_color = {}
     for uni, tier in tiers.items():
         c = colors.get(tier)
         if c:
-            groups.setdefault(c, []).append(uni)
-    with _batch():
-        for c, positions in groups.items():
-            sel = _sel_for_positions(obj, positions)
-            if sel:
-                cmd.color(_color_name(c), sel)
+            pos_color[uni] = c
+    _recolor_positions(obj, pos_color)
     return len(tiers)
 
 
