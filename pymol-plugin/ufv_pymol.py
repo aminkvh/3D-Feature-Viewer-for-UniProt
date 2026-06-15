@@ -967,10 +967,18 @@ def fetch_annotations(uid, force=False):
     if not force and uid in _CACHE:
         return _CACHE[uid]
     print("[UFV] fetching annotations for %s ..." % uid)
-    features = _get_json(FEATURES_URL.format(uid))
-    variation = _get_json(VARIATION_URL.format(uid))
-    uniprot = _get_json(UNIPROT_URL.format(uid))
-    am_map = _parse_am_csv(_get_text(AM_CSV_URL.format(uid)))
+    # Fetch the independent endpoints in parallel — the AlphaMissense CSV is large, so doing them
+    # concurrently cuts wall time from the sum to the slowest single request.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_features = ex.submit(_get_json, FEATURES_URL.format(uid))
+        f_variation = ex.submit(_get_json, VARIATION_URL.format(uid))
+        f_uniprot = ex.submit(_get_json, UNIPROT_URL.format(uid))
+        f_am = ex.submit(_get_text, AM_CSV_URL.format(uid))
+        features = f_features.result()
+        variation = f_variation.result()
+        uniprot = f_uniprot.result()
+        am_map = _parse_am_csv(f_am.result())
 
     sites_uni = _extract_sites_uniprot(uniprot)
     sites_api = _extract_sites(features)
@@ -1055,12 +1063,19 @@ def list_structures(uid, seqlen=0):
     common cases)."""
     uid = uid.upper()
     out = []
-    af = _alphafold_url(uid)
+    # AlphaFold model URL, PDBe best_structures and 3D-Beacons summary fetched concurrently.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_af = ex.submit(_alphafold_url, uid)
+        f_best = ex.submit(_get_json, PDBe_BEST.format(uid))
+        f_summ = ex.submit(_get_json, BEACONS_SUMMARY.format(uid))
+        af = f_af.result()
+        best = f_best.result() or {}
+        summ_data = f_summ.result() or {}
     if af:
         out.append({"key": "AF-%s" % uid, "label": "AlphaFold — predicted, full length",
                     "source": "AlphaFold", "url": af, "fmt": "pdb",
                     "pdbId": None, "chainId": None, "numbering": "identity", "cov": 100.0})
-    best = _get_json(PDBe_BEST.format(uid)) or {}
     items = best.get(uid) or best.get(uid.upper()) or []
     seen = set()
     exp = []
@@ -1085,8 +1100,7 @@ def list_structures(uid, seqlen=0):
     # and cap the list so the selector stays usable.
     exp.sort(key=lambda s: (-(s["cov"] or 0), s["_res"]))
     out.extend(exp[:STRUCTURE_LIST_CAP])
-    summ = _get_json(BEACONS_SUMMARY.format(uid)) or {}
-    for e in (summ.get("structures") or []):
+    for e in (summ_data.get("structures") or []):
         sm = e.get("summary") or e
         murl = sm.get("model_url")
         if not murl:
@@ -1447,7 +1461,8 @@ def ufv_ligands(obj=None, uid=None):
             cmd.show("spheres", ions)
             cmd.set("sphere_scale", 0.3, ions)
         try:
-            cmd.color("atomic", "(%s) and (not elem C)" % sel)  # CPK colour non-carbon, keep carbon
+            cmd.color("green", "(%s) and elem C" % sel)        # ligand carbons green (stand out from grey protein)
+            cmd.color("atomic", "(%s) and (not elem C)" % sel)  # CPK colour the rest
         except Exception:
             pass
     print("[UFV] %s: ligands shown (%d atoms)." % (obj, n))
@@ -1504,8 +1519,9 @@ def ufv_ligand_focus(obj=None, resn=None):
         return
     with _batch():
         cmd.show("sticks", lig)
+        cmd.color("green", "%s and elem C" % lig)
         cmd.show("sticks", "byres ((%s) around 5) and polymer" % lig)
-    cmd.zoom(lig, 6)
+    cmd.zoom(lig, 6, animate=0)
 
 
 def ufv_domains(obj=None, uid=None):
@@ -1759,74 +1775,74 @@ def format_report(rep):
 
 
 def format_report_html(rep):
-    """Structured, colour-coded HTML for the GUI detail panel — sectioned like the extension's
-    residue panel (header, Variants, PTM/Sites/Domains, AlphaMissense, Nearby)."""
+    """Clean label/value layout for the GUI detail panel, mirroring the extension's residue card:
+    a header, then colour-coded section headers with aligned 'label : value' rows (no indentation)."""
     if not rep:
         return ""
 
     def esc(s):
-        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    def section(title, color, body):
-        return ('<div style="margin-top:6px;">'
-                '<span style="font-weight:bold; color:%s;">%s</span>%s</div>' % (color, title, body))
+    T = ['<table cellspacing="0" cellpadding="3" '
+         'style="font-family:sans-serif; font-size:12px; border-collapse:collapse;">']
+    T.append('<tr><td colspan="2" style="font-size:13px; padding-bottom:2px;">'
+             '<b>%s</b> &nbsp; residue <b>%s%d</b></td></tr>' % (esc(rep["uid"]), esc(rep["aa"]), rep["pos"]))
 
-    H = ['<div style="font-family:sans-serif; font-size:12px;">']
-    H.append('<div style="font-size:13px;"><b>%s</b> &nbsp; residue <b>%s%d</b></div>'
-             % (esc(rep["uid"]), esc(rep["aa"]), rep["pos"]))
+    def hdr(title, color):
+        T.append('<tr><td colspan="2" style="border-top:1px solid #ccc; padding-top:5px;">'
+                 '<b style="color:%s;">%s</b></td></tr>' % (color, esc(title)))
+
+    def row(label, value, vcolor=None):
+        v = ('<span style="color:%s;">%s</span>' % (vcolor, value)) if vcolor else value
+        T.append('<tr><td style="color:#888; vertical-align:top; white-space:nowrap;">%s</td>'
+                 '<td style="vertical-align:top;">%s</td></tr>' % (esc(label), v))
 
     if rep["variants"]:
-        rows = []
+        hdr("Variants", "#c62828")
         for v in rep["variants"]:
-            c = v.get("consequenceColor", "#9e9e9e")
-            head = '<span style="color:%s; font-weight:bold;">%s%d%s</span> — %s' % (
-                c, esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")), esc(v["consequence"]))
-            sub = []
+            mut = "%s%d%s" % (esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")))
+            row(mut, esc(v["consequence"]), v.get("consequenceColor", "#9e9e9e"))
             if v.get("clinVar"):
-                sub.append("ClinVar: %s" % esc(v["clinVar"]))
+                row("ClinVar", esc(v["clinVar"]))
             if v.get("rsIds"):
-                sub.append("dbSNP: %s" % esc(", ".join(v["rsIds"])))
+                row("dbSNP", esc(", ".join(v["rsIds"])))
             if v.get("alphaMissense") is not None:
-                sub.append("AM&nbsp;%.2f" % v["alphaMissense"])
+                row("AlphaMissense", "%.2f" % v["alphaMissense"])
             if v.get("diseases"):
-                sub.append("Disease: %s" % esc("; ".join(v["diseases"])))
-            rows.append('<div style="margin-left:8px;">%s%s</div>'
-                        % (head, ('<br><span style="color:#666;">&nbsp;&nbsp;%s</span>' % " · ".join(sub)) if sub else ""))
-        H.append(section("Variants", "#c62828", "".join(rows)))
+                row("Disease", esc("; ".join(v["diseases"])))
 
-    feats = []
-    for p in rep["ptms"]:
-        feats.append('<div style="margin-left:8px; color:%s;">PTM: %s</div>' % (p.get("color", "#888"), esc(p["description"])))
-    for s in rep["sites"]:
-        feats.append('<div style="margin-left:8px; color:%s;">Site: %s</div>' % (SITE_COLOR, esc(s["description"])))
-    for d in rep["domains"]:
-        feats.append('<div style="margin-left:8px; color:%s;">Domain: %s</div>' % (d.get("color", "#888"), esc(d["description"])))
-    if feats:
-        H.append(section("Features", "#1565c0", "".join(feats)))
+    if rep["ptms"] or rep["sites"] or rep["domains"]:
+        hdr("Features", "#1565c0")
+        for p in rep["ptms"]:
+            row("PTM", esc(p["description"]), p.get("color"))
+        for s in rep["sites"]:
+            row("Site", esc(s["description"]), SITE_COLOR)
+        for d in rep["domains"]:
+            row("Domain", esc(d["description"]), d.get("color"))
 
     if rep["amMean"] is not None:
-        body = '<div style="margin-left:8px;">mean <b>%.3f</b></div>' % rep["amMean"]
+        hdr("AlphaMissense", "#6a1b9a")
+        row("Mean", "%.3f" % rep["amMean"])
         if rep.get("amProfile"):
-            body += ('<div style="margin-left:8px; color:#555;">%s</div>'
-                     % " · ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
-        H.append(section("AlphaMissense", "#6a1b9a", body))
+            row("Top subs", " · ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
 
     if rep.get("nearbyLigands"):
-        H.append(section("Nearby ligands (≤5Å)", "#6d4c41",
-                         '<div style="margin-left:8px;">%s</div>' % esc(", ".join(rep["nearbyLigands"]))))
+        hdr("Nearby ligands (≤5 Å)", "#6d4c41")
+        row("Ligands", esc(", ".join(rep["nearbyLigands"])))
 
     if rep["nearby"]:
+        hdr("Nearby (≤12 Å)", "#37474f")
+        tagcol = {"pathogenic": "#ef5350", "deleterious": "#ffa726", "benign": "#66bb6a"}
         chips = []
-        for n in rep["nearby"][:16]:
-            tagcol = {"pathogenic": "#ef5350", "deleterious": "#ffa726", "benign": "#66bb6a"}
+        for n in rep["nearby"][:18]:
             col = "#888"
             for t in n["tags"]:
                 col = "#b87800" if t == "PTM" else tagcol.get(t, col)
             chips.append('<span style="color:%s;">%d&nbsp;(%.1f)</span>' % (col, n["pos"], n["dist"]))
-        H.append(section("Nearby ≤12Å", "#37474f", '<div style="margin-left:8px;">%s</div>' % ", ".join(chips)))
+        row("Residues", ", ".join(chips))
 
-    H.append("</div>")
-    return "".join(H)
+    T.append("</table>")
+    return "".join(T)
 
 
 def _annotation_color_map(ann):
@@ -2230,7 +2246,12 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.align_btn.clicked.connect(lambda: ufv_align()); r2.addWidget(self.align_btn)
             r3 = QtWidgets.QHBoxLayout(); sgl.addLayout(r3)
             r3.addWidget(QtWidgets.QLabel("Loaded:"))
-            self.obj_label = QtWidgets.QLabel("—"); self.obj_label.setStyleSheet("color:#357;"); r3.addWidget(self.obj_label, 1)
+            self.obj_combo = QtWidgets.QComboBox(); r3.addWidget(self.obj_combo, 1)
+            self.obj_combo.currentIndexChanged.connect(self.on_obj_change)
+            self.obj_label = QtWidgets.QLabel(""); self.obj_label.setStyleSheet("color:#357; font-size:11px;")
+            r3.addWidget(self.obj_label)
+            self.remove_btn = QtWidgets.QPushButton("Remove"); self.remove_btn.setToolTip("Delete the active structure")
+            self.remove_btn.clicked.connect(self.remove_structure); r3.addWidget(self.remove_btn)
             self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
             sgl.addWidget(self.status)
 
@@ -2348,8 +2369,42 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                                  cons.get("pathogenic", 0), len(ann["sites"]), len(ann["domains"]),
                                  "y" if ann["amMean"] else "n"))
 
-        def obj_label_refresh(self):
-            self.obj_label.setText(self.obj() or "—")
+        def refresh_objs(self):
+            cur = self.obj()
+            objs = [o for o in (cmd.get_object_list() or []) if not o.startswith("ufv_")]
+            self.obj_combo.blockSignals(True)
+            self.obj_combo.clear()
+            self.obj_combo.addItems(objs)
+            if cur in objs:
+                self.obj_combo.setCurrentText(cur)
+            self.obj_combo.blockSignals(False)
+        obj_label_refresh = refresh_objs
+
+        def on_obj_change(self, _i):
+            name = self.obj_combo.currentText()
+            if not name:
+                return
+            _STATE["obj"] = name
+            self.update_colour_modes()
+            ann = _CACHE.get(self.cur_uid()) or {}
+            cov = actual_coverage(name, len(ann.get("sequence", "")))
+            self.obj_label.setText(("%.0f%% modelled" % cov) if cov is not None else "")
+            self.refresh_table()
+
+        def remove_structure(self):
+            name = self.obj_combo.currentText()
+            if not name:
+                return
+            ufv_clear(name)
+            try:
+                cmd.delete(name)
+            except Exception:
+                pass
+            (_STATE.get("sources") or {}).pop(name, None)
+            _GEOM_CACHE.pop(name, None)
+            if _STATE.get("obj") == name:
+                _STATE["obj"] = None
+            self.refresh_objs()
 
         # ---- fetch / structures ----
         def on_fetch(self):
@@ -2382,10 +2437,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
                 cb.setChecked(False)
             self.cart.setCurrentIndex(0)
-            ann = _CACHE.get(self.cur_uid()) or {}
-            cov = actual_coverage(name, len(ann.get("sequence", "")))
-            self.obj_label.setText("%s%s" % (name, (" · %.0f%% modelled" % cov) if cov is not None else ""))
-            self.update_colour_modes(); self.refresh_table()
+            self.refresh_objs()
+            self.obj_combo.setCurrentText(name)  # triggers on_obj_change (sets active, coverage, modes)
 
         def update_colour_modes(self):
             predicted = _structure_is_predicted(self.obj())
@@ -2577,9 +2630,13 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 def _report(self, info):
                     if info:
                         ch, resi = info[0]
+                        try:
+                            cmd.select("sele", "(%s) and chain %s and resi %s" % (panel.obj(), ch, resi))
+                        except Exception:
+                            pass
                         uni = _resi_to_uni(panel.obj(), ch, resi)
                         if uni is not None:
-                            panel.report_residue(uni, focus=False)
+                            panel.report_residue(uni, focus=True)  # picking zooms in (extension-like)
 
                 def do_select(self, name):
                     info = []
