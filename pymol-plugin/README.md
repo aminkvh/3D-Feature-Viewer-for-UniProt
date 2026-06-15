@@ -67,15 +67,20 @@ and stays responsive).
    PDB → SIFTS). `ufv_structures` / `ufv_use <key>` do the same from the command line.
 3. **Layers**: PTMs / Sites / **Ligands** checkboxes; Variants with per-consequence chips +
    **reviewed** only (off = the full variant-viewer set).
-4. **Cartoon colouring** (single selector): Domains, Topology, pLDDT, B-factor, AlphaMissense,
-   Burden, **Hotspots**, **Contact hubs**. Colours match the extension exactly; Hotspots/Contact
-   hubs are computed on the loaded coordinates off the UI thread (numpy-accelerated).
-5. **Report**: pick an annotation type and browse the **colour-coded list** (filter box included);
-   click a row and the view **zooms in** — the residue + its 5 Å neighbourhood show as sticks
-   coloured by annotation, the cartoon dims, and the colour-coded detail box shows PTMs, variants
-   (ClinVar / dbSNP / AlphaMissense / disease), sites/domains, **nearby residues with Cα–Cα
-   distances**, and **nearby ligands**. Tick **Pick 3D** to drive the report by clicking an atom in
-   the viewport. **Reset view** zooms back out.
+4. **Cartoon colouring** (single selector): Domains, Topology, pLDDT (predicted only), B-factor
+   (experimental only), AlphaMissense, Burden, **Hotspots**, **Contact hubs**, **Constraint
+   pocket**. Colours match the extension exactly; the structure-dependent analyses run on the
+   loaded coordinates off the UI thread (numpy-accelerated — hotspots/pockets ≈0.5 s, contact
+   hubs sampled for large chains).
+5. **Report**: pick an annotation type — PTMs / Variants / Sites / Domains / **Ligands** — and
+   browse the **colour-coded list** (filter box, Show/Hide all filtered, tooltips). Click a residue
+   row and the view **zooms in** (residue + 5 Å neighbourhood as annotation-coloured sticks, cartoon
+   dimmed) while a **sectioned, colour-coded detail panel** shows variants (ClinVar / dbSNP /
+   AlphaMissense / disease), features, AlphaMissense mean + profile, nearby ligands, and nearby
+   residues with Cα–Cα distances. Click a **ligand** row to zoom to it and see its chemistry
+   (name / formula / SMILES / DrugBank) and the most **Tanimoto-similar** ligands in the structure.
+   Tick **Pick 3D** to drive the report by clicking an atom; **Reset view** zooms back out;
+   **Align** superposes multiple loaded structures.
 
 Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
 fast, and the whole panel is scrollable so it never outgrows the screen.

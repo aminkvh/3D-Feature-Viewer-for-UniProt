@@ -281,6 +281,12 @@ def _extract_variants(variation, am_map):
         if am_map and f.get("wildType") and len(f.get("alternativeSequence", "")) == 1:
             am = am_map.get("{}{}{}".format(f["wildType"], f["begin"], f["alternativeSequence"]))
         sigs = f.get("clinicalSignificances") or []
+        rs = set()
+        for x in (f.get("xrefs") or []):
+            val = x.get("id") or x.get("name") or ""
+            if re.match(r"^rs\d+$", str(val), re.I) or "dbsnp" in (x.get("name") or "").lower():
+                if val:
+                    rs.add(val)
         out.append({
             "position": pos,
             "wildType": f.get("wildType") or "?",
@@ -291,6 +297,7 @@ def _extract_variants(variation, am_map):
             "reviewed": _classify_provenance(f) == "UniProt reviewed",
             "diseases": _disease_labels(f),
             "clinVar": ", ".join(s.get("type", "") for s in sigs if s.get("type")),
+            "rsIds": sorted(rs),
             "alphaMissense": am,
         })
     return out
@@ -1744,37 +1751,74 @@ def format_report(rep):
 
 
 def format_report_html(rep):
-    """Colour-coded HTML version of the residue report for the GUI detail panel."""
+    """Structured, colour-coded HTML for the GUI detail panel — sectioned like the extension's
+    residue panel (header, Variants, PTM/Sites/Domains, AlphaMissense, Nearby)."""
     if not rep:
         return ""
-    dot = '<span style="color:%s">&#9679;</span> '
-    P = ["<b>%s &nbsp; position %d (%s)</b>" % (rep["uid"], rep["pos"], rep["aa"])]
-    for v in rep["variants"]:
-        extra = []
-        if v.get("clinVar"):
-            extra.append(v["clinVar"])
-        if v.get("alphaMissense") is not None:
-            extra.append("AM %.2f" % v["alphaMissense"])
-        if v.get("diseases"):
-            extra.append("; ".join(v["diseases"]))
-        P.append((dot % v.get("consequenceColor", "#9e9e9e")) +
-                 "%s%d%s — %s%s" % (v.get("wildType", ""), rep["pos"], v.get("mutant", ""),
-                                    v["consequence"], (" [" + " | ".join(extra) + "]") if extra else ""))
+
+    def esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+    def section(title, color, body):
+        return ('<div style="margin-top:6px;">'
+                '<span style="font-weight:bold; color:%s;">%s</span>%s</div>' % (color, title, body))
+
+    H = ['<div style="font-family:sans-serif; font-size:12px;">']
+    H.append('<div style="font-size:13px;"><b>%s</b> &nbsp; residue <b>%s%d</b></div>'
+             % (esc(rep["uid"]), esc(rep["aa"]), rep["pos"]))
+
+    if rep["variants"]:
+        rows = []
+        for v in rep["variants"]:
+            c = v.get("consequenceColor", "#9e9e9e")
+            head = '<span style="color:%s; font-weight:bold;">%s%d%s</span> — %s' % (
+                c, esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")), esc(v["consequence"]))
+            sub = []
+            if v.get("clinVar"):
+                sub.append("ClinVar: %s" % esc(v["clinVar"]))
+            if v.get("rsIds"):
+                sub.append("dbSNP: %s" % esc(", ".join(v["rsIds"])))
+            if v.get("alphaMissense") is not None:
+                sub.append("AM&nbsp;%.2f" % v["alphaMissense"])
+            if v.get("diseases"):
+                sub.append("Disease: %s" % esc("; ".join(v["diseases"])))
+            rows.append('<div style="margin-left:8px;">%s%s</div>'
+                        % (head, ('<br><span style="color:#666;">&nbsp;&nbsp;%s</span>' % " · ".join(sub)) if sub else ""))
+        H.append(section("Variants", "#c62828", "".join(rows)))
+
+    feats = []
     for p in rep["ptms"]:
-        P.append((dot % p.get("color", "#888")) + "PTM: " + p["description"])
+        feats.append('<div style="margin-left:8px; color:%s;">PTM: %s</div>' % (p.get("color", "#888"), esc(p["description"])))
     for s in rep["sites"]:
-        P.append((dot % SITE_COLOR) + "Site: " + s["description"])
+        feats.append('<div style="margin-left:8px; color:%s;">Site: %s</div>' % (SITE_COLOR, esc(s["description"])))
     for d in rep["domains"]:
-        P.append((dot % d.get("color", "#888")) + "Domain: " + d["description"])
+        feats.append('<div style="margin-left:8px; color:%s;">Domain: %s</div>' % (d.get("color", "#888"), esc(d["description"])))
+    if feats:
+        H.append(section("Features", "#1565c0", "".join(feats)))
+
     if rep["amMean"] is not None:
-        P.append("AlphaMissense mean: %.3f" % rep["amMean"])
-    if rep.get("amProfile"):
-        P.append("AM: " + ", ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
+        body = '<div style="margin-left:8px;">mean <b>%.3f</b></div>' % rep["amMean"]
+        if rep.get("amProfile"):
+            body += ('<div style="margin-left:8px; color:#555;">%s</div>'
+                     % " · ".join("%s%s&nbsp;%.2f" % (w, m, sc) for w, m, sc in rep["amProfile"]))
+        H.append(section("AlphaMissense", "#6a1b9a", body))
+
     if rep.get("nearbyLigands"):
-        P.append("Ligands ≤5Å: " + ", ".join(rep["nearbyLigands"]))
+        H.append(section("Nearby ligands (≤5Å)", "#6d4c41",
+                         '<div style="margin-left:8px;">%s</div>' % esc(", ".join(rep["nearbyLigands"]))))
+
     if rep["nearby"]:
-        P.append("Nearby ≤12Å: " + ", ".join("%d&nbsp;(%.1f)" % (n["pos"], n["dist"]) for n in rep["nearby"][:14]))
-    return "<br>".join(P)
+        chips = []
+        for n in rep["nearby"][:16]:
+            tagcol = {"pathogenic": "#ef5350", "deleterious": "#ffa726", "benign": "#66bb6a"}
+            col = "#888"
+            for t in n["tags"]:
+                col = "#b87800" if t == "PTM" else tagcol.get(t, col)
+            chips.append('<span style="color:%s;">%d&nbsp;(%.1f)</span>' % (col, n["pos"], n["dist"]))
+        H.append(section("Nearby ≤12Å", "#37474f", '<div style="margin-left:8px;">%s</div>' % ", ".join(chips)))
+
+    H.append("</div>")
+    return "".join(H)
 
 
 def _annotation_color_map(ann):
