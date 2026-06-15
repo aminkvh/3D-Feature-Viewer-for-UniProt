@@ -1609,12 +1609,23 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
         return
     pocket = "byres ((%s) around 5) and polymer" % lig
     with _batch():
-        _clear_focus(obj)                       # drop any previous residue/ligand focus sticks
+        _clear_focus(obj)                       # drop any previous residue/ligand focus sticks (+ label)
         cmd.show("sticks", lig)
         cmd.color("green", "%s and elem C" % lig)
+        cmd.set("stick_radius", 0.18, lig)      # fatten the focused copy so it reads as 'the selected one'
         cmd.show("sticks", pocket)
         cmd.set("stick_color", "grey70", pocket)
-    _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None, "disabled": []}
+        if chain is not None and resi is not None:   # 3D label so the user can see which copy is selected
+            try:
+                cmd.delete(_UFV_LIGLABEL)
+                cmd.pseudoatom(_UFV_LIGLABEL, selection=lig,
+                               label="%s %s/%s" % (resn, chain, resi))
+                cmd.set("label_size", 16, _UFV_LIGLABEL)
+                cmd.set("label_color", "yellow", _UFV_LIGLABEL)
+            except Exception:
+                pass
+    _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None,
+                         "disabled": [], "label": _UFV_LIGLABEL, "lig": lig}
     cmd.zoom(lig, 6, animate=0)
 
 
@@ -1994,10 +2005,12 @@ def format_ligand_html(resn, info, instances=1, copies=None, cur=0):
              '<span style="color:#888;">(CCD)</span></td></tr>' % title)
     if copies and len(copies) > 1:
         ch, resi = copies[cur % len(copies)]
-        T.append('<tr><td colspan="2" style="font-size:11px;">'
-                 '<a href="ufv:lig:prev" style="color:#1565c0; text-decoration:none;">◂</a>&nbsp;'
-                 'copy %d/%d <span style="color:#888;">(chain %s · %s)</span>&nbsp;'
-                 '<a href="ufv:lig:next" style="color:#1565c0; text-decoration:none;">▸</a>'
+        T.append('<tr><td colspan="2" style="padding:3px 0;">'
+                 '<span style="background:#e8f0fe; padding:2px 6px; border-radius:3px;">'
+                 '<a href="ufv:lig:prev" style="color:#1565c0; text-decoration:none; font-size:14px;">◂</a>'
+                 '&nbsp;<b>showing copy %d of %d</b> &mdash; <b style="color:#2e7d32;">chain %s · %s</b>&nbsp;'
+                 '<a href="ufv:lig:next" style="color:#1565c0; text-decoration:none; font-size:14px;">▸</a>'
+                 '</span> <span style="color:#888; font-size:10px;">(highlighted in 3D)</span>'
                  '</td></tr>' % (cur % len(copies) + 1, len(copies), esc(ch or "?"), esc(resi)))
 
     def row(label, value):
@@ -2044,16 +2057,23 @@ def _annotation_color_map(ann):
 
 
 _DIMMED = set()  # objects whose cartoon is currently dimmed for focus
+_UFV_LIGLABEL = "ufv_liglabel"  # transient pseudoatom labelling the focused ligand copy
 
 
 def _clear_focus(obj, restore_spheres=True):
     """Remove the current focus sticks and re-enable the sphere layers it hid (keeps the dim)."""
+    try:
+        cmd.delete(_UFV_LIGLABEL)
+    except Exception:
+        pass
     prev = _FOCUS_SHOWN.pop(obj, None)
     if not prev:
         return
     try:
         cmd.hide("sticks", prev["sticks"])
         cmd.unset("stick_color", prev["sticks"])
+        if prev.get("lig"):
+            cmd.unset("stick_radius", prev["lig"])  # un-fatten the previously focused ligand copy
         if prev.get("sel"):
             cmd.hide("spheres", prev["sel"])
             cmd.color("gray80", prev["sel"])  # undo the element colouring of the selected residue
@@ -2551,6 +2571,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
             self._QtGui = QtGui
             self._last_pos = None
+            self._sel = None               # unified current selection: {"kind":"res","pos":n} or
+                                           # {"kind":"lig","resn":r} — drives 'Zoom selected'
             self._last_rep = None          # cached residue_report dict for re-rendering (evidence toggle)
             self._show_evidence = False    # variant-evidence fold state in the detail panel
             self._lig_resn = None          # ligand component currently shown
@@ -2889,23 +2911,40 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
         def on_row_zoom(self, r, _c):
             val = self._row_pos(r)
-            if val is None or self.list_kind.currentText() == "Ligands":
+            if val is None:
                 return
+            if self.list_kind.currentText() == "Ligands":
+                self.on_ligand(val); return
             try:
                 self.report_residue(int(val), focus=True)
             except ValueError:
                 pass
 
         def zoom_selected(self):
-            if self._last_pos is not None:
+            """Re-zoom to the current selection — residue OR ligand copy — so the button and 3D pick
+            follow the same logic regardless of what was last selected."""
+            sel = self._sel
+            if not sel:
+                self.status.setText("Select a residue or ligand first."); return
+            if sel["kind"] == "res":
                 for o in self.target_objs():
-                    ufv_focus(o, self._last_pos)
+                    ufv_focus(o, sel["pos"])
+            elif sel["kind"] == "lig":
+                o = self.obj()
+                if not o:
+                    return
+                if self._lig_copies:
+                    ch, resi = self._lig_copies[self._lig_idx % len(self._lig_copies)]
+                    ufv_ligand_focus(o, sel["resn"], ch, resi)
+                else:
+                    ufv_ligand_focus(o, sel["resn"])
 
         def report_residue(self, uni_pos, focus=False):
             objs, uid = self.target_objs(), self.cur_uid()
             if not objs or not uid:
                 return
             self._last_pos = uni_pos
+            self._sel = {"kind": "res", "pos": uni_pos}
             if focus:  # zoom FIRST so a slow/failing report compute can never swallow the double-click
                 for o in objs:  # aligned copies overlap, so the last zoom frames them all
                     try:
@@ -2954,6 +2993,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             if not o:
                 return
             self._lig_resn = resn
+            self._sel = {"kind": "lig", "resn": resn}
             self._lig_copies = ligand_instances(o, resn)
             self._lig_idx = 0
             if pick is not None and pick in self._lig_copies:
