@@ -66,6 +66,8 @@ const UFVModal = (() => {
                 <div class="ufv-modal-actions">
                     <button class="ufv-icon-btn" id="ufv-btn-theme" title="Toggle theme">${ICON_THEME}</button>
                     <button class="ufv-icon-btn" id="ufv-btn-reset" title="Reset view">${ICON_RESET}</button>
+                    <button class="ufv-icon-btn" id="ufv-btn-protnlm" title="Toggle ProtNLM AI-predicted protein name" style="font-size:11px;font-weight:700;">AI</button>
+                    <button class="ufv-icon-btn" id="ufv-btn-uniprot" title="Open this entry on UniProt" style="font-size:11px;font-weight:700;">UP</button>
                     <div class="ufv-dl-wrap" id="ufv-dl-wrap">
                         <button class="ufv-icon-btn" id="ufv-btn-export-pdb" title="Download">${ICON_DOWNLOAD}</button>
                         <div class="ufv-dl-menu" id="ufv-dl-menu">
@@ -79,6 +81,7 @@ const UFVModal = (() => {
                     <button class="ufv-close-btn" id="ufv-close" title="Close">&#10005;</button>
                 </div>
             </div>
+            <div id="ufv-protnlm-banner" class="ufv-hidden" style="padding:6px 14px;font-size:12px;border-bottom:1px solid var(--ufv-border,#ddd);"></div>
             <div class="ufv-body">
                 <div class="ufv-left-col">
                 <div class="ufv-sequence-wrap" id="ufv-sequence-wrap"></div>
@@ -220,6 +223,17 @@ const UFVModal = (() => {
                 applyMode();
                 renderSequence();
             });
+        });
+        byId('ufv-btn-uniprot').addEventListener('click', () => {
+            const id = UFVState.state.uniprotId;
+            if (id) window.open(`https://www.uniprot.org/uniprotkb/${id}/entry`, '_blank', 'noopener');
+        });
+        byId('ufv-btn-protnlm').addEventListener('click', () => {
+            const banner = byId('ufv-protnlm-banner');
+            const showing = !banner.classList.contains('ufv-hidden');
+            if (showing) { banner.classList.add('ufv-hidden'); return; }
+            renderProtNLM();
+            banner.classList.remove('ufv-hidden');
         });
         byId('ufv-btn-screenshot').addEventListener('click', () => StructureViewer.screenshot());
         byId('ufv-btn-copy').addEventListener('click', copySelection);
@@ -424,6 +438,7 @@ const UFVModal = (() => {
             s.activeProvenances = new Set(Object.keys(DataProcessor.getProvenanceSummary(s.variants)));
             s.analysis.alphaMissense = UFVAnalysis.aggregateAlphaMissense(s.variants, s.amMap);
             s.annotationsLoaded = true;
+            if (!byId('ufv-protnlm-banner')?.classList.contains('ufv-hidden')) renderProtNLM();
         } catch (err) {
             showError(err.message || 'Unable to load annotations.');
         }
@@ -2314,6 +2329,28 @@ const UFVModal = (() => {
 
     function byId(id) {
         return document.getElementById(id);
+    }
+
+    // ProtNLM: UniProt's AI model names proteins predicted from sequence. Render the predicted name
+    // (flagged as AI) into the header banner, or a note when the entry's name is curated/rule-based.
+    function renderProtNLM() {
+        const banner = byId('ufv-protnlm-banner');
+        if (!banner) return;
+        const p = UFVState.state.protnlm;
+        if (!p || !p.name) {
+            banner.innerHTML = `<span style="opacity:.7;">No protein name in the UniProt entry.</span>`;
+            return;
+        }
+        const esc = (str) => String(str).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+        if (p.isAI) {
+            let html = `<b style="color:#7c4dff;">ProtNLM (AI-predicted name):</b> ${esc(p.name)}`;
+            if (p.source) html += ` <span style="opacity:.6;">· ${esc(p.source)}</span>`;
+            if (p.caution) html += `<br><span style="opacity:.6;font-size:11px;">${esc(p.caution)}</span>`;
+            banner.innerHTML = html;
+        } else {
+            const tag = p.reviewed ? 'curated' : 'not AI-generated';
+            banner.innerHTML = `<b>Protein name:</b> ${esc(p.name)} <span style="opacity:.6;">(${tag} — no ProtNLM prediction)</span>`;
+        }
     }
 
     return { createButton, open, close, prefetchData };

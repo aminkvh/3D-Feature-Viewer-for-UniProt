@@ -392,6 +392,52 @@ def _extract_domains(uniprot):
     return sorted(out, key=lambda d: d["position"])
 
 
+def _name_with_evidence(desc):
+    """(fullName value, evidences) from a proteinDescription's recommendedName or first submissionName."""
+    if not desc:
+        return None, []
+    rec = desc.get("recommendedName") or {}
+    fn = rec.get("fullName")
+    if fn and fn.get("value"):
+        return fn["value"], fn.get("evidences", []) or []
+    for sub in desc.get("submissionNames") or []:
+        fn = sub.get("fullName")
+        if fn and fn.get("value"):
+            return fn["value"], fn.get("evidences", []) or []
+    return None, []
+
+
+def _extract_protnlm(uniprot):
+    """UniProt's ProtNLM (and ProtNLM2) AI model names proteins that would otherwise be
+    'uncharacterized', from sequence alone. Those names appear in the entry's proteinDescription with
+    computational evidence (and a CAUTION note). Returns {name, isAI, source, caution, reviewed} or
+    None — `isAI` flags an AI-generated name so the UI can show it as a prediction."""
+    if not uniprot:
+        return None
+    name, evs = _name_with_evidence(uniprot.get("proteinDescription") or {})
+    if not name:
+        return None
+    is_ai, source = False, ""
+    for e in evs:
+        tag = ("%s %s" % (e.get("source", ""), e.get("id", ""))).strip()
+        # ProtNLM names are attributed to source 'Google' / id 'ProtNLM' (so 'ProtNLM2' matches too).
+        # We deliberately do NOT flag rule-based automatic names (ARBA/RuleBase/HAMAP) as AI.
+        if "protnlm" in tag.lower() or e.get("source", "").lower() == "google":
+            is_ai, source = True, tag
+            break
+    caution = ""
+    for c in uniprot.get("comments") or []:
+        if c.get("commentType") == "CAUTION":
+            for t in c.get("texts") or []:
+                val = t.get("value") or ""
+                if "protnlm" in val.lower():
+                    caution, is_ai = val, True
+    reviewed = "reviewed" in (uniprot.get("entryType") or "").lower() and \
+               "unreviewed" not in (uniprot.get("entryType") or "").lower()
+    return {"name": name, "isAI": is_ai, "source": source or ("ProtNLM" if is_ai else ""),
+            "caution": caution, "reviewed": reviewed}
+
+
 def _parse_am_csv(text):
     """Parse the AlphaFold AlphaMissense substitution CSV into {'<wt><pos><mut>': score}."""
     out = {}
@@ -999,6 +1045,7 @@ def fetch_annotations(uid, force=False):
         "amMean": _am_mean_by_position(am_map),
         "amMap": am_map,
         "amByPos": _am_by_pos(am_map),
+        "protnlm": _extract_protnlm(uniprot),
     }
     ann["burden"] = _compute_burden(ann["variants"])
     _CACHE[uid] = ann
@@ -2497,6 +2544,18 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             hr.addWidget(self.cb_apply_all)
             self.obj_list = QtWidgets.QListWidget(); self.obj_list.setMaximumHeight(96)
             sgl.addWidget(self.obj_list)
+            # UniProt entry button + ProtNLM (AI name) toggle
+            ur = QtWidgets.QHBoxLayout(); sgl.addLayout(ur)
+            self.uniprot_btn = QtWidgets.QPushButton("Open in UniProt ↗")
+            self.uniprot_btn.setToolTip("Open this accession's UniProtKB entry page in your browser")
+            self.uniprot_btn.clicked.connect(self.open_uniprot); ur.addWidget(self.uniprot_btn)
+            self.cb_protnlm = QtWidgets.QCheckBox("AI name (ProtNLM)")
+            self.cb_protnlm.setToolTip("Show UniProt's ProtNLM AI-generated protein name/function (predicted from sequence)")
+            self.cb_protnlm.clicked.connect(self.toggle_protnlm); ur.addWidget(self.cb_protnlm)
+            ur.addStretch(1)
+            self.protnlm_label = QtWidgets.QLabel(""); self.protnlm_label.setWordWrap(True)
+            self.protnlm_label.setStyleSheet("font-size:11px; color:#5b3a8e;"); self.protnlm_label.setVisible(False)
+            sgl.addWidget(self.protnlm_label)
             self.status = QtWidgets.QLabel(""); self.status.setStyleSheet("color:#a33; font-size:11px;")
             sgl.addWidget(self.status)
 
@@ -2598,6 +2657,46 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self._lig_chem = {}            # cached chemistry for the current ligand
             if self.cur_uid() and self.cur_uid() in _CACHE:
                 self.after_fetch()
+
+        # ---- UniProt link + ProtNLM AI name ----
+        def open_uniprot(self):
+            uid = self.cur_uid()
+            if not uid:
+                self.status.setText("Enter an accession first."); return
+            try:
+                import webbrowser
+                webbrowser.open("https://www.uniprot.org/uniprotkb/%s/entry" % uid)
+            except Exception as exc:
+                self.status.setText("Could not open browser: %s" % exc)
+
+        def toggle_protnlm(self):
+            if not self.cb_protnlm.isChecked():
+                self.protnlm_label.setVisible(False); return
+            uid = self.cur_uid()
+            ann = _CACHE.get(uid or "")
+            if not ann:
+                self.cb_protnlm.setChecked(False)
+                self.status.setText("Fetch the accession first."); return
+            self._render_protnlm(ann.get("protnlm"))
+
+        def _render_protnlm(self, p):
+            if not self.cb_protnlm.isChecked():
+                self.protnlm_label.setVisible(False); return
+            if not p or not p.get("name"):
+                self.protnlm_label.setText("No protein name in the UniProt entry.")
+            elif p.get("isAI"):
+                txt = "<b>ProtNLM (AI-predicted):</b> %s" % p["name"]
+                if p.get("source"):
+                    txt += " <span style='color:#888;'>· %s</span>" % p["source"]
+                if p.get("caution"):
+                    txt += "<br><span style='color:#888; font-size:10px;'>%s</span>" % p["caution"]
+                self.protnlm_label.setText(txt)
+            else:
+                tag = "curated" if p.get("reviewed") else "not AI-generated"
+                self.protnlm_label.setText("<b>Protein name:</b> %s "
+                                           "<span style='color:#888;'>(%s — no ProtNLM prediction)</span>"
+                                           % (p["name"], tag))
+            self.protnlm_label.setVisible(True)
 
         # ---- helpers ----
         def cur_uid(self):
@@ -2711,6 +2810,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             for s in structs:
                 self.struct_combo.addItem(s["label"], s)
             self.update_info(); self.refresh_table(); self.obj_label_refresh()
+            if self.cb_protnlm.isChecked():
+                self._render_protnlm((_CACHE.get(self.cur_uid() or "") or {}).get("protnlm"))
 
         def on_load_selected(self):
             s = self.struct_combo.currentData()

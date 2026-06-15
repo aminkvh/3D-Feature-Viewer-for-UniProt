@@ -530,7 +530,8 @@ const UFVApi = (() => {
         const topology = DataProcessor.extractTopology(featuresData);
         const domains = DataProcessor.extractDomains(uniprotData);
         const sequence = uniprotData?.sequence?.value || featuresData?.sequence || variationData?.sequence || '';
-        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, domains, sequence, amMap };
+        const protnlm = DataProcessor.extractProtNLM(uniprotData);
+        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, domains, sequence, amMap, protnlm };
     }
 
     /**

@@ -280,6 +280,39 @@ const DataProcessor = {
         return out.sort((a, b) => a.position - b.position);
     },
 
+    /**
+     * UniProt's ProtNLM (and ProtNLM2) AI model names proteins that would otherwise be
+     * 'uncharacterized', predicted from sequence alone. Such names appear in the entry's
+     * proteinDescription attributed to source 'Google' / id 'ProtNLM' (with a CAUTION note).
+     * Returns { name, isAI, source, caution, reviewed } or null. Rule-based automatic names
+     * (ARBA/RuleBase/HAMAP) are deliberately NOT flagged as AI.
+     */
+    extractProtNLM(uniprotData) {
+        if (!uniprotData) return null;
+        const desc = uniprotData.proteinDescription || {};
+        const rec = desc.recommendedName?.fullName;
+        const sub = (desc.submissionNames || []).map(s => s.fullName).find(Boolean);
+        const fn = (rec && rec.value) ? rec : (sub && sub.value ? sub : null);
+        if (!fn || !fn.value) return null;
+        let isAI = false, source = '';
+        for (const e of (fn.evidences || [])) {
+            const tag = `${e.source || ''} ${e.id || ''}`.trim();
+            if (tag.toLowerCase().includes('protnlm') || (e.source || '').toLowerCase() === 'google') {
+                isAI = true; source = tag; break;
+            }
+        }
+        let caution = '';
+        for (const c of (uniprotData.comments || [])) {
+            if (c.commentType !== 'CAUTION') continue;
+            for (const t of (c.texts || [])) {
+                if ((t.value || '').toLowerCase().includes('protnlm')) { caution = t.value; isAI = true; }
+            }
+        }
+        const et = (uniprotData.entryType || '').toLowerCase();
+        const reviewed = et.includes('reviewed') && !et.includes('unreviewed');
+        return { name: fn.value, isAI, source: source || (isAI ? 'ProtNLM' : ''), caution, reviewed };
+    },
+
     _categorizePTM(desc, type) {
         const d = desc.toLowerCase();
         if (type === 'DISULFID') return 'Disulfide bond';

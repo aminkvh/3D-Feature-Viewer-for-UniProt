@@ -61,7 +61,9 @@ atoms, no cartoon), so showing thousands of variant points never rebuilds or rep
 structure's cartoon and stays fast. Network work runs off the UI thread (the panel shows a status
 and stays responsive).
 
-1. Enter an accession → **Fetch** (reports counts).
+1. Enter an accession → **Fetch** (reports counts). **Open in UniProt ↗** opens the entry page;
+   **AI name (ProtNLM)** shows UniProt's ProtNLM/ProtNLM2 AI-predicted protein name when the entry
+   has one (predicted from sequence for otherwise-uncharacterised proteins; curated entries say so).
 2. Pick a **structure** — AlphaFold, any experimental PDB chain (best-coverage first), or a
    computed model — and **Load** (or **Load all** to pull every listed structure at once).
    Numbering is automatic (AlphaFold/computed → identity, PDB → SIFTS). `ufv_structures` /
