@@ -3220,10 +3220,10 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.table.verticalHeader().setVisible(False)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-            self.table.setMinimumHeight(150)
+            self.table.setMinimumHeight(96); self.table.setMaximumHeight(220)
             self.table.cellClicked.connect(self.on_row)            # click a row = zoom in
             self.table.cellDoubleClicked.connect(self.on_row)
-            agl.addWidget(self.table, 1)
+            agl.addWidget(self.table, 0)
 
             hint = QtWidgets.QLabel("Click a row to zoom in · turn on Pick 3D and click an atom in the viewer")
             hint.setStyleSheet("color:#888; font-size:10px;"); agl.addWidget(hint)
@@ -3239,10 +3239,10 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.reset_btn = QtWidgets.QPushButton("Reset view"); br.addWidget(self.reset_btn)
             self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
 
-            self.detail = QtWidgets.QTextBrowser(); self.detail.setMinimumHeight(150)
+            self.detail = QtWidgets.QTextBrowser(); self.detail.setMinimumHeight(220)
             self.detail.setOpenLinks(False); self.detail.setOpenExternalLinks(False)
             self.detail.anchorClicked.connect(self.on_anchor)
-            agl.addWidget(self.detail)
+            agl.addWidget(self.detail, 1)   # the residue report takes the spare vertical space
 
             self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px; color:#555;")
             lay.addWidget(self.info)
