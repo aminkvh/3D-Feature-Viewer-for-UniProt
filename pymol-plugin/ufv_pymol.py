@@ -2090,9 +2090,11 @@ def format_report_html(rep, expanded=False, protvar="off"):
                 row("AlphaMissense", "%.2f" % v["alphaMissense"], _am_color(v["alphaMissense"]))
             if v.get("gnomad") is not None:
                 af = v["gnomad"]
-                rarity = "common" if af >= 0.01 else "rare" if af > 0 else "not in gnomAD"
+                rarity = "common" if af >= 0.01 else "rare" if af > 0 else "absent"
                 row("gnomAD AF", "%s <span style='color:#888;'>(%s)</span>" % (_fmt_af(af), rarity),
                     "#388e3c" if af >= 0.01 else "#777")
+            else:
+                row("gnomAD AF", "<span style='color:#888;'>not reported (absent from gnomAD — supports rarity)</span>", "#999")
             if expanded:  # evidence rows, folded by default
                 if v.get("clinVar"):
                     row("ClinVar", esc(v["clinVar"]))

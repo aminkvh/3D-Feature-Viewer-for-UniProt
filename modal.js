@@ -1713,8 +1713,10 @@ const UFVModal = (() => {
                     const af = v.gnomadAf;
                     const txt = af === 0 ? '0 (not observed)' : af >= 0.01 ? `${(af * 100).toFixed(2)}%`
                         : af >= 1e-4 ? `${(af * 100).toFixed(4)}%` : af.toExponential(1);
-                    const rarity = af >= 0.01 ? 'common' : af > 0 ? 'rare' : 'not in gnomAD';
+                    const rarity = af >= 0.01 ? 'common' : af > 0 ? 'rare' : 'absent';
                     vblock.appendChild(row('gnomAD AF', `${txt} (${rarity})`, af >= 0.01 ? '#43a047' : null));
+                } else {
+                    vblock.appendChild(row('gnomAD AF', 'not reported (absent from gnomAD — supports rarity)'));
                 }
                 if (v.genomicLocation) vblock.appendChild(row('Genomic', v.genomicLocation));
                 varBody.appendChild(vblock);
