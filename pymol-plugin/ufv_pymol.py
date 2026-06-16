@@ -1702,35 +1702,46 @@ def _has_ligands(obj):
 
 
 def ufv_ligands(obj=None, uid=None):
-    """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water) as sticks,
-    coloured by element, with ions as small spheres."""
+    """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water) as element-coloured
+    sticks on their OWN persistent object (ufv_<obj>_lig). Built once; toggling afterwards is an
+    instant enable/disable that never rebuilds the (possibly huge, e.g. AlphaFill) main structure."""
     obj = _resolve_object(obj)
+    lobj = _ufv_layer_obj(obj, "lig")
+    if lobj in (cmd.get_object_list() or []):
+        cmd.enable(lobj)
+        return cmd.count_atoms(lobj)
     sel = _ligand_sel(obj)
     n = cmd.count_atoms(sel)
     if not n:
         print("[UFV] %s: no ligands/cofactors present." % obj)
         return 0
     with _batch():
-        cmd.show("sticks", sel)
-        ions = "(%s) and inorganic" % obj
+        cmd.create(lobj, sel)                 # separate object — decoupled from the main structure
+        cmd.hide("everything", lobj)
+        cmd.show("sticks", lobj)
+        try:
+            cmd.color("green", "(%s) and elem C" % lobj)
+            cmd.color("atomic", "(%s) and (not elem C)" % lobj)
+        except Exception:
+            pass
+        ions = "(%s) and inorganic" % lobj
         if cmd.count_atoms(ions):
             cmd.show("spheres", ions)
             cmd.set("sphere_scale", 0.3, ions)
-        try:
-            cmd.color("green", "(%s) and elem C" % sel)        # ligand carbons green (stand out from grey protein)
-            cmd.color("atomic", "(%s) and (not elem C)" % sel)  # CPK colour the rest
-        except Exception:
-            pass
+        cmd.hide("sticks", sel)               # ensure the main object's copies aren't drawn twice
     print("[UFV] %s: ligands shown (%d atoms)." % (obj, n))
     return n
 
 
 def ufv_ligands_hide(obj=None):
-    """ufv_ligands_hide [object] — hide ligand/cofactor sticks and ion spheres."""
+    """ufv_ligands_hide [object] — hide the ligand layer (instant: just disables ufv_<obj>_lig)."""
     obj = _resolve_object(obj)
-    with _batch():
-        cmd.hide("sticks", _ligand_sel(obj))
-        cmd.hide("spheres", "(%s) and inorganic" % obj)
+    lobj = _ufv_layer_obj(obj, "lig")
+    try:
+        if lobj in (cmd.get_object_list() or []):
+            cmd.disable(lobj)
+    except Exception:
+        pass
 
 
 def enumerate_ligands(obj):
@@ -1798,8 +1809,15 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
         return
     pocket = "byres ((%s) around 5) and polymer" % lig
     cmap = _annotation_color_map(_CACHE.get(_resolve_uid(None)) or {})
+    disabled = []
+    lig_layer = _ufv_layer_obj(obj, "lig")      # hide the all-ligands layer so this copy isn't drawn twice
     with _batch():
         _clear_focus(obj)                       # drop any previous residue/ligand focus sticks (+ label)
+        if lig_layer in (cmd.get_object_list() or []):
+            try:
+                cmd.disable(lig_layer); disabled.append(lig_layer)
+            except Exception:
+                pass
         cmd.show("sticks", lig)
         cmd.color("green", "%s and elem C" % lig)
         cmd.set("stick_radius", 0.18, lig)      # fatten the focused copy so it reads as 'the selected one'
@@ -1817,17 +1835,7 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
         for c, chres in by_color.items():
             clauses = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in chres.items())
             cmd.set("stick_color", _color_name(c), "(%s) and (%s)" % (obj, clauses))
-        if chain is not None and resi is not None:   # 3D label so the user can see which copy is selected
-            try:
-                cmd.delete(_UFV_LIGLABEL)
-                cmd.pseudoatom(_UFV_LIGLABEL, selection=lig,
-                               label="%s %s/%s" % (resn, chain, resi))
-                cmd.set("label_size", 16, _UFV_LIGLABEL)
-                cmd.set("label_color", "yellow", _UFV_LIGLABEL)
-            except Exception:
-                pass
-    _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None,
-                         "disabled": [], "label": _UFV_LIGLABEL, "lig": lig}
+    _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None, "disabled": disabled, "lig": lig}
     cmd.zoom(lig, 6, animate=0)
 
 
@@ -2662,22 +2670,33 @@ def format_ligand_html(resn, info, instances=1, copies=None, cur=0):
             if i and i % 3 == 0:
                 cells.append('</tr><tr>')
             cells.append('<td style="background:#f3f3f3; padding:2px 6px;">'
-                         '<b style="color:#2e7d32;">%s</b>&nbsp;%.2f</td>' % (esc(d), s))
+                         '<a href="ufv:lig:show:%s" title="Show %s in 3D" style="color:#2e7d32; text-decoration:none;">'
+                         '<b>%s</b></a>&nbsp;%.2f</td>' % (esc(d), esc(d), esc(d), s))
         cells.append('</tr></table></td></tr>')
         T.append("".join(cells))
     T.append("</table>")
     return "".join(T)
 
 
+_CONS_RANK = {"pathogenic": 4, "deleterious": 3, "uncertain": 2, "benign": 1}
+
+
 def _annotation_color_map(ann):
-    """uniprot pos -> annotation colour (variant > PTM > site), matching the extension's focus."""
+    """uniprot pos -> annotation colour (variant > PTM > site). For variants, the MOST SEVERE
+    consequence at a position wins (so a pathogenic variant isn't overwritten by a co-located
+    uncertain one — that's what made disease colours look absent on the focus sticks)."""
     m = {}
     for s in ann.get("sites", []):
         m[s["position"]] = s["color"]
     for p in ann.get("ptms", []):
         m[p["position"]] = p["color"]
+    best = {}
     for v in ann.get("variants", []):
-        m[v["position"]] = v["consequenceColor"]
+        pos = v["position"]
+        r = _CONS_RANK.get(_cons_token(v["consequence"]), 0)
+        if best.get(pos, -1) < r:
+            best[pos] = r
+            m[pos] = v["consequenceColor"]
     return m
 
 
@@ -2716,9 +2735,9 @@ def _clear_focus(obj, restore_spheres=True):
 
 def ufv_focus(obj=None, uni_pos=None):
     """ufv_focus [object,] uniprot_pos — zoom into a residue: show it and its 5 Å neighbourhood as
-    sticks coloured by annotation, dim the cartoon, and hide the sphere markers there. The cartoon
-    is dimmed only ONCE per focus session (changing cartoon_transparency rebuilds the whole cartoon
-    mesh, which is what made each zoom slow) — subsequent residue clicks just move the sticks."""
+    sticks coloured by annotation, and hide the sphere markers there. (The cartoon is NOT made
+    transparent: transparency forces a full cartoon rebuild and is expensive to render every frame,
+    which made zooming slow and the zoomed-in view laggy to rotate/scroll.)"""
     obj = _resolve_object(obj)
     ann = _CACHE.get(_resolve_uid(None)) or {}
     sel = _sel_for_positions(obj, [int(uni_pos)])
@@ -2729,10 +2748,7 @@ def ufv_focus(obj=None, uni_pos=None):
     focus_sel = "(%s) or (%s)" % (sel, nb)
     cmap = _annotation_color_map(ann)
     with _batch():
-        _clear_focus(obj)                       # clear previous sticks (keep dim — no rebuild)
-        if obj not in _DIMMED:                   # dim once: the only cartoon rebuild
-            cmd.set("cartoon_transparency", 0.55, obj)
-            _DIMMED.add(obj)
+        _clear_focus(obj)                       # clear previous focus sticks
         cmd.show("sticks", focus_sel)
         cmd.set("stick_color", "grey70", focus_sel)
         nb_atoms = []
@@ -2761,7 +2777,7 @@ def ufv_focus(obj=None, uni_pos=None):
         # no rebuild). Restored on reset / next clear.
         disabled = []
         objlist = cmd.get_object_list() or []
-        for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
+        for tag in ("ptm", "var", "site", "dom", "filt", "mutag", "lig"):
             lobj = _ufv_layer_obj(obj, tag)
             if lobj in objlist:
                 try:
@@ -3441,7 +3457,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
         def toggle_visible(self, name, checked):
             try:
                 (cmd.enable if checked else cmd.disable)(name)
-                for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
+                for tag in ("ptm", "var", "site", "dom", "filt", "mutag", "lig"):
                     lobj = _ufv_layer_obj(name, tag)
                     if lobj in (cmd.get_object_list() or []):
                         (cmd.enable if checked else cmd.disable)(lobj)
@@ -3773,6 +3789,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 pk = self._last_protvar.get("pocket") if isinstance(self._last_protvar, dict) else None
                 if pk and pk.get("lining"):
                     ufv_show_pocket(self.obj(), pk["lining"])
+            elif s.startswith("ufv:lig:show:"):
+                self.on_ligand(s.rsplit(":", 1)[1])    # jump to a Tanimoto-similar ligand
             elif s == "ufv:evi":
                 self._show_evidence = not self._show_evidence
                 if self._last_rep:
@@ -4094,11 +4112,8 @@ def __init_plugin__(app=None):
 
 if _HAS_PYMOL:
     cmd.extend("ufv_gui", ufv_gui)
-    print("[UFV] 3D Feature Viewer for UniProt loaded. Open the panel with: ufv_gui  |  commands: "
-          "ufv_fetch, ufv_structures, ufv_use, ufv_load, ufv_map, ufv_chain, ufv_ptms, ufv_variants, "
-          "ufv_sites, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt, ufv_bfactor, "
-          "ufv_hotspots, ufv_contacthubs, ufv_pockets, ufv_ligands, ufv_report, ufv_focus, "
-          "ufv_resetview, ufv_align, ufv_hide, ufv_clear, ufv_info")
+    print("[UFV] 3D Feature Viewer for UniProt loaded — type 'ufv_gui' to open the panel "
+          "(or 'help ufv_gui'; all commands are 'ufv_*').")
 
 
 # ----------------------------------------------------------------------------------------------
