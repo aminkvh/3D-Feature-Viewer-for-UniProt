@@ -2773,11 +2773,11 @@ def ufv_focus(obj=None, uni_pos=None):
         cmd.color("atomic", "(%s) and (not elem C)" % sel)
         cmd.color(ccol, "(%s) and elem C" % sel)
         cmd.unset("stick_color", sel)  # let element/disease colours show on the selected residue's sticks
-        # Hide ALL annotation sphere layers while zoomed in (declutters; cmd.disable is instant —
-        # no rebuild). Restored on reset / next clear.
+        # Hide the annotation SPHERE layers while zoomed in (declutter). Keep the ligands layer shown —
+        # a residue near a ligand should still see it as context.
         disabled = []
         objlist = cmd.get_object_list() or []
-        for tag in ("ptm", "var", "site", "dom", "filt", "mutag", "lig"):
+        for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
             lobj = _ufv_layer_obj(obj, tag)
             if lobj in objlist:
                 try:
@@ -3095,6 +3095,8 @@ QLineEdit, QComboBox {
 QLineEdit:focus, QComboBox:focus { border: 1px solid #00897b; }
 QComboBox::drop-down { border: none; width: 18px; }
 QComboBox QAbstractItemView { border: 1px solid #d4d9de; background: #ffffff; selection-background-color: #e0f2f1; selection-color: #2c3038; }
+QComboBox QAbstractItemView::item:disabled { color: #b4bac1; }   /* e.g. pLDDT on experimental, B-factor on predicted */
+QComboBox:disabled, QLineEdit:disabled, QCheckBox:disabled, QLabel:disabled { color: #b4bac1; }
 QCheckBox { spacing: 6px; }
 QTableWidget {
     border: 1px solid #e4e7eb; border-radius: 6px; gridline-color: #f0f1f3; background: #ffffff;
@@ -4167,7 +4169,117 @@ def _emit_tcl_annotations(uid):
     am_items = ["{%d %.4f}" % (pos, avg) for pos, avg in sorted(ann["amMean"].items())]
     out.append("set ::ufv::a_am { %s }" % " ".join(am_items))
 
+    mut_items = ["{%d %s}" % (m["position"], m.get("color", MUTAG_COLOR)) for m in ann.get("mutagenesis", [])]
+    out.append("set ::ufv::a_mutagenesis { %s }" % " ".join(mut_items))
+    out.append("set ::ufv::a_burden { %s }" % " ".join(str(p) for p in sorted(ann.get("burden") or [])))
+    out.append("set ::ufv::a_seq %s" % _tcl_braced(ann["sequence"]))
+
+    fn = ann.get("function") or {}
+    fbits = []
+    if fn.get("summary"):
+        fbits.append("Function: " + fn["summary"])
+    if fn.get("locations"):
+        fbits.append("Location: " + ", ".join(fn["locations"][:4]))
+    if fn.get("catalytic"):
+        fbits.append("Catalytic: " + "; ".join(fn["catalytic"][:2]))
+    out.append("set ::ufv::a_function %s" % _tcl_braced("\n".join(fbits)))
+    pn = ann.get("protnlm") or {}
+    pn_txt = ("ProtNLM (AI): " + pn["name"]) if (pn.get("isAI") and pn.get("name")) else (("Name: " + pn["name"]) if pn.get("name") else "")
+    out.append("set ::ufv::a_protnlm %s" % _tcl_braced(pn_txt))
+
     sys.stdout.write("\n".join(out) + "\n")
+
+
+def _tcl_braced(s):
+    """Wrap text as a safe single Tcl word (strip characters that would unbalance brace quoting)."""
+    return "{%s}" % (s or "").replace("\\", "/").replace("{", "(").replace("}", ")").replace("[", "(").replace("]", ")")
+
+
+def _emit_tcl_structures(uid):
+    """Emit the available structures (AlphaFold / experimental PDB / computed / isoforms) as a Tcl
+    list of {key label source url fmt numbering pdbId} so the VMD GUI can list and load any of them."""
+    structs = _quiet(list_structures, uid)
+    items = []
+    for s in structs:
+        items.append("{%s %s %s %s %s %s %s}" % (
+            s.get("key", ""), _tcl_braced(s.get("label", "")), s.get("source", ""),
+            _tcl_braced(s.get("url", "")), s.get("fmt", "pdb"),
+            s.get("numbering", "identity"), s.get("pdbId") or "-"))
+    sys.stdout.write("set ::ufv::a_structures { %s }\n" % " ".join(items))
+
+
+def _download_url(url, fmt):
+    """Download a structure file from a URL to a temp path; print the path (for the VMD loader)."""
+    data = _quiet(_get_text, url)
+    if not data:
+        sys.exit("download failed: %s" % url)
+    ext = "cif" if fmt == "mmcif" else "pdb"
+    path = os.path.join(tempfile.gettempdir(), "ufv_struct.%s" % ext)
+    with open(path, "w") as fh:
+        fh.write(data)
+    sys.stdout.write(path + "\n")
+
+
+def _emit_tcl_residue(uid, pos):
+    """Emit a plain-text residue report (annotations + ProtVar predictors) as a Tcl variable for the
+    VMD GUI's readout panel."""
+    pos = int(pos)
+    ann = _quiet(fetch_annotations, uid)
+    seq = ann["sequence"]
+    aa = seq[pos - 1] if 0 < pos <= len(seq) else "?"
+    L = ["%s%d  (%s)" % (aa, pos, uid)]
+    for v in ann["varByPos"].get(pos, []):
+        dis = (" — " + "; ".join(v["diseases"])) if v.get("diseases") else ""
+        af = v.get("gnomad")
+        afs = (" · gnomAD %s" % _fmt_af(af)) if af is not None else " · not in gnomAD"
+        L.append("  Variant %s%d%s — %s%s%s" % (v.get("wildType", ""), pos, v.get("mutant", ""),
+                                                v.get("consequence", ""), dis, afs))
+    for s in ann["sites"]:
+        if s["position"] <= pos <= s["endPosition"]:
+            L.append("  Site: %s" % s["description"])
+    for p in ann["ptms"]:
+        if p["position"] <= pos <= p["endPosition"]:
+            L.append("  PTM: %s" % p["description"])
+    for m in ann.get("mutagenesis", []):
+        if m["position"] <= pos <= m["endPosition"]:
+            L.append("  Mutagenesis: %s->%s %s" % (m.get("wildType", ""), ",".join(m.get("mutants", [])), m.get("effect", "")))
+    for d in ann["domains"]:
+        if d["position"] <= pos <= d["endPosition"]:
+            L.append("  Domain: %s" % d["description"])
+    if ann["amMean"].get(pos) is not None:
+        L.append("  AlphaMissense mean: %.3f" % ann["amMean"][pos])
+    try:
+        pv = _quiet(fetch_protvar, uid, pos)
+        sc = pv.get("score") or {}
+        bits = []
+        if sc.get("conservation") is not None:
+            bits.append("conservation %.2f" % sc["conservation"])
+        if sc.get("m3d"):
+            bits.append("M3D %s" % sc["m3d"].get("prediction", "?"))
+        pk = pv.get("pocket")
+        if pk:
+            bits.append("binding pocket (buriedness %.2f)" % (pk.get("buriedness") or 0))
+        if bits:
+            L.append("  ProtVar: " + " · ".join(bits))
+        eve = _protvar_by_mut(sc.get("eveRaw"), aa)
+        esm = _protvar_by_mut(sc.get("esmRaw"), aa)
+        ddg = (pv.get("foldx") or {}).get("byMut") or {}
+        for v in ann["varByPos"].get(pos, []):
+            mt = v.get("mutant")
+            if not mt:
+                continue
+            seg = []
+            if mt in eve and eve[mt] is not None:
+                seg.append("EVE %.2f" % eve[mt])
+            if mt in esm and esm[mt] is not None:
+                seg.append("ESM1b %.1f" % esm[mt])
+            if mt in ddg:
+                seg.append("FoldX %+.1f" % ddg[mt])
+            if seg:
+                L.append("    %s%d%s: %s" % (aa, pos, mt, " · ".join(seg)))
+    except Exception:
+        pass
+    sys.stdout.write("set ::ufv::a_residue %s\n" % _tcl_braced("\n".join(L)))
 
 
 def _emit_tcl_sifts(pdb_id, uid):
@@ -4200,11 +4312,20 @@ if __name__ == "__main__":
         _emit_tcl_sifts(_args[1], _args[2])
     elif len(_args) >= 2 and _args[0] == "--download":
         _download_model(_args[1])
+    elif len(_args) >= 2 and _args[0] == "--structures":
+        _emit_tcl_structures(_args[1])
+    elif len(_args) >= 3 and _args[0] == "--get":
+        _download_url(_args[1], _args[2] if len(_args) > 2 else "pdb")
+    elif len(_args) >= 3 and _args[0] == "--residue":
+        _emit_tcl_residue(_args[1], _args[2])
     else:
         sys.stderr.write(
             "3D Feature Viewer for UniProt — backend for the VMD plugin\n"
             "usage:\n"
-            "  python ufv_pymol.py --emit-tcl   <uniprot_id>\n"
-            "  python ufv_pymol.py --emit-sifts <pdb_id> <uniprot_id>\n"
-            "  python ufv_pymol.py --download   <uniprot_id>\n")
+            "  python ufv_pymol.py --emit-tcl    <uniprot_id>\n"
+            "  python ufv_pymol.py --emit-sifts  <pdb_id> <uniprot_id>\n"
+            "  python ufv_pymol.py --structures  <uniprot_id>\n"
+            "  python ufv_pymol.py --download     <uniprot_id>\n"
+            "  python ufv_pymol.py --get         <url> <fmt>\n"
+            "  python ufv_pymol.py --residue     <uniprot_id> <pos>\n")
         sys.exit(2)
