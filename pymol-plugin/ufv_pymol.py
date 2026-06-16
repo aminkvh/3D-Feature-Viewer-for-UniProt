@@ -1797,6 +1797,7 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
     if not cmd.count_atoms(lig):
         return
     pocket = "byres ((%s) around 5) and polymer" % lig
+    cmap = _annotation_color_map(_CACHE.get(_resolve_uid(None)) or {})
     with _batch():
         _clear_focus(obj)                       # drop any previous residue/ligand focus sticks (+ label)
         cmd.show("sticks", lig)
@@ -1804,6 +1805,18 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
         cmd.set("stick_radius", 0.18, lig)      # fatten the focused copy so it reads as 'the selected one'
         cmd.show("sticks", pocket)
         cmd.set("stick_color", "grey70", pocket)
+        # Colour the pocket residues by their disease annotation (variant/PTM/site), like residue focus,
+        # instead of leaving them all grey.
+        pk_atoms = []
+        cmd.iterate(pocket + " and name CA", "pk_atoms.append((chain, resi))", space={"pk_atoms": pk_atoms})
+        by_color = {}
+        for ch, resi in set(pk_atoms):
+            c = cmap.get(_resi_to_uni(obj, ch, resi))
+            if c:
+                by_color.setdefault(c, {}).setdefault(ch, []).append(resi)
+        for c, chres in by_color.items():
+            clauses = " or ".join("(chain %s and resi %s)" % (ch, "+".join(rs)) for ch, rs in chres.items())
+            cmd.set("stick_color", _color_name(c), "(%s) and (%s)" % (obj, clauses))
         if chain is not None and resi is not None:   # 3D label so the user can see which copy is selected
             try:
                 cmd.delete(_UFV_LIGLABEL)
@@ -1816,6 +1829,30 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
     _FOCUS_SHOWN[obj] = {"sticks": "(%s) or (%s)" % (lig, pocket), "sel": None,
                          "disabled": [], "label": _UFV_LIGLABEL, "lig": lig}
     cmd.zoom(lig, 6, animate=0)
+
+
+def ufv_show_pocket(obj=None, positions=None):
+    """ufv_show_pocket [object,] positions — highlight a predicted (druggable) binding pocket: show
+    its lining residues as orange sticks + a translucent surface and zoom in."""
+    obj = _resolve_object(obj)
+    if not positions:
+        return
+    sel = _sel_for_positions(obj, [int(p) for p in positions])
+    if not sel:
+        return
+    res = "byres (%s)" % sel
+    with _batch():
+        _clear_focus(obj)
+        cmd.show("sticks", res)
+        cmd.set("stick_color", _color_name("#fb8c00"), res)
+        try:
+            cmd.show("surface", res)
+            cmd.set("transparency", 0.45, res)
+            cmd.set("surface_color", _color_name("#ffd180"), res)
+        except Exception:
+            pass
+    _FOCUS_SHOWN[obj] = {"sticks": res, "sel": None, "disabled": [], "surface": res}
+    cmd.zoom(res, 2, animate=0)
 
 
 def ufv_domains(obj=None, uid=None):
@@ -2078,8 +2115,9 @@ def _parse_protvar_pocket(arr):
     if not pockets:
         return None
     best = max(pockets, key=lambda p: p.get("score") or 0)
+    lining = sorted({int(r) for p in pockets for r in (p.get("resid") or []) if str(r).lstrip("-").isdigit()})
     return {"count": len(pockets), "buriedness": best.get("buriedness"),
-            "score": best.get("score"), "plddt": best.get("meanPlddt")}
+            "score": best.get("score"), "plddt": best.get("meanPlddt"), "lining": lining}
 
 
 def fetch_protvar(uid, pos):
@@ -2485,12 +2523,13 @@ def format_report_html(rep, expanded=False, protvar="off"):
         if pk:
             bits = []
             if pk.get("buriedness") is not None:
-                bits.append("buriedness %.2f" % pk["buriedness"])
+                bits.append('<span title="How enclosed the cavity is: 0 = open surface, 1 = fully buried">buriedness %.2f</span>' % pk["buriedness"])
             if pk.get("score") is not None:
-                bits.append("druggability %.0f" % pk["score"])
+                bits.append('<span title="fpocket druggability score — higher = more likely to bind a drug-like molecule">druggability %.0f</span>' % pk["score"])
             detail = (" <span style='color:#888;'>(%s)</span>" % " · ".join(bits)) if bits else ""
-            row('<span title="Lines a predicted, potentially ligand-binding pocket (ProtVar / fpocket)">Binding pocket</span>',
-                "<span style='color:#00897b;'>in %d predicted pocket(s)</span>%s" % (pk["count"], detail))
+            link = ' <a href="ufv:pocket" style="color:#fb8c00; text-decoration:none;">show ▸</a>' if pk.get("lining") else ""
+            row('<span title="This residue lines a predicted, potentially drug-binding cavity (ProtVar / fpocket)">Binding pocket</span>',
+                "<span style='color:#00897b;'>in %d predicted pocket(s)</span>%s%s" % (pk["count"], detail, link))
         if protvar == "loading":
             row("EVE / ESM1b / FoldX", "<span style='color:#888;'>loading…</span>")
         am_by_mut = {m: s for (_w, m, s) in rep.get("amProfile", [])}
@@ -2658,6 +2697,8 @@ def _clear_focus(obj, restore_spheres=True):
     try:
         cmd.hide("sticks", prev["sticks"])
         cmd.unset("stick_color", prev["sticks"])
+        if prev.get("surface"):
+            cmd.hide("surface", prev["surface"])
         if prev.get("lig"):
             cmd.unset("stick_radius", prev["lig"])  # un-fatten the previously focused ligand copy
         if prev.get("sel"):
@@ -2979,7 +3020,7 @@ if _HAS_PYMOL:
         ("ufv_report", ufv_report), ("ufv_focus", ufv_focus), ("ufv_resetview", ufv_resetview),
         ("ufv_align", ufv_align),
         ("ufv_ligands", ufv_ligands), ("ufv_ligands_hide", ufv_ligands_hide),
-        ("ufv_ligand_focus", ufv_ligand_focus),
+        ("ufv_ligand_focus", ufv_ligand_focus), ("ufv_show_pocket", ufv_show_pocket),
         ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
         ("ufv_csv", ufv_csv),
     ]:
@@ -3664,20 +3705,26 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 return
             self._last_pos = uni_pos
             self._sel = {"kind": "res", "pos": uni_pos}
-            if focus:  # zoom FIRST so a slow/failing report compute can never swallow the double-click
+            if focus:  # zoom FIRST so the view moves before any compute
                 for o in objs:  # aligned copies overlap, so the last zoom frames them all
                     try:
                         ufv_focus(o, uni_pos)
                     except Exception as exc:
                         self.status.setText("Focus error: %s" % exc)
+            # Build the report on the NEXT event-loop tick so the zoom repaints immediately instead of
+            # waiting for residue_report (neighbourhood + ligand-proximity can be heavy on big models).
+            self._lig_resn = None
+            QtCore.QTimer.singleShot(0, lambda p=uni_pos, o=objs[0], u=uid: self._build_report(o, u, p))
+
+        def _build_report(self, obj, uid, pos):
+            if self._last_pos != pos:
+                return                      # user already clicked elsewhere
             try:
-                self._last_rep = residue_report(objs[0], uid, uni_pos)
-                self._lig_resn = None      # leaving ligand context
+                self._last_rep = residue_report(obj, uid, pos)
                 self._show_evidence = False
-                # ProtVar predictors are always shown; fetch in the background and show 'loading' meanwhile.
-                self._last_protvar = "loading"
+                self._last_protvar = "loading"   # ProtVar always shown; fetched in the background
                 self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "loading"))
-                self._fetch_protvar_async(uid, uni_pos)
+                self._fetch_protvar_async(uid, pos)
             except Exception as exc:
                 self._last_rep = None
                 self.detail.setHtml("<i>Report error: %s</i>" % exc)
@@ -3722,6 +3769,10 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                     self.report_residue(int(s.rsplit(":", 1)[1]), focus=True)
                 except ValueError:
                     pass
+            elif s == "ufv:pocket":
+                pk = self._last_protvar.get("pocket") if isinstance(self._last_protvar, dict) else None
+                if pk and pk.get("lining"):
+                    ufv_show_pocket(self.obj(), pk["lining"])
             elif s == "ufv:evi":
                 self._show_evidence = not self._show_evidence
                 if self._last_rep:
