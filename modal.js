@@ -1852,75 +1852,42 @@ const UFVModal = (() => {
             body.appendChild(proxSection);
         }
 
-        // ── AlphaMissense full position profile ──────────────────────────────────
-        const AM_AAS = 'ACDEFGHIKLMNPQRSTVWY';
-        const amProfileEntries = [];
-        if (s.amMap && wt) {
-            for (const mut of AM_AAS) {
-                if (mut === wt) continue;
-                const key = `${wt}${pos}${mut}`;
-                const sc = s.amMap.get(key);
-                if (Number.isFinite(sc)) amProfileEntries.push({ mut, score: sc });
-            }
-        }
-        if (amProfileEntries.length > 0) {
-            amProfileEntries.sort((a, b) => b.score - a.score);
-            const amSection = document.createElement('div');
-            amSection.className = 'ufv-am-section';
-            const amToggle = document.createElement('button');
-            amToggle.className = 'ufv-am-toggle';
-            const avgScore = amProfileEntries.reduce((sum, e) => sum + e.score, 0) / amProfileEntries.length;
-            const avgColor = avgScore >= 0.564 ? '#ef5350' : avgScore >= 0.34 ? '#ffa726' : '#66bb6a';
-            amToggle.innerHTML = `<span class="ufv-am-hdr-left">AlphaMissense</span><span class="ufv-am-hdr-right"><span class="ufv-am-avg" style="color:${avgColor}">${avgScore.toFixed(3)}</span><span class="ufv-am-arrow">▾</span></span>`;
-            const amBody = document.createElement('div');
-            amBody.className = 'ufv-am-body';
-            const grid = document.createElement('div');
-            grid.className = 'ufv-am-grid';
-            amProfileEntries.forEach(({ mut, score }) => {
-                const scoreColor = score >= 0.564 ? '#ef5350' : score >= 0.34 ? '#ffa726' : '#66bb6a';
-                const cell = document.createElement('div');
-                cell.className = 'ufv-am-cell';
-                cell.title = score >= 0.564 ? 'Likely pathogenic' : score >= 0.34 ? 'Ambiguous' : 'Likely benign';
-                cell.innerHTML = `<span class="ufv-am-cell-mut" style="color:${scoreColor}">${mut}</span><span class="ufv-am-cell-sc" style="color:${scoreColor}">${score.toFixed(3)}</span>`;
-                grid.appendChild(cell);
-            });
-            amBody.appendChild(grid);
-            amToggle.addEventListener('click', () => {
-                const open = amBody.classList.toggle('show');
-                amToggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
-            });
-            amSection.append(amToggle, amBody);
-            body.appendChild(amSection);
-        }
-
-        // ── ProtVar predictors (EVE / ESM1b / conservation / FoldX ΔΔG / M3D) ────────
-        // Complementary to AlphaMissense. Collapsed by default and fetched only on first expand, so
-        // it never adds latency to a residue click unless the user wants it.
+        // ── Prediction: AlphaMissense (always) + ProtVar EVE/ESM1b/FoldX (lazy) per substitution ──
+        // One boxed table. AM is from the local CSV; the ProtVar columns fetch on first expand.
         {
-            const pvSection = document.createElement('div');
-            pvSection.className = 'ufv-am-section';
-            const pvToggle = document.createElement('button');
-            pvToggle.className = 'ufv-am-toggle';
-            pvToggle.innerHTML = `<span class="ufv-am-hdr-left">ProtVar predictors</span><span class="ufv-am-hdr-right"><span class="ufv-am-arrow">▾</span></span>`;
-            const pvBody = document.createElement('div');
-            pvBody.className = 'ufv-am-body';
-            let pvLoaded = false;
-            pvToggle.addEventListener('click', async () => {
-                const open = pvBody.classList.toggle('show');
-                pvToggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
-                if (!open || pvLoaded) return;
-                pvLoaded = true;
-                pvBody.textContent = '';
-                pvBody.appendChild(row('Loading', 'EVE / ESM1b / conservation / FoldX …'));
-                const acc = s.uniprotId, p = pos;
+            const AM_AAS = 'ACDEFGHIKLMNPQRSTVWY';
+            const amEntries = [];
+            if (s.amMap && wt) {
+                for (const mut of AM_AAS) {
+                    if (mut === wt) continue;
+                    const sc = s.amMap.get(`${wt}${pos}${mut}`);
+                    if (Number.isFinite(sc)) amEntries.push({ mut, am: sc });
+                }
+            }
+            const observed = new Set((variants || []).map(v => v.mutant).filter(Boolean));
+            const predSection = document.createElement('div');
+            predSection.className = 'ufv-am-section';
+            const predToggle = document.createElement('button');
+            predToggle.className = 'ufv-am-toggle';
+            const avg = amEntries.length ? amEntries.reduce((a, e) => a + e.am, 0) / amEntries.length : null;
+            const avgColor = avg == null ? '' : avg >= 0.564 ? '#ef5350' : avg >= 0.34 ? '#ffa726' : '#66bb6a';
+            predToggle.innerHTML = `<span class="ufv-am-hdr-left">Prediction</span><span class="ufv-am-hdr-right">${avg != null ? `<span class="ufv-am-avg" style="color:${avgColor}" title="AlphaMissense mean">${avg.toFixed(3)}</span>` : ''}<span class="ufv-am-arrow">▾</span></span>`;
+            const predBody = document.createElement('div');
+            predBody.className = 'ufv-am-body';
+            let loaded = false;
+            predToggle.addEventListener('click', async () => {
+                const open = predBody.classList.toggle('show');
+                predToggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
+                if (!open || loaded) return;
+                loaded = true;
+                renderPredictionTable(predBody, amEntries, null, wt, pos, s.uniprotId, observed); // AM-only + loading
                 let pv = null;
-                try { pv = await UFVApi.fetchProtVar(acc, p); } catch (_e) { pv = null; }
-                if (s.selectedResidue !== p) return; // user moved on while it loaded
-                pvBody.textContent = '';
-                renderProtVarInto(pvBody, pv, variants, p, wt, acc);
+                try { pv = await UFVApi.fetchProtVar(s.uniprotId, pos); } catch (_e) { pv = null; }
+                if (s.selectedResidue !== pos) return;
+                renderPredictionTable(predBody, amEntries, pv, wt, pos, s.uniprotId, observed); // full
             });
-            pvSection.append(pvToggle, pvBody);
-            body.appendChild(pvSection);
+            predSection.append(predToggle, predBody);
+            body.appendChild(predSection);
         }
 
         byId('ufv-details').classList.add('show');
@@ -1939,63 +1906,65 @@ const UFVModal = (() => {
         return out;
     }
 
-    function renderProtVarInto(container, pv, variants, pos, wt, acc) {
+    const amColor = sc => sc >= 0.564 ? '#e53935' : sc >= 0.34 ? '#fb8c00' : '#43a047';
+
+    // One boxed table: sub | AM (always) | EVE | ESM1b | FoldX (when ProtVar is loaded). pv === null
+    // while ProtVar fetches (AM columns render immediately so the table isn't empty).
+    function renderPredictionTable(container, amEntries, pv, wt, pos, acc, observed) {
+        container.textContent = '';
         const sgn = (x) => (x >= 0 ? '+' : '') + x.toFixed(1);
-        if (!pv || (!pv.score && !pv.foldx)) {
-            container.appendChild(row('ProtVar', 'no predictor data for this position.'));
-            return;
-        }
-        const sc = pv.score || {}, fx = pv.foldx || {};
-        // Per-position: concise label, full wording in the title tooltip.
-        if (sc.conservation != null) {
+        const sc = pv?.score || {}, fx = pv?.foldx || {};
+        const havePv = !!(pv && (pv.score || pv.foldx));
+        // Per-position rows above the table.
+        if (havePv && sc.conservation != null) {
             const r = row('Conservation', sc.conservation.toFixed(2));
             r.title = 'Evolutionary conservation across homologues (0 = variable, 1 = invariant)';
             container.appendChild(r);
         }
-        if (sc.m3d) {
+        if (havePv && sc.m3d) {
             const dmg = String(sc.m3d.prediction || '').toLowerCase().startsWith('damag');
-            const r = row('M3D', `${sc.m3d.prediction || '?'}${sc.m3d.feature ? ' — ' + sc.m3d.feature : ''}`, dmg ? '#ef5350' : '#66bb6a');
-            r.title = 'Missense3D: predicted structural consequence of the substitution';
+            const r = row('M3D', `${sc.m3d.prediction || '?'}${sc.m3d.feature ? ' — ' + sc.m3d.feature : ''}`, dmg ? '#e53935' : '#43a047');
+            r.title = 'Missense3D: predicted structural consequence';
             container.appendChild(r);
         }
-        // ALL substitutions (saturation), like AlphaMissense — not just the observed variants.
+        if (!havePv && pv !== null) { /* fetch finished with no data: AM-only table still shown below */ }
+
+        const amByMut = {}; (amEntries || []).forEach(e => { amByMut[e.mut] = e.am; });
         const eve = pvByMut(sc.eveRaw, wt), evc = pvByMut(sc.eveClsRaw, wt), esm = pvByMut(sc.esmRaw, wt), ddg = fx.byMut || {};
-        const observed = new Set((variants || []).map(v => v.mutant).filter(Boolean));
         const rows = [];
         [...PV_AA].filter(a => a !== wt).forEach(mt => {
-            const e = eve[mt], es = esm[mt], d = ddg[mt];
-            if (e == null && es == null && d == null) return;
-            rows.push({ mt, e, ec: evc[mt], es, d });
+            const am = amByMut[mt], e = eve[mt], es = esm[mt], d = ddg[mt];
+            if (am == null && e == null && es == null && d == null) return;
+            rows.push({ mt, am, e, ec: evc[mt], es, d });
         });
-        rows.sort((a, b) => (b.e ?? -2) - (a.e ?? -2) || (b.d ?? -999) - (a.d ?? -999));
-        if (!rows.length) { container.appendChild(row('ProtVar', 'no per-substitution scores for this position.')); return; }
+        rows.sort((a, b) => (b.am ?? -2) - (a.am ?? -2) || (b.e ?? -2) - (a.e ?? -2));
+        if (!rows.length) { container.appendChild(row('Prediction', 'no per-substitution scores for this position.')); return; }
 
         const tbl = document.createElement('table');
-        tbl.className = 'ufv-pv-table';
-        tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:11px;';
-        const head = document.createElement('tr');
-        head.style.opacity = '0.6';
-        head.innerHTML = '<td>sub</td><td title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</td>'
-            + '<td title="ESM1b protein language-model score; lower = more deleterious">ESM1b</td>'
-            + '<td title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</td>';
+        tbl.style.cssText = 'border-collapse:separate;border-spacing:4px;font-size:11px;';
+        const head = document.createElement('tr'); head.style.opacity = '0.55';
+        head.innerHTML = '<td>sub</td><td title="AlphaMissense (0–1 pathogenicity)">AM</td>'
+            + (havePv ? '<td title="EVE evolutionary model (0–1)">EVE</td>'
+                + '<td title="ESM1b language model; lower = more deleterious">ESM1b</td>'
+                + '<td title="FoldX ΔΔG kcal/mol; &gt;2 destabilising">FoldX</td>' : (pv === null ? '<td colspan="3" style="font-weight:400">EVE / ESM1b / FoldX loading…</td>' : ''));
         tbl.appendChild(head);
-        rows.forEach(({ mt, e, ec, es, d }) => {
+        const boxTd = (html, color) => { const td = document.createElement('td'); td.style.cssText = 'background:var(--ufv-chip-bg,#f3f3f3);padding:2px 7px;text-align:center;border-radius:3px;'; td.innerHTML = html; if (color) td.style.color = color; return td; };
+        rows.forEach(({ mt, am, e, ec, es, d }) => {
             const tr = document.createElement('tr');
             const subTd = document.createElement('td'); subTd.style.whiteSpace = 'nowrap';
             const a = document.createElement('a');
             a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${mt}`;
-            a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'color:#00897b;text-decoration:none;';
+            a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'color:#7b1fa2;text-decoration:none;';
             a.textContent = `${wt}${pos}${mt}`;
             subTd.appendChild(a);
-            if (observed.has(mt)) { subTd.style.fontWeight = '700'; subTd.append(' •'); } // • = reported variant
-            const eveTd = document.createElement('td');
-            eveTd.textContent = e != null ? e.toFixed(2) : '–';
-            if (e != null) eveTd.style.color = String(ec || '').toUpperCase() === 'PATHOGENIC' ? '#e53935' : '';
-            const esmTd = document.createElement('td'); esmTd.textContent = es != null ? es.toFixed(1) : '–';
-            const fxTd = document.createElement('td');
-            fxTd.textContent = d != null ? sgn(d) : '–';
-            if (d != null) fxTd.style.color = d >= 2 ? '#e53935' : d >= 1 ? '#fb8c00' : '#43a047';
-            tr.append(subTd, eveTd, esmTd, fxTd);
+            if (observed && observed.has(mt)) { subTd.style.fontWeight = '700'; subTd.append(' •'); }
+            tr.appendChild(subTd);
+            tr.appendChild(boxTd(am != null ? am.toFixed(2) : '–', am != null ? amColor(am) : ''));
+            if (havePv) {
+                tr.appendChild(boxTd(e != null ? e.toFixed(2) : '–', e != null && String(ec || '').toUpperCase() === 'PATHOGENIC' ? '#e53935' : ''));
+                tr.appendChild(boxTd(es != null ? es.toFixed(1) : '–'));
+                tr.appendChild(boxTd(d != null ? sgn(d) : '–', d != null ? (d >= 2 ? '#e53935' : d >= 1 ? '#fb8c00' : '#43a047') : ''));
+            }
             tbl.appendChild(tr);
         });
         container.appendChild(tbl);

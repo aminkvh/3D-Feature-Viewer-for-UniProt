@@ -2208,7 +2208,7 @@ def format_report_html(rep, expanded=False, protvar="off"):
                 row("gnomAD AF", "%s <span style='color:#888;'>(%s)</span>" % (_fmt_af(af), rarity),
                     "#388e3c" if af >= 0.01 else "#777")
             else:
-                row("gnomAD AF", "<span style='color:#888;'>not reported (absent from gnomAD — supports rarity)</span>", "#999")
+                row("gnomAD AF", '<span title="Not observed in gnomAD — consistent with a rare variant">not in gnomAD</span>', "#999")
             if expanded:  # evidence rows, folded by default
                 if v.get("clinVar"):
                     row("ClinVar", esc(v["clinVar"]))
@@ -2239,79 +2239,66 @@ def format_report_html(rep, expanded=False, protvar="off"):
             val = "%s <span style='color:#888;'>%s</span>" % (sub, esc(mtg.get("effect", "")))
             row('<span title="Experimentally mutated residue (UniProt)">Mutagenesis</span>', val, MUTAG_COLOR)
 
-    if rep["amMean"] is not None:
-        hdr("AlphaMissense", "#6a1b9a")
-        row("Mean", "%.3f" % rep["amMean"], _am_color(rep["amMean"]))
-        if rep.get("amProfile"):
-            # full substitution grid, 10 per row, coloured by pathogenicity
-            cells = ['<tr><td colspan="2"><table cellspacing="2"><tr>']
-            for i, (w, m, sc) in enumerate(rep["amProfile"]):
-                if i and i % 10 == 0:
-                    cells.append('</tr><tr>')
-                cells.append('<td style="background:#f3f3f3; padding:2px 4px; text-align:center;">'
-                             '<b style="color:%s;">%s</b><br><span style="color:%s; font-size:10px;">%.2f</span></td>'
-                             % (_am_color(sc), esc(m), _am_color(sc), sc))
-            cells.append('</tr></table></td></tr>')
-            T.append("".join(cells))
-
-    if protvar != "off":
-        # Compact labels (full wording lives in tooltips). Per-substitution EVE/ESM/FoldX are tied to
-        # the residue's actual variants; conservation + M3D are per-position.
-        hdr('<span title="EMBL-EBI ProtVar per-residue predictors">ProtVar predictors</span>', "#00695c")
+    # ── Prediction: one boxed per-substitution table combining AlphaMissense (always) with ProtVar's
+    # EVE / ESM1b / FoldX (when fetched). Conservation + M3D are per-position rows above it.
+    pv_dict = protvar if (protvar not in ("off", "loading") and protvar) else None
+    if rep.get("amProfile") or rep.get("amMean") is not None or protvar != "off":
+        hdr('<span title="Per-substitution variant-effect predictors">Prediction</span>', "#6a1b9a")
+        sc = (pv_dict or {}).get("score") or {}
+        fx = (pv_dict or {}).get("foldx") or {}
+        wt = rep["aa"]
+        if sc.get("conservation") is not None:
+            row('<span title="Evolutionary conservation across homologues (0 variable – 1 conserved)">Conservation</span>',
+                "%.2f" % sc["conservation"])
+        if sc.get("m3d"):
+            md = sc["m3d"]
+            feat = (" — %s" % esc(md["feature"])) if md.get("feature") else ""
+            mcol = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
+            row('<span title="Missense3D: predicted structural consequence">M3D</span>',
+                "<span style='color:%s;'>%s</span>%s" % (mcol, esc(md.get("prediction", "?")), feat))
         if protvar == "loading":
-            row("Loading", "fetching EVE / ESM1b / conservation / FoldX …")
-        elif protvar:
-            sc = protvar.get("score") or {}
-            fx = protvar.get("foldx") or {}
-            wt = rep["aa"]
-            if sc.get("conservation") is not None:
-                row('<span title="Evolutionary conservation across homologues (0 = variable, 1 = invariant)">Conservation</span>',
-                    "%.2f" % sc["conservation"])
-            if sc.get("m3d"):
-                md = sc["m3d"]
-                feat = (" — %s" % esc(md["feature"])) if md.get("feature") else ""
-                col = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
-                row('<span title="Missense3D: predicted structural consequence of the substitution">M3D</span>',
-                    "<span style='color:%s;'>%s</span>%s" % (col, esc(md.get("prediction", "?")), feat))
-            # ALL substitutions (saturation), like AlphaMissense — not just the observed variants.
-            eve = _protvar_by_mut(sc.get("eveRaw"), wt)
-            evc = _protvar_by_mut(sc.get("eveClsRaw"), wt)
-            esm = _protvar_by_mut(sc.get("esmRaw"), wt)
-            ddg = fx.get("byMut") or {}
-            obs = {v.get("mutant") for v in rep.get("variants", []) if v.get("mutant")}
-            data = []
-            for mt in [a for a in AA_ALPHA if a != wt]:
-                e, es, d = eve.get(mt), esm.get(mt), ddg.get(mt)
-                if e is None and es is None and d is None:
-                    continue
-                data.append((mt, e, evc.get(mt), es, d))
-            data.sort(key=lambda r: (r[1] is None, -(r[1] or 0), -(r[4] if r[4] is not None else -999)))
-            if data:
-                cells = ['<tr><td colspan="2"><table cellspacing="0" cellpadding="2" style="font-size:11px; width:100%;">'
-                         '<tr style="color:#888;"><td>sub</td>'
-                         '<td title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</td>'
-                         '<td title="ESM1b protein language-model score; lower = more deleterious">ESM1b</td>'
-                         '<td title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</td></tr>']
-                for mt, e, ec, es, d in data:
-                    link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], mt)
-                    sub = '<a href="%s" style="color:#00695c; text-decoration:none;">%s%d%s</a>' % (link, esc(wt), rep["pos"], esc(mt))
-                    if mt in obs:
-                        sub = "<b>%s •</b>" % sub                 # • marks a reported variant
+            row("EVE / ESM1b / FoldX", "<span style='color:#888;'>loading…</span>")
+        am_by_mut = {m: s for (_w, m, s) in rep.get("amProfile", [])}
+        show_pv = bool(pv_dict)
+        eve = _protvar_by_mut(sc.get("eveRaw"), wt) if show_pv else {}
+        evc = _protvar_by_mut(sc.get("eveClsRaw"), wt) if show_pv else {}
+        esm = _protvar_by_mut(sc.get("esmRaw"), wt) if show_pv else {}
+        ddg = fx.get("byMut") or {}
+        obs = {v.get("mutant") for v in rep.get("variants", []) if v.get("mutant")}
+        data = []
+        for mt in [a for a in AA_ALPHA if a != wt]:
+            am, e, es, d = am_by_mut.get(mt), eve.get(mt), esm.get(mt), ddg.get(mt)
+            if am is None and e is None and es is None and d is None:
+                continue
+            data.append((mt, am, e, evc.get(mt), es, d))
+        data.sort(key=lambda r: (r[1] is None, -(r[1] if r[1] is not None else 0), -(r[2] if r[2] is not None else 0)))
+        if data:
+            box = "background:#f3f3f3; padding:2px 6px; text-align:center;"
+            head = ('<td style="color:#888;">sub</td>'
+                    '<td style="color:#888;" title="AlphaMissense (0–1 pathogenicity)">AM</td>')
+            if show_pv:
+                head += ('<td style="color:#888;" title="EVE evolutionary model (0–1)">EVE</td>'
+                         '<td style="color:#888;" title="ESM1b language model; lower = more deleterious">ESM1b</td>'
+                         '<td style="color:#888;" title="FoldX ΔΔG kcal/mol; &gt;2 destabilising">FoldX</td>')
+            cells = ['<tr><td colspan="2"><table cellspacing="3" style="font-size:11px;"><tr>%s</tr>' % head]
+            for mt, am, e, ec, es, d in data:
+                link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], mt)
+                sub = '<a href="%s" style="color:#6a1b9a; text-decoration:none;">%s%d%s</a>' % (link, esc(wt), rep["pos"], esc(mt))
+                if mt in obs:
+                    sub = "<b>%s •</b>" % sub
+                amc = ('<span style="color:%s;">%.2f</span>' % (_am_color(am), am)) if am is not None else "–"
+                tds = ['<td style="white-space:nowrap;">%s</td>' % sub, '<td style="%s">%s</td>' % (box, amc)]
+                if show_pv:
                     evestr = ('<span style="color:%s;">%.2f</span>' %
                               ("#d32f2f" if str(ec or "").upper() == "PATHOGENIC" else "#666", e)) if e is not None else "–"
                     esmstr = "%.1f" % es if es is not None else "–"
-                    if d is not None:
-                        dstr = '<span style="color:%s;">%+.1f</span>' % ("#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c", d)
-                    else:
-                        dstr = "–"
-                    cells.append('<tr><td style="white-space:nowrap;">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'
-                                 % (sub, evestr, esmstr, dstr))
-                cells.append('</table></td></tr>')
-                T.append("".join(cells))
-            else:
-                row("ProtVar", "<span style='color:#888;'>no per-substitution scores for this position.</span>")
-        else:
-            row("ProtVar", "<span style='color:#888;'>no predictor data for this position.</span>")
+                    dstr = ('<span style="color:%s;">%+.1f</span>' %
+                            ("#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c", d)) if d is not None else "–"
+                    tds.append('<td style="%s">%s</td><td style="%s">%s</td><td style="%s">%s</td>'
+                               % (box, evestr, box, esmstr, box, dstr))
+                cells.append("<tr>%s</tr>" % "".join(tds))
+            cells.append("</table></td></tr>")
+            T.append("".join(cells))
 
     if rep.get("nearbyLigands"):
         hdr("Nearby ligands (≤5 Å)", "#6d4c41")
