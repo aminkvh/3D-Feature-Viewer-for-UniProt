@@ -1971,32 +1971,32 @@ const UFVModal = (() => {
         rows.sort((a, b) => (b.am ?? -2) - (a.am ?? -2) || (b.e ?? -2) - (a.e ?? -2));
         if (!rows.length) { container.appendChild(row('Prediction', 'no per-substitution scores for this position.')); return; }
 
+        // Theme-aware chip (matches the old AlphaMissense cells) so it reads well in dark mode.
+        const boxTd = (html, color) => { const td = document.createElement('td'); td.style.cssText = 'background:var(--ufv-bg-hover);color:var(--ufv-text-primary);padding:2px 7px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums;'; td.innerHTML = html; if (color) td.style.color = color; return td; };
+        // Only show predictor columns that have data — EVE covers ~3000 genes, so a dash column would
+        // just look like a failure. AM is always present (local CSV).
+        const cols = [{ h: 'AM', t: 'AlphaMissense (0–1 pathogenicity)', cell: r => boxTd(r.am != null ? r.am.toFixed(2) : '–', r.am != null ? amColor(r.am) : '') }];
+        if (havePv && rows.some(r => r.e != null)) cols.push({ h: 'EVE', t: 'EVE evolutionary model (0–1)', cell: r => boxTd(r.e != null ? r.e.toFixed(2) : '–', r.e != null && String(r.ec || '').toUpperCase() === 'PATHOGENIC' ? '#e53935' : '') });
+        if (havePv && rows.some(r => r.es != null)) cols.push({ h: 'ESM1b', t: 'ESM1b language model; lower = more deleterious', cell: r => boxTd(r.es != null ? r.es.toFixed(1) : '–') });
+        if (havePv && rows.some(r => r.d != null)) cols.push({ h: 'FoldX', t: 'FoldX ΔΔG kcal/mol; >2 destabilising', cell: r => boxTd(r.d != null ? sgn(r.d) : '–', r.d != null ? (r.d >= 2 ? '#e53935' : r.d >= 1 ? '#fb8c00' : '#43a047') : '') });
+
         const tbl = document.createElement('table');
         tbl.style.cssText = 'border-collapse:separate;border-spacing:4px;font-size:11px;';
         const head = document.createElement('tr'); head.style.color = 'var(--ufv-text-secondary)';
-        head.innerHTML = '<td>sub</td><td title="AlphaMissense (0–1 pathogenicity)">AM</td>'
-            + (havePv ? '<td title="EVE evolutionary model (0–1)">EVE</td>'
-                + '<td title="ESM1b language model; lower = more deleterious">ESM1b</td>'
-                + '<td title="FoldX ΔΔG kcal/mol; &gt;2 destabilising">FoldX</td>' : (pv === null ? '<td colspan="3" style="font-weight:400">EVE / ESM1b / FoldX loading…</td>' : ''));
+        head.innerHTML = '<td>sub</td>' + cols.map(c => `<td title="${c.t}">${c.h}</td>`).join('')
+            + (pv === null ? '<td colspan="3" style="font-weight:400">EVE / ESM1b / FoldX loading…</td>' : '');
         tbl.appendChild(head);
-        // Theme-aware chip (matches the old AlphaMissense cells) so it reads well in dark mode.
-        const boxTd = (html, color) => { const td = document.createElement('td'); td.style.cssText = 'background:var(--ufv-bg-hover);color:var(--ufv-text-primary);padding:2px 7px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums;'; td.innerHTML = html; if (color) td.style.color = color; return td; };
-        rows.forEach(({ mt, am, e, ec, es, d }) => {
+        rows.forEach(r => {
             const tr = document.createElement('tr');
             const subTd = document.createElement('td'); subTd.style.whiteSpace = 'nowrap';
             const a = document.createElement('a');
-            a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${mt}`;
+            a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${r.mt}`;
             a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'color:#7b1fa2;text-decoration:none;';
-            a.textContent = `${wt}${pos}${mt}`;
+            a.textContent = `${wt}${pos}${r.mt}`;
             subTd.appendChild(a);
-            if (observed && observed.has(mt)) { subTd.style.fontWeight = '700'; subTd.append(' •'); }
+            if (observed && observed.has(r.mt)) { subTd.style.fontWeight = '700'; subTd.append(' •'); }
             tr.appendChild(subTd);
-            tr.appendChild(boxTd(am != null ? am.toFixed(2) : '–', am != null ? amColor(am) : ''));
-            if (havePv) {
-                tr.appendChild(boxTd(e != null ? e.toFixed(2) : '–', e != null && String(ec || '').toUpperCase() === 'PATHOGENIC' ? '#e53935' : ''));
-                tr.appendChild(boxTd(es != null ? es.toFixed(1) : '–'));
-                tr.appendChild(boxTd(d != null ? sgn(d) : '–', d != null ? (d >= 2 ? '#e53935' : d >= 1 ? '#fb8c00' : '#43a047') : ''));
-            }
+            cols.forEach(c => tr.appendChild(c.cell(r)));
             tbl.appendChild(tr);
         });
         container.appendChild(tbl);
