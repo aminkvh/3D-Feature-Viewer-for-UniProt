@@ -2097,6 +2097,121 @@ def fetch_protvar(uid, pos):
     return out
 
 
+def _site_cat(desc):
+    d = (desc or "").lower()
+    if "active" in d:
+        return "active"
+    if "metal" in d:
+        return "metal"
+    if "binding" in d:
+        return "binding"
+    return "other"
+
+
+def _residue_csv(ann, obj=None):
+    """One-hot residue annotation matrix (one row per residue), mirroring the extension's CSV:
+    position/aa + one-hot PTM-category and disease columns, site flags, mutagenesis flag, variant
+    counts, gnomAD AF, AlphaMissense summary, burden, and (if a structure is loaded) hotspot /
+    contact-hub / constraint-pocket tiers. Returns the CSV text."""
+    seq = ann.get("sequence", "")
+    if not seq:
+        return ""
+    ptm_cats = sorted({p["category"] for p in ann["ptms"]})
+    diseases = sorted({d for v in ann["variants"] for d in v.get("diseases", [])})
+
+    ptm_by_pos, disease_by_pos, site_by_pos = {}, {}, {}
+    nvar, npath, gnomad = {}, {}, {}
+    for p in ann["ptms"]:
+        for pos in {p["position"], p["endPosition"]}:
+            ptm_by_pos.setdefault(pos, set()).add(p["category"])
+    for v in ann["variants"]:
+        pos = v["position"]
+        nvar[pos] = nvar.get(pos, 0) + 1
+        if "pathogenic" in (v.get("consequence") or "").lower() or "deleterious" in (v.get("consequence") or "").lower():
+            npath[pos] = npath.get(pos, 0) + 1
+        af = v.get("gnomad")
+        if isinstance(af, (int, float)):
+            gnomad[pos] = max(gnomad.get(pos, 0.0), af)
+        for d in v.get("diseases", []):
+            disease_by_pos.setdefault(pos, set()).add(d)
+    for s in ann["sites"]:
+        for pos in range(s["position"], s["endPosition"] + 1):
+            site_by_pos.setdefault(pos, set()).add(_site_cat(s["description"]))
+    mut_pos = set()
+    for mtg in ann.get("mutagenesis", []):
+        mut_pos.update(range(mtg["position"], mtg["endPosition"] + 1))
+    am_by_pos = ann.get("amByPos", {})
+    burden = ann.get("burden") or set()
+
+    hot, hub, pocket = {}, {}, {}
+    if obj:
+        geom = _ca_geometry(obj)
+        try:
+            hot = _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann["variants"]))
+        except Exception:
+            pass
+        try:
+            hub = _per_chain_merge(geom, _betweenness_hubs)
+        except Exception:
+            pass
+        if ann.get("amMean"):
+            try:
+                pocket = _compute_pockets(geom, ann["amMean"])
+            except Exception:
+                pass
+    hot_num, hub_num = {"strong": 3, "moderate": 2, "weak": 1}, {"strong": 2, "moderate": 1}
+    safe = lambda x: re.sub(r"[^A-Za-z0-9_]", "_", x)
+    headers = (["position", "aa", "pdb_residue"]
+               + ["ptm_" + safe(c) for c in ptm_cats] + ["disease_" + safe(d) for d in diseases]
+               + ["site", "site_active", "site_binding", "site_metal", "mutagenesis",
+                  "n_variants", "n_pathogenic", "gnomad_max_af",
+                  "am_avg_score", "am_max_score", "am_n_subs", "residue_burden",
+                  "hotspot_tier", "contact_hub_tier", "constraint_pocket_class"])
+    chains = _mapped_chains(obj) if obj else [""]
+    rows = [",".join(headers)]
+    for i, aa in enumerate(seq):
+        pos = i + 1
+        pdb = ""
+        if obj:
+            for ch in chains:
+                r = _uni_to_resi(obj, ch, pos)
+                if r is not None:
+                    pdb = r
+                    break
+        sc = site_by_pos.get(pos)
+        scores = [s for (_w, _m, s) in am_by_pos.get(pos, [])]
+        af = gnomad.get(pos)
+        line = ([pos, aa, pdb]
+                + [1 if c in ptm_by_pos.get(pos, ()) else 0 for c in ptm_cats]
+                + [1 if d in disease_by_pos.get(pos, ()) else 0 for d in diseases]
+                + [1 if sc else 0, 1 if sc and "active" in sc else 0, 1 if sc and "binding" in sc else 0,
+                   1 if sc and "metal" in sc else 0, 1 if pos in mut_pos else 0,
+                   nvar.get(pos, 0), npath.get(pos, 0), ("%.3e" % af) if af is not None else "",
+                   ("%.4f" % (sum(scores) / len(scores))) if scores else "",
+                   ("%.4f" % max(scores)) if scores else "", len(scores) if scores else "",
+                   1 if pos in burden else 0,
+                   hot_num.get(hot.get(pos), 0), hub_num.get(hub.get(pos), 0), pocket.get(pos, "") or ""])
+        rows.append(",".join(str(x) for x in line))
+    return "\n".join(rows)
+
+
+def ufv_csv(filename=None, obj=None, uid=None):
+    """ufv_csv [filename [, object [, uniprot_id]]] — write the per-residue annotation matrix CSV
+    (one-hot PTM/disease/site/mutagenesis + variant counts, gnomAD, AlphaMissense, burden, and
+    structure tiers for the loaded object)."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    text = _residue_csv(ann, obj)
+    if not text:
+        print("[UFV] no sequence to export.")
+        return None
+    filename = filename or os.path.join(os.getcwd(), "%s_residue_annotations.csv" % ann["uid"])
+    with open(filename, "w") as fh:
+        fh.write(text)
+    print("[UFV] wrote %s" % filename)
+    return filename
+
+
 def residue_report(obj, uid, uni_pos):
     """Everything the extension's detail panel shows for one residue, as a plain dict."""
     ann = fetch_annotations(uid)
@@ -2125,8 +2240,14 @@ def residue_report(obj, uid, uni_pos):
                             "ligs.append(resn)", space={"ligs": ligs})
             except Exception:
                 pass
+    # PTM–variant proximity (only when this residue is itself a PTM — cheap, one feature).
+    proximity = None
+    ptms_here = [p for p in ann["ptms"] if p["position"] == uni_pos]
+    if ptms_here:
+        proximity = _ptm_variant_proximity(ptms_here, ann["variants"], geom).get(uni_pos)
     return {
         "uid": ann["uid"], "pos": uni_pos, "aa": aa,
+        "proximity": proximity,
         "ptms": [p for p in ann["ptms"] if p["position"] <= uni_pos <= p["endPosition"]],
         "variants": var_pos.get(uni_pos, []),
         "sites": [s for s in ann["sites"] if s["position"] <= uni_pos <= s["endPosition"]],
@@ -2258,6 +2379,17 @@ def format_report_html(rep, expanded=False, protvar="off"):
             sub = "%s→%s" % (esc(mtg.get("wildType", "")), esc(", ".join(mtg.get("mutants", []))))
             val = "%s <span style='color:#888;'>%s</span>" % (sub, esc(mtg.get("effect", "")))
             row('<span title="Experimentally mutated residue (UniProt)">Mutagenesis</span>', val, MUTAG_COLOR)
+
+    if rep.get("proximity"):
+        px = rep["proximity"]
+        hdr('<span title="Spatial proximity of this PTM to disease variants">PTM–variant proximity</span>', "#b87800")
+        tlabel = {1: "variant at this residue", 2: "pathogenic variant ≤ 8 Å", 3: "variant ≤ 12 Å"}
+        row("Tier", tlabel.get(px.get("tier"), str(px.get("tier"))))
+        if px.get("nearestVariant"):
+            nd = px.get("nearestDist")
+            dist = "same residue" if nd == 0 else ("%.1f Å" % nd if nd is not None else "")
+            row("Nearest variant", "%s <span style='color:#888;'>(%s)</span>" % (esc(px["nearestVariant"]), dist))
+        row("Within 8 Å", "%d variant(s), %d pathogenic" % (px.get("nearbyCount8A", 0), px.get("pathCount8A", 0)))
 
     # ── Prediction: one boxed per-substitution table combining AlphaMissense (always) with ProtVar's
     # EVE / ESM1b / FoldX (when fetched). Conservation + M3D are per-position rows above it.
@@ -2762,6 +2894,7 @@ if _HAS_PYMOL:
         ("ufv_ligands", ufv_ligands), ("ufv_ligands_hide", ufv_ligands_hide),
         ("ufv_ligand_focus", ufv_ligand_focus),
         ("ufv_hide", ufv_hide), ("ufv_clear", ufv_clear), ("ufv_info", ufv_info),
+        ("ufv_csv", ufv_csv),
     ]:
         cmd.extend(_name, _fn)
 
@@ -2784,6 +2917,57 @@ def ufv_gui():
     _gui_ref = cls()
     _gui_ref.show()
     return _gui_ref
+
+
+_UFV_QSS = """
+* { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 12px; color: #2c3038; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: #f6f7f9; }
+#ufvHeader { background: #00695c; }
+#ufvTitle { color: #ffffff; font-size: 15px; font-weight: 700; }
+#ufvSub { color: #9ed7d0; font-size: 10px; }
+QGroupBox {
+    background: #ffffff; border: 1px solid #e4e7eb; border-radius: 9px;
+    margin-top: 15px; padding: 10px 9px 9px 9px; font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin; subcontrol-position: top left; left: 11px; padding: 1px 6px;
+    color: #00897b; font-weight: 700; font-size: 10px;
+}
+QPushButton {
+    background: #f0f2f4; border: 1px solid #d4d9de; border-radius: 6px; padding: 5px 11px;
+}
+QPushButton:hover { background: #e7ebef; border-color: #b6bdc5; }
+QPushButton:pressed { background: #dbe0e5; }
+QPushButton:disabled { color: #aab0b8; background: #f4f5f7; }
+QPushButton#primary { background: #00897b; color: #ffffff; border: none; font-weight: 600; }
+QPushButton#primary:hover { background: #00796b; }
+QPushButton#primary:pressed { background: #00695c; }
+QToolButton { background: #f0f2f4; border: 1px solid #d4d9de; border-radius: 6px; padding: 3px 8px; }
+QToolButton:hover { background: #e7ebef; }
+QLineEdit, QComboBox {
+    border: 1px solid #d4d9de; border-radius: 6px; padding: 4px 8px; background: #ffffff;
+    selection-background-color: #00897b; selection-color: #ffffff;
+}
+QLineEdit:focus, QComboBox:focus { border: 1px solid #00897b; }
+QComboBox::drop-down { border: none; width: 18px; }
+QComboBox QAbstractItemView { border: 1px solid #d4d9de; background: #ffffff; selection-background-color: #e0f2f1; selection-color: #2c3038; }
+QCheckBox { spacing: 6px; }
+QTableWidget {
+    border: 1px solid #e4e7eb; border-radius: 6px; gridline-color: #f0f1f3; background: #ffffff;
+    selection-background-color: #e0f2f1; selection-color: #2c3038;
+}
+QHeaderView::section {
+    background: #f3f5f7; border: none; border-bottom: 1px solid #e4e7eb; padding: 5px 6px;
+    font-weight: 600; color: #5a626c;
+}
+QTextBrowser { border: 1px solid #e4e7eb; border-radius: 6px; background: #ffffff; padding: 4px; }
+QListWidget { border: 1px solid #e4e7eb; border-radius: 6px; background: #ffffff; }
+QScrollBar:vertical { width: 11px; background: transparent; margin: 0; }
+QScrollBar::handle:vertical { background: #cbd2d9; border-radius: 5px; min-height: 26px; }
+QScrollBar::handle:vertical:hover { background: #aeb7c0; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+"""
 
 
 def _build_panel_class(QtWidgets, QtCore, QtGui):
@@ -2809,20 +2993,31 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self._pick_timer = None
             self._picker = None
             self.setWindowTitle("3D Feature Viewer for UniProt")
-            self.resize(540, 790)
+            self.resize(560, 820)
             self.setMinimumWidth(500)
+            self.setStyleSheet(_UFV_QSS)
 
-            outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
-            scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); outer.addWidget(scroll)
+            outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+            # Header bar — gives the panel a clear, branded identity.
+            header = QtWidgets.QWidget(); header.setObjectName("ufvHeader")
+            hl = QtWidgets.QVBoxLayout(header); hl.setContentsMargins(14, 9, 14, 9); hl.setSpacing(1)
+            _title = QtWidgets.QLabel("3D Feature Viewer for UniProt"); _title.setObjectName("ufvTitle")
+            _sub = QtWidgets.QLabel("UniProt annotations & predictors on structures and trajectories")
+            _sub.setObjectName("ufvSub")
+            hl.addWidget(_title); hl.addWidget(_sub)
+            outer.addWidget(header)
+
+            scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            outer.addWidget(scroll, 1)
             bodyw = QtWidgets.QWidget(); scroll.setWidget(bodyw)
-            lay = QtWidgets.QVBoxLayout(bodyw); lay.setContentsMargins(8, 8, 8, 8); lay.setSpacing(8)
+            lay = QtWidgets.QVBoxLayout(bodyw); lay.setContentsMargins(10, 10, 10, 10); lay.setSpacing(10)
 
             # ── Structure ───────────────────────────────────────────────
             sg = QtWidgets.QGroupBox("Structure"); sgl = QtWidgets.QVBoxLayout(sg); lay.addWidget(sg)
             r1 = QtWidgets.QHBoxLayout(); sgl.addLayout(r1)
             r1.addWidget(QtWidgets.QLabel("UniProt"))
             self.uid_edit = QtWidgets.QLineEdit(_STATE.get("uid") or ""); r1.addWidget(self.uid_edit, 1)
-            self.fetch_btn = QtWidgets.QPushButton("Fetch"); r1.addWidget(self.fetch_btn)
+            self.fetch_btn = QtWidgets.QPushButton("Fetch"); self.fetch_btn.setObjectName("primary"); r1.addWidget(self.fetch_btn)
             self.fetch_btn.clicked.connect(self.on_fetch)
             self.num_btn = QtWidgets.QToolButton(); self.num_btn.setText("№")
             self.num_btn.setToolTip("Residue numbering (for structures/trajectories you loaded yourself)")
@@ -2950,7 +3145,12 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
             self.info = QtWidgets.QLabel(""); self.info.setWordWrap(True); self.info.setStyleSheet("font-size:11px; color:#555;")
             lay.addWidget(self.info)
-            self.clear_btn = QtWidgets.QPushButton("Clear all overlays"); lay.addWidget(self.clear_btn)
+            bot = QtWidgets.QHBoxLayout(); lay.addLayout(bot)
+            self.csv_btn = QtWidgets.QPushButton("Export CSV")
+            self.csv_btn.setToolTip("Save the per-residue annotation matrix (one-hot PTM/disease/site, "
+                                    "variant counts, gnomAD, AlphaMissense, burden, structure tiers)")
+            self.csv_btn.clicked.connect(self.on_export_csv); bot.addWidget(self.csv_btn)
+            self.clear_btn = QtWidgets.QPushButton("Clear all overlays"); bot.addWidget(self.clear_btn, 1)
             self.clear_btn.clicked.connect(self.on_clear)
 
             self._QtGui = QtGui
@@ -3662,6 +3862,26 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             for c in (self.cb_ptm, self.cb_site, self.cb_mutag, self.cb_lig, self.cb_var):
                 c.setChecked(False)
             self.cart.setCurrentIndex(0); self.detail.setHtml("")
+
+        def on_export_csv(self):
+            uid = self.cur_uid()
+            if not uid or uid not in _CACHE:
+                self.status.setText("Fetch an accession first."); return
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Export residue annotation CSV", "%s_residue_annotations.csv" % uid, "CSV (*.csv)")
+            if not path:
+                return
+            obj = self.obj()
+            self._async(lambda: _residue_csv(_CACHE[uid], obj), lambda text: self._write_csv(path, text),
+                        "Building CSV …")
+
+        def _write_csv(self, path, text):
+            try:
+                with open(path, "w") as fh:
+                    fh.write(text or "")
+                self.status.setText("Saved %s" % path)
+            except Exception as exc:
+                self.status.setText("Save error: %s" % exc)
 
         def closeEvent(self, ev):
             t = getattr(self, "_pick_timer", None)

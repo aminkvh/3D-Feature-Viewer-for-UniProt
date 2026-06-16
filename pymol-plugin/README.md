@@ -49,6 +49,7 @@ ufv_plddt traj ; ufv_bfactor traj ; ufv_burden traj
 ufv_hotspots traj ; ufv_contacthubs traj
 ufv_hide traj, variants                    # toggle a single layer off
 ufv_clear traj                             # remove everything
+ufv_csv P35498_residue_annotations.csv     # per-residue one-hot annotation matrix
 
 # residue report + zoom-in
 ufv_report 1378, traj                      # print nearby annotations + distances + AM, and zoom in
@@ -94,7 +95,11 @@ and stays responsive).
    PyMOL viewer to zoom straight to its residue/ligand. **Align** superposes multiple loaded structures.
 
 Each sphere layer is a separate lightweight object (`ufv_<obj>_<tag>`) so large variant sets stay
-fast, and the whole panel is scrollable so it never outgrows the screen.
+fast, and the whole panel is scrollable so it never outgrows the screen. **Export CSV** (or
+`ufv_csv`) writes the same per-residue one-hot annotation matrix the browser extension produces
+(position/aa, one-hot PTM-category & disease columns, site/mutagenesis flags, variant counts,
+gnomAD AF, AlphaMissense summary, burden, and hotspot/contact-hub/constraint-pocket tiers for the
+loaded structure).
 
 For a structure/trajectory you loaded yourself, expand **Advanced numbering** to set identity /
 SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).
