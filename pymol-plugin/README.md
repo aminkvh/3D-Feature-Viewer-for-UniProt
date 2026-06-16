@@ -112,6 +112,19 @@ SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).
 (or drop into a VMD plugin directory). If your Python isn't called `python`, set it once:
 `ufv_python python3`. If `ufv_pymol.py` lives elsewhere: `ufv_backend /path/ufv_pymol.py`.
 
+The **`ufv_gui`** panel mirrors the PyMOL one as far as VMD allows (native `atomselect` +
+representations; fetching/prediction delegated to `ufv_pymol.py`):
+
+1. Enter an accession → **Fetch** — pulls annotations *and* the structure list (AlphaFold,
+   experimental PDB chains, computed models, isoforms) and shows the protein name / function.
+2. Pick a structure → **Load selected** (numbering set automatically: identity / SIFTS), or
+   **Quick AlphaFold** to grab the canonical model.
+3. **Layers (markers):** PTMs · Disease variants · Functional sites · **Mutagenesis** (Cα VDW).
+4. **Cartoon colouring:** Domains · Topology · AlphaMissense · **Burden** · **pLDDT** · **B-factor**.
+5. **Residue report:** type a UniProt position → **Show** — fetches that residue's variants
+   (with disease + gnomAD AF) and **ProtVar predictors** (conservation / EVE / ESM1b / FoldX / M3D /
+   binding pocket) and prints them in the panel while highlighting the residue in 3D.
+
 ```
 ufv_load P35498                  ;# download AlphaFold model + annotate
 ufv_gui                          ;# graphical panel
@@ -122,8 +135,9 @@ ufv_fetch P35498
 ufv_map identity                 ;# resid == UniProt position
 ufv_map sifts 7dtd               ;# map via PDBe/SIFTS for PDB 7DTD
 ufv_chain A 200 5 480            ;# chain A resid 5 == UniProt 200, valid 5..480
-ufv_ptms ; ufv_variants ; ufv_variants pathogenic ; ufv_sites
-ufv_domains ; ufv_topology ; ufv_alphamissense
+ufv_ptms ; ufv_variants ; ufv_variants pathogenic ; ufv_sites ; ufv_mutagenesis
+ufv_domains ; ufv_topology ; ufv_alphamissense ; ufv_burden ; ufv_plddt ; ufv_bfactor
+ufv_residue 959                  ;# per-residue report (variants + ProtVar) in the panel
 ufv_clear
 ```
 
