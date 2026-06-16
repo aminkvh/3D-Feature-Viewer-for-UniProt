@@ -2172,40 +2172,43 @@ def format_report_html(rep, expanded=False, protvar="off"):
                 col = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
                 row('<span title="Missense3D: predicted structural consequence of the substitution">M3D</span>',
                     "<span style='color:%s;'>%s</span>%s" % (col, esc(md.get("prediction", "?")), feat))
+            # ALL substitutions (saturation), like AlphaMissense — not just the observed variants.
             eve = _protvar_by_mut(sc.get("eveRaw"), wt)
             evc = _protvar_by_mut(sc.get("eveClsRaw"), wt)
             esm = _protvar_by_mut(sc.get("esmRaw"), wt)
             ddg = fx.get("byMut") or {}
-            shown = False
-            for v in rep.get("variants", []):
-                m = v.get("mutant")
-                if not m:
+            obs = {v.get("mutant") for v in rep.get("variants", []) if v.get("mutant")}
+            data = []
+            for mt in [a for a in AA_ALPHA if a != wt]:
+                e, es, d = eve.get(mt), esm.get(mt), ddg.get(mt)
+                if e is None and es is None and d is None:
                     continue
-                parts = []
-                if m in eve and eve[m] is not None:
-                    ec = "#d32f2f" if str(evc.get(m, "")).upper() == "PATHOGENIC" else "#666"
-                    parts.append('<span title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</span> <span style="color:%s;">%.2f</span>' % (ec, eve[m]))
-                if m in esm and esm[m] is not None:
-                    parts.append('<span title="ESM1b protein language-model score; lower = more deleterious">ESM1b</span> %.1f' % esm[m])
-                if m in ddg:
-                    d = ddg[m]
-                    dc = "#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c"
-                    parts.append('<span title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</span> <span style="color:%s;">%+.1f</span>' % (dc, d))
-                if parts:
-                    link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], m)
-                    lbl = '<a href="%s" title="Open %s%d%s in ProtVar" style="color:#00695c; text-decoration:none;">%s%d%s ↗</a>' % (
-                        link, wt, rep["pos"], esc(m), esc(wt), rep["pos"], esc(m))
-                    row(lbl, " · ".join(parts))
-                    shown = True
-            if not shown:  # no variants at this position — fall back to the per-position summary
-                if sc.get("eve"):
-                    row('<span title="EVE across the 19 substitutions">EVE</span>',
-                        "mean %.2f%s" % (sc["eve"]["mean"], (" · %d/%d pathogenic" % (sc["evePath"], sc["eveN"])) if sc.get("eveN") else ""))
-                if sc.get("esm"):
-                    row('<span title="ESM1b across substitutions; lower = more deleterious">ESM1b</span>', "mean %.1f" % sc["esm"]["mean"])
-                if fx.get("summary"):
-                    row('<span title="FoldX ΔΔG across substitutions; &gt;2 destabilising">FoldX ΔΔG</span>',
-                        "%+.1f to %+.1f kcal/mol" % (fx["summary"]["min"], fx["summary"]["max"]))
+                data.append((mt, e, evc.get(mt), es, d))
+            data.sort(key=lambda r: (r[1] is None, -(r[1] or 0), -(r[4] if r[4] is not None else -999)))
+            if data:
+                cells = ['<tr><td colspan="2"><table cellspacing="0" cellpadding="2" style="font-size:11px; width:100%;">'
+                         '<tr style="color:#888;"><td>sub</td>'
+                         '<td title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</td>'
+                         '<td title="ESM1b protein language-model score; lower = more deleterious">ESM1b</td>'
+                         '<td title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</td></tr>']
+                for mt, e, ec, es, d in data:
+                    link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], mt)
+                    sub = '<a href="%s" style="color:#00695c; text-decoration:none;">%s%d%s</a>' % (link, esc(wt), rep["pos"], esc(mt))
+                    if mt in obs:
+                        sub = "<b>%s •</b>" % sub                 # • marks a reported variant
+                    evestr = ('<span style="color:%s;">%.2f</span>' %
+                              ("#d32f2f" if str(ec or "").upper() == "PATHOGENIC" else "#666", e)) if e is not None else "–"
+                    esmstr = "%.1f" % es if es is not None else "–"
+                    if d is not None:
+                        dstr = '<span style="color:%s;">%+.1f</span>' % ("#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c", d)
+                    else:
+                        dstr = "–"
+                    cells.append('<tr><td style="white-space:nowrap;">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'
+                                 % (sub, evestr, esmstr, dstr))
+                cells.append('</table></td></tr>')
+                T.append("".join(cells))
+            else:
+                row("ProtVar", "<span style='color:#888;'>no per-substitution scores for this position.</span>")
         else:
             row("ProtVar", "<span style='color:#888;'>no predictor data for this position.</span>")
 

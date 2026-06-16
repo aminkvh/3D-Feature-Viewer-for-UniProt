@@ -1943,29 +1943,47 @@ const UFVModal = (() => {
             r.title = 'Missense3D: predicted structural consequence of the substitution';
             container.appendChild(r);
         }
-        // Per-substitution EVE / ESM1b / FoldX, tied to the residue's actual variants, with a ProtVar link.
+        // ALL substitutions (saturation), like AlphaMissense — not just the observed variants.
         const eve = pvByMut(sc.eveRaw, wt), evc = pvByMut(sc.eveClsRaw, wt), esm = pvByMut(sc.esmRaw, wt), ddg = fx.byMut || {};
-        let shown = false;
-        (variants || []).forEach(v => {
-            const m = v.mutant; if (!m) return;
-            const bits = [];
-            if (eve[m] != null) bits.push(`EVE ${eve[m].toFixed(2)}`);
-            if (esm[m] != null) bits.push(`ESM1b ${esm[m].toFixed(1)}`);
-            if (ddg[m] != null) bits.push(`FoldX ${sgn(ddg[m])}`);
-            if (!bits.length) return;
-            const r = row(`${wt}${pos}${m}`, bits.join(' · '));
-            if (String(evc[m] || '').toUpperCase() === 'PATHOGENIC') r.querySelector('.ufv-detail-val').style.color = '#e53935';
-            r.title = 'EVE (evolutionary), ESM1b (protein language model; lower = worse), FoldX ΔΔG (stability, >2 destabilising)';
-            const lbl = r.querySelector('.ufv-detail-lbl');
-            if (acc) { const a = document.createElement('a'); a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${m}`; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${wt}${pos}${m} ↗`; a.style.color = '#00897b'; a.style.textDecoration = 'none'; lbl.textContent = ''; lbl.appendChild(a); }
-            container.appendChild(r);
-            shown = true;
+        const observed = new Set((variants || []).map(v => v.mutant).filter(Boolean));
+        const rows = [];
+        [...PV_AA].filter(a => a !== wt).forEach(mt => {
+            const e = eve[mt], es = esm[mt], d = ddg[mt];
+            if (e == null && es == null && d == null) return;
+            rows.push({ mt, e, ec: evc[mt], es, d });
         });
-        if (!shown) {  // no variants at this position — per-position summary
-            if (sc.eve) container.appendChild(row('EVE', `mean ${sc.eve.mean.toFixed(2)}${sc.eveN ? ` · ${sc.evePath}/${sc.eveN} pathogenic` : ''}`, '#7c4dff'));
-            if (sc.esm) container.appendChild(row('ESM1b', `mean ${sc.esm.mean.toFixed(1)} (lower = more deleterious)`));
-            if (fx.summary) container.appendChild(row('FoldX ΔΔG', `${sgn(fx.summary.min)} to ${sgn(fx.summary.max)} kcal/mol`));
-        }
+        rows.sort((a, b) => (b.e ?? -2) - (a.e ?? -2) || (b.d ?? -999) - (a.d ?? -999));
+        if (!rows.length) { container.appendChild(row('ProtVar', 'no per-substitution scores for this position.')); return; }
+
+        const tbl = document.createElement('table');
+        tbl.className = 'ufv-pv-table';
+        tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:11px;';
+        const head = document.createElement('tr');
+        head.style.opacity = '0.6';
+        head.innerHTML = '<td>sub</td><td title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</td>'
+            + '<td title="ESM1b protein language-model score; lower = more deleterious">ESM1b</td>'
+            + '<td title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</td>';
+        tbl.appendChild(head);
+        rows.forEach(({ mt, e, ec, es, d }) => {
+            const tr = document.createElement('tr');
+            const subTd = document.createElement('td'); subTd.style.whiteSpace = 'nowrap';
+            const a = document.createElement('a');
+            a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${mt}`;
+            a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'color:#00897b;text-decoration:none;';
+            a.textContent = `${wt}${pos}${mt}`;
+            subTd.appendChild(a);
+            if (observed.has(mt)) { subTd.style.fontWeight = '700'; subTd.append(' •'); } // • = reported variant
+            const eveTd = document.createElement('td');
+            eveTd.textContent = e != null ? e.toFixed(2) : '–';
+            if (e != null) eveTd.style.color = String(ec || '').toUpperCase() === 'PATHOGENIC' ? '#e53935' : '';
+            const esmTd = document.createElement('td'); esmTd.textContent = es != null ? es.toFixed(1) : '–';
+            const fxTd = document.createElement('td');
+            fxTd.textContent = d != null ? sgn(d) : '–';
+            if (d != null) fxTd.style.color = d >= 2 ? '#e53935' : d >= 1 ? '#fb8c00' : '#43a047';
+            tr.append(subTd, eveTd, esmTd, fxTd);
+            tbl.appendChild(tr);
+        });
+        container.appendChild(tbl);
     }
 
     // Clicking a ligand/cofactor (e.g. an AlphaFill-transplanted molecule) — NOT a protein
