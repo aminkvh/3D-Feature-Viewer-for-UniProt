@@ -1603,8 +1603,10 @@ def _delete_layers(obj):
 
 
 def _reset_cartoon(obj):
-    """Drop any cartoon-colour layer: recolour neutral grey and remove domain single-residue spheres."""
-    cmd.color("gray80", obj)
+    """Drop any cartoon-colour layer: recolour neutral grey and remove domain single-residue spheres.
+    Only the polymer is recoloured so bound ligands/cofactors keep their own colours (this is what made
+    cartoon colouring grey out AlphaFill ligands)."""
+    cmd.color("gray80", "(%s) and polymer" % obj)
     _set_sphere_layer(obj, "dom", None)
     _CARTOON_LAYER.pop(obj, None)
 
@@ -1884,12 +1886,13 @@ def ufv_plddt(obj=None, uid=None):
         print("[UFV] pLDDT applies to predicted models only (%s is experimental)." % obj)
         return
     _set_cartoon_layer(obj, "plddt")
+    pol = "(%s) and polymer" % obj      # leave bound ligands their own colours
     with _batch():
         # AlphaFold DB bins: >=90 dark blue, 70-90 light blue, 50-70 yellow, <50 orange.
-        cmd.color(_color_name("#ff7d45"), "(%s) and b<50" % obj)
-        cmd.color(_color_name("#ffdb13"), "(%s) and (b>50 or b=50) and b<70" % obj)
-        cmd.color(_color_name("#65cbf3"), "(%s) and (b>70 or b=70) and b<90" % obj)
-        cmd.color(_color_name("#0053d6"), "(%s) and (b>90 or b=90)" % obj)
+        cmd.color(_color_name("#ff7d45"), "(%s) and b<50" % pol)
+        cmd.color(_color_name("#ffdb13"), "(%s) and (b>50 or b=50) and b<70" % pol)
+        cmd.color(_color_name("#65cbf3"), "(%s) and (b>70 or b=70) and b<90" % pol)
+        cmd.color(_color_name("#0053d6"), "(%s) and (b>90 or b=90)" % pol)
     print("[UFV] %s: coloured by pLDDT." % obj)
 
 
@@ -1903,9 +1906,9 @@ def ufv_bfactor(obj=None, uid=None):
         return
     _set_cartoon_layer(obj, "bfactor")
     try:
-        cmd.spectrum("b", "0x313695 0xf7f7f7 0xd73027", obj, minimum=0, maximum=100)
+        cmd.spectrum("b", "0x313695 0xf7f7f7 0xd73027", "(%s) and polymer" % obj, minimum=0, maximum=100)
     except Exception:
-        cmd.spectrum("b", "blue_white_red", obj)
+        cmd.spectrum("b", "blue_white_red", "(%s) and polymer" % obj)
     print("[UFV] %s: coloured by B-factor." % obj)
 
 
@@ -2389,8 +2392,9 @@ def format_report_html(rep, expanded=False, protvar="off"):
              '<b>%s%d</b></td></tr>' % (esc(rep["aa"]), rep["pos"]))
 
     def hdr(title, color):
+        # title is a controlled string (may contain a <span title> for a tooltip) — do NOT escape it.
         T.append('<tr><td colspan="2" style="border-top:1px solid #ccc; padding-top:5px;">'
-                 '<b style="color:%s;">%s</b></td></tr>' % (color, esc(title)))
+                 '<b style="color:%s;">%s</b></td></tr>' % (color, title))
 
     def row(label, value, vcolor=None, bold=False):
         # label is a controlled string / pre-built HTML (variant mutations); value is caller-escaped
@@ -2505,29 +2509,43 @@ def format_report_html(rep, expanded=False, protvar="off"):
         data.sort(key=lambda r: (r[1] is None, -(r[1] if r[1] is not None else 0), -(r[2] if r[2] is not None else 0)))
         if data:
             box = "background:#f3f3f3; padding:2px 6px; text-align:center;"
-            head = ('<td style="color:#888;">sub</td>'
-                    '<td style="color:#888;" title="AlphaMissense (0–1 pathogenicity)">AM</td>')
-            if show_pv:
-                head += ('<td style="color:#888;" title="EVE evolutionary model (0–1)">EVE</td>'
-                         '<td style="color:#888;" title="ESM1b language model; lower = more deleterious">ESM1b</td>'
-                         '<td style="color:#888;" title="FoldX ΔΔG kcal/mol; &gt;2 destabilising">FoldX</td>')
+            # Only show predictor columns that actually have data for this protein/position — EVE in
+            # particular only covers ~3000 genes, so a column of dashes would just look like a failure.
+            has_am = any(r[1] is not None for r in data)
+            has_eve = any(r[2] is not None for r in data)
+            has_esm = any(r[4] is not None for r in data)
+            has_fx = any(r[5] is not None for r in data)
+
+            def _eve(e, ec):
+                return ('<span style="color:%s;">%.2f</span>' %
+                        ("#d32f2f" if str(ec or "").upper() == "PATHOGENIC" else "#666", e)) if e is not None else "–"
+
+            def _fx(d):
+                return ('<span style="color:%s;">%+.1f</span>' %
+                        ("#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c", d)) if d is not None else "–"
+            cols = []  # (header, tooltip, cell_fn(row))
+            if has_am:
+                cols.append(("AM", "AlphaMissense (0–1 pathogenicity)",
+                             lambda r: ('<span style="color:%s;">%.2f</span>' % (_am_color(r[1]), r[1])) if r[1] is not None else "–"))
+            if has_eve:
+                cols.append(("EVE", "EVE evolutionary model (0–1)", lambda r: _eve(r[2], r[3])))
+            if has_esm:
+                cols.append(("ESM1b", "ESM1b language model; lower = more deleterious",
+                             lambda r: "%.1f" % r[4] if r[4] is not None else "–"))
+            if has_fx:
+                cols.append(("FoldX", "FoldX ΔΔG kcal/mol; &gt;2 destabilising", lambda r: _fx(r[5])))
+            head = '<td style="color:#888;">sub</td>' + "".join(
+                '<td style="color:#888;" title="%s">%s</td>' % (tip, h) for h, tip, _ in cols)
             cells = ['<tr><td colspan="2"><table cellspacing="3" style="font-size:11px;"><tr>%s</tr>' % head]
-            for mt, am, e, ec, es, d in data:
+            for r in data:
+                mt = r[0]
                 link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], mt)
                 sub = '<a href="%s" style="color:#6a1b9a; text-decoration:none;">%s%d%s</a>' % (link, esc(wt), rep["pos"], esc(mt))
                 if mt in obs:
                     sub = "<b>%s •</b>" % sub
-                amc = ('<span style="color:%s;">%.2f</span>' % (_am_color(am), am)) if am is not None else "–"
-                tds = ['<td style="white-space:nowrap;">%s</td>' % sub, '<td style="%s">%s</td>' % (box, amc)]
-                if show_pv:
-                    evestr = ('<span style="color:%s;">%.2f</span>' %
-                              ("#d32f2f" if str(ec or "").upper() == "PATHOGENIC" else "#666", e)) if e is not None else "–"
-                    esmstr = "%.1f" % es if es is not None else "–"
-                    dstr = ('<span style="color:%s;">%+.1f</span>' %
-                            ("#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c", d)) if d is not None else "–"
-                    tds.append('<td style="%s">%s</td><td style="%s">%s</td><td style="%s">%s</td>'
-                               % (box, evestr, box, esmstr, box, dstr))
-                cells.append("<tr>%s</tr>" % "".join(tds))
+                tds = '<td style="white-space:nowrap;">%s</td>' % sub
+                tds += "".join('<td style="%s">%s</td>' % (box, fn(r)) for _h, _t, fn in cols)
+                cells.append("<tr>%s</tr>" % tds)
             cells.append("</table></td></tr>")
             T.append("".join(cells))
 
@@ -2802,7 +2820,7 @@ def _load_structure(struct, uid, name=None):
         pass
     cmd.hide("everything", name)
     cmd.show("cartoon", name)
-    cmd.color("gray80", name)
+    cmd.color("gray80", "(%s) and polymer" % name)
     if struct.get("numbering") == "sifts" and struct.get("pdbId"):
         _set_sifts_map(name, struct["pdbId"], uid)
     else:
@@ -2843,7 +2861,7 @@ def ufv_clear(obj=None):
             pass
         _DIMMED.discard(obj)
     if obj:
-        cmd.color("gray80", obj)
+        cmd.color("gray80", "(%s) and polymer" % obj)   # keep ligand colours intact
     print("[UFV] cleared UFV overlays on %s." % obj)
 
 
@@ -2924,7 +2942,7 @@ def ufv_load(uid, name=None):
         pass
     cmd.hide("everything", name)
     cmd.show("cartoon", name)
-    cmd.color("gray80", name)
+    cmd.color("gray80", "(%s) and polymer" % name)
     _set_identity_map(name)
     _GEOM_CACHE.pop(name, None); _LIG_PRESENT.pop(name, None)
     _STATE["obj"] = name
@@ -3217,10 +3235,6 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.cb_pick = QtWidgets.QCheckBox("Pick 3D"); br.addWidget(self.cb_pick)
             self.cb_pick.setToolTip("Click any atom in the PyMOL viewer to zoom to its residue/ligand")
             self.cb_pick.clicked.connect(self.toggle_pick)
-            self.cb_protvar = QtWidgets.QCheckBox("ProtVar")
-            self.cb_protvar.setToolTip("Add ProtVar per-residue predictors (EVE / ESM1b / conservation / "
-                                       "FoldX ΔΔG / M3D) to the residue report")
-            self.cb_protvar.clicked.connect(self.toggle_protvar); br.addWidget(self.cb_protvar)
             br.addStretch(1)
             self.reset_btn = QtWidgets.QPushButton("Reset view"); br.addWidget(self.reset_btn)
             self.reset_btn.clicked.connect(lambda: ufv_resetview(self.obj()))
@@ -3660,26 +3674,13 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 self._last_rep = residue_report(objs[0], uid, uni_pos)
                 self._lig_resn = None      # leaving ligand context
                 self._show_evidence = False
-                want_pv = self.cb_protvar.isChecked()
-                self._last_protvar = "loading" if want_pv else "off"
-                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, self._last_protvar))
-                if want_pv:
-                    self._fetch_protvar_async(uid, uni_pos)
+                # ProtVar predictors are always shown; fetch in the background and show 'loading' meanwhile.
+                self._last_protvar = "loading"
+                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "loading"))
+                self._fetch_protvar_async(uid, uni_pos)
             except Exception as exc:
                 self._last_rep = None
                 self.detail.setHtml("<i>Report error: %s</i>" % exc)
-
-        def toggle_protvar(self):
-            # Re-render the current residue with / without the ProtVar section.
-            if self._last_rep is None:
-                return
-            if self.cb_protvar.isChecked():
-                self._last_protvar = "loading"
-                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "loading"))
-                self._fetch_protvar_async(self.cur_uid(), self._last_rep["pos"])
-            else:
-                self._last_protvar = "off"
-                self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, "off"))
 
         def _fetch_protvar_async(self, uid, pos):
             pos = int(pos)
@@ -3688,8 +3689,8 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 return fetch_protvar(uid, pos)
 
             def done(res):
-                if self._last_pos != pos or not self.cb_protvar.isChecked():
-                    return                                   # stale (user moved on / turned it off)
+                if self._last_pos != pos:
+                    return                                   # stale — user already clicked elsewhere
                 self._last_protvar = res if not isinstance(res, Exception) else None
                 if self._last_rep:
                     self.detail.setHtml(format_report_html(self._last_rep, self._show_evidence, self._last_protvar))
@@ -4017,7 +4018,7 @@ def _load_from_path(struct, path, uid, segments=None):
         pass
     cmd.hide("everything", name)
     cmd.show("cartoon", name)
-    cmd.color("gray80", name)
+    cmd.color("gray80", "(%s) and polymer" % name)
     if segments:
         UFV_MAPS[name] = {"mode": "sifts", "segments": segments}
     elif struct.get("numbering") == "sifts" and struct.get("pdbId"):
