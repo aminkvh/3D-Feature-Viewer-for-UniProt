@@ -1722,7 +1722,9 @@ const UFVModal = (() => {
                 vtag.textContent = `${v.wildType}${v.position}${v.mutant}`;
                 vtag.style.color = v.consequenceColor;
                 vblock.appendChild(vtag);
-                vblock.appendChild(row('ClinVar', v.clinVarSignificance || v.consequence || '—'));
+                const sig = v.clinVarSignificance || v.consequence || '—';
+                const dis = (v.diseases && v.diseases.length) ? ` (${v.diseases.join('; ')})` : '';
+                vblock.appendChild(row('ClinVar', sig + dis));
                 // Evidence rows (Review / dbSNP / gnomAD AF / Genomic) — hidden until the evidence
                 // toggle is on. Marked with a class so the toggle can flip them without a re-render.
                 const evi = (label, value, color) => { const r = row(label, value, color); r.classList.add('ufv-var-evidence'); if (!_showVarEvidence) r.style.display = 'none'; vblock.appendChild(r); };
@@ -1948,6 +1950,14 @@ const UFVModal = (() => {
             r.title = 'Missense3D: predicted structural consequence';
             container.appendChild(r);
         }
+        if (havePv && pv.pocket) {
+            const pk = pv.pocket; const bits = [];
+            if (pk.buriedness != null) bits.push(`buriedness ${pk.buriedness.toFixed(2)}`);
+            if (pk.score != null) bits.push(`druggability ${Math.round(pk.score)}`);
+            const r = row('Binding pocket', `in ${pk.count} predicted pocket(s)${bits.length ? ' (' + bits.join(' · ') + ')' : ''}`, '#00897b');
+            r.title = 'Lines a predicted, potentially ligand-binding pocket (ProtVar / fpocket)';
+            container.appendChild(r);
+        }
         if (!havePv && pv !== null) { /* fetch finished with no data: AM-only table still shown below */ }
 
         const amByMut = {}; (amEntries || []).forEach(e => { amByMut[e.mut] = e.am; });
@@ -1963,13 +1973,14 @@ const UFVModal = (() => {
 
         const tbl = document.createElement('table');
         tbl.style.cssText = 'border-collapse:separate;border-spacing:4px;font-size:11px;';
-        const head = document.createElement('tr'); head.style.opacity = '0.55';
+        const head = document.createElement('tr'); head.style.color = 'var(--ufv-text-secondary)';
         head.innerHTML = '<td>sub</td><td title="AlphaMissense (0–1 pathogenicity)">AM</td>'
             + (havePv ? '<td title="EVE evolutionary model (0–1)">EVE</td>'
                 + '<td title="ESM1b language model; lower = more deleterious">ESM1b</td>'
                 + '<td title="FoldX ΔΔG kcal/mol; &gt;2 destabilising">FoldX</td>' : (pv === null ? '<td colspan="3" style="font-weight:400">EVE / ESM1b / FoldX loading…</td>' : ''));
         tbl.appendChild(head);
-        const boxTd = (html, color) => { const td = document.createElement('td'); td.style.cssText = 'background:var(--ufv-chip-bg,#f3f3f3);padding:2px 7px;text-align:center;border-radius:3px;'; td.innerHTML = html; if (color) td.style.color = color; return td; };
+        // Theme-aware chip (matches the old AlphaMissense cells) so it reads well in dark mode.
+        const boxTd = (html, color) => { const td = document.createElement('td'); td.style.cssText = 'background:var(--ufv-bg-hover);color:var(--ufv-text-primary);padding:2px 7px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums;'; td.innerHTML = html; if (color) td.style.color = color; return td; };
         rows.forEach(({ mt, am, e, ec, es, d }) => {
             const tr = document.createElement('tr');
             const subTd = document.createElement('td'); subTd.style.whiteSpace = 'nowrap';

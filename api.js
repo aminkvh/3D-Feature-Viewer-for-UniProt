@@ -27,6 +27,7 @@ const UFVApi = (() => {
     // ESM1b, M3D structural effect and FoldX ΔΔG stability — keyed by UniProt accession + position.
     const PROTVAR_SCORE = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/score/${acc}/${pos}`;
     const PROTVAR_FOLDX = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/${acc}/${pos}`;
+    const PROTVAR_POCKET = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}/${pos}`;
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -519,9 +520,10 @@ const UFVApi = (() => {
     async function fetchProtVar(acc, pos) {
         const key = `${acc}:${pos}`;
         if (_protVarCache.has(key)) return _protVarCache.get(key);
-        const [scoreArr, foldxArr] = await Promise.all([
+        const [scoreArr, foldxArr, pocketArr] = await Promise.all([
             fetchOptionalJson(PROTVAR_SCORE(acc, pos)),
             fetchOptionalJson(PROTVAR_FOLDX(acc, pos)),
+            fetchOptionalJson(PROTVAR_POCKET(acc, pos)),
         ]);
         let conservation = null, m3d = null; const eveRaw = [], esmRaw = [], eveClsRaw = [];
         for (const o of (scoreArr || [])) {
@@ -534,6 +536,13 @@ const UFVApi = (() => {
         for (const o of (foldxArr || [])) {
             if (o.mutatedType && Number.isFinite(o.foldxDdg)) { byMut[o.mutatedType] = o.foldxDdg; ddg.push(o.foldxDdg); }
         }
+        // Pocket: predicted (potentially ligand-binding) pocket(s) this residue lines.
+        let pocket = null;
+        const pockets = (Array.isArray(pocketArr) ? pocketArr : (pocketArr ? [pocketArr] : [])).filter(p => p && typeof p === 'object');
+        if (pockets.length) {
+            const best = pockets.reduce((a, b) => ((b.score || 0) > (a.score || 0) ? b : a));
+            pocket = { count: pockets.length, buriedness: best.buriedness, score: best.score };
+        }
         const result = {
             score: {
                 conservation, m3d, eveRaw, eveClsRaw, esmRaw, eve: _summ(eveRaw), esm: _summ(esmRaw),
@@ -541,6 +550,7 @@ const UFVApi = (() => {
                 eveN: eveClsRaw.filter(Boolean).length,
             },
             foldx: { byMut, summary: _summ(ddg) },
+            pocket,
         };
         _protVarCache.set(key, result);
         return result;

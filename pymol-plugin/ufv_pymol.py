@@ -82,6 +82,7 @@ PUBCHEM_FP = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/{}/pro
 # M3D structural effect, and FoldX ΔΔG stability. Keyed by UniProt accession + position.
 PROTVAR_SCORE = "https://www.ebi.ac.uk/ProtVar/api/score/{}/{}"
 PROTVAR_FOLDX = "https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/{}/{}"
+PROTVAR_POCKET = "https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/{}/{}"
 
 _USER_AGENT = "UFV-PyMOL-plugin/1.0 (https://github.com/aminkvh/3D-Feature-Viewer-for-UniProt)"
 
@@ -2065,17 +2066,33 @@ def _parse_protvar_foldx(arr):
     return {"byMut": by_mut, "summary": _summ(vals)}
 
 
+def _parse_protvar_pocket(arr):
+    """ProtVar /prediction/pocket returns the predicted (potentially ligand-binding) pocket(s) that
+    a residue lines — buriedness, energy, a druggability-like score, and the lining residues. Returns
+    a summary {count, buriedness, score, plddt} for the best-scoring pocket, or None."""
+    pockets = arr if isinstance(arr, list) else ([arr] if arr else [])
+    pockets = [p for p in pockets if isinstance(p, dict)]
+    if not pockets:
+        return None
+    best = max(pockets, key=lambda p: p.get("score") or 0)
+    return {"count": len(pockets), "buriedness": best.get("buriedness"),
+            "score": best.get("score"), "plddt": best.get("meanPlddt")}
+
+
 def fetch_protvar(uid, pos):
-    """ProtVar per-residue predictors (conservation / EVE / ESM1b / M3D / FoldX) for a position.
-    Network — call off the UI thread. Cached per (accession, position)."""
+    """ProtVar per-residue predictors (conservation / EVE / ESM1b / M3D / FoldX / binding pocket) for
+    a position. Network — call off the UI thread. Cached per (accession, position)."""
     key = (uid, int(pos))
     if key in _PROTVAR_CACHE:
         return _PROTVAR_CACHE[key]
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         fs = ex.submit(_get_json, PROTVAR_SCORE.format(uid, pos))
         ff = ex.submit(_get_json, PROTVAR_FOLDX.format(uid, pos))
-        out = {"score": _parse_protvar_score(fs.result()), "foldx": _parse_protvar_foldx(ff.result())}
+        fp = ex.submit(_get_json, PROTVAR_POCKET.format(uid, pos))
+        out = {"score": _parse_protvar_score(fs.result()),
+               "foldx": _parse_protvar_foldx(ff.result()),
+               "pocket": _parse_protvar_pocket(fp.result())}
     _PROTVAR_CACHE[key] = out
     return out
 
@@ -2199,7 +2216,10 @@ def format_report_html(rep, expanded=False, protvar="off"):
         for v in rep["variants"]:
             mut = "%s%d%s" % (esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")))
             c = v.get("consequenceColor", "#9e9e9e")
-            row('<span style="color:%s;">%s</span>' % (c, mut), esc(v["consequence"]), c, bold=True)
+            cons = esc(v["consequence"])
+            if v.get("diseases"):       # name the disease in parentheses after the consequence
+                cons += " <span style='color:#888;'>(%s)</span>" % esc("; ".join(v["diseases"]))
+            row('<span style="color:%s;">%s</span>' % (c, mut), cons, c, bold=True)
             if v.get("alphaMissense") is not None:
                 row("AlphaMissense", "%.2f" % v["alphaMissense"], _am_color(v["alphaMissense"]))
             if v.get("gnomad") is not None:
@@ -2256,6 +2276,16 @@ def format_report_html(rep, expanded=False, protvar="off"):
             mcol = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
             row('<span title="Missense3D: predicted structural consequence">M3D</span>',
                 "<span style='color:%s;'>%s</span>%s" % (mcol, esc(md.get("prediction", "?")), feat))
+        pk = (pv_dict or {}).get("pocket")
+        if pk:
+            bits = []
+            if pk.get("buriedness") is not None:
+                bits.append("buriedness %.2f" % pk["buriedness"])
+            if pk.get("score") is not None:
+                bits.append("druggability %.0f" % pk["score"])
+            detail = (" <span style='color:#888;'>(%s)</span>" % " · ".join(bits)) if bits else ""
+            row('<span title="Lines a predicted, potentially ligand-binding pocket (ProtVar / fpocket)">Binding pocket</span>',
+                "<span style='color:#00897b;'>in %d predicted pocket(s)</span>%s" % (pk["count"], detail))
         if protvar == "loading":
             row("EVE / ESM1b / FoldX", "<span style='color:#888;'>loading…</span>")
         am_by_mut = {m: s for (_w, m, s) in rep.get("amProfile", [])}
