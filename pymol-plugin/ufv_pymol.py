@@ -1148,6 +1148,13 @@ def fetch_annotations(uid, force=False):
         "function": _extract_function(uniprot),
     }
     ann["burden"] = _compute_burden(ann["variants"])
+    # Precompute per-position lookups once (residue_report reuses them on every click instead of
+    # rebuilding a dict over all variants each time).
+    var_by_pos = {}
+    for v in ann["variants"]:
+        var_by_pos.setdefault(v["position"], []).append(v)
+    ann["varByPos"] = var_by_pos
+    ann["ptmPosSet"] = {p["position"] for p in ann["ptms"]}
     _CACHE[uid] = ann
     _STATE["uid"] = uid
     print("[UFV] %s: %d PTMs, %d variants, %d sites, %d domains, %d topology segments, AM=%s"
@@ -1677,6 +1684,20 @@ def _ligand_sel(obj):
     return "(%s) and not polymer and not solvent" % obj
 
 
+_LIG_PRESENT = {}   # obj -> bool, cached so residue clicks don't re-scan for ligands each time
+
+
+def _has_ligands(obj):
+    c = _LIG_PRESENT.get(obj)
+    if c is None:
+        try:
+            c = cmd.count_atoms(_ligand_sel(obj)) > 0
+        except Exception:
+            c = False
+        _LIG_PRESENT[obj] = c
+    return c
+
+
 def ufv_ligands(obj=None, uid=None):
     """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water) as sticks,
     coloured by element, with ions as small spheres."""
@@ -2066,10 +2087,8 @@ def residue_report(obj, uid, uni_pos):
     seq = ann["sequence"]
     uni_pos = int(uni_pos)
     aa = seq[uni_pos - 1] if 0 < uni_pos <= len(seq) else "?"
-    ptm_pos = {p["position"] for p in ann["ptms"]}
-    var_pos = {v["position"]: [] for v in ann["variants"]}
-    for v in ann["variants"]:
-        var_pos[v["position"]].append(v)
+    ptm_pos = ann["ptmPosSet"]            # precomputed once (not rebuilt per click)
+    var_pos = ann["varByPos"]
     near = []
     for nuni, dist in _residue_neighborhood(geom, uni_pos, 12.0):
         tags = []
@@ -2078,15 +2097,17 @@ def residue_report(obj, uid, uni_pos):
         if nuni in var_pos:
             tags.append(_cons_token(var_pos[nuni][0]["consequence"]))
         near.append({"pos": nuni, "dist": round(dist, 1), "tags": tags})
-    # ligands/cofactors within 5 Å of this residue (read from the structure)
+    # ligands/cofactors within 5 Å of this residue — skip the spatial query entirely when the
+    # structure has no ligands (the common AlphaFold case), so each click stays cheap.
     ligs = []
-    rsel = _sel_for_positions(obj, [uni_pos])
-    if rsel:
-        try:
-            cmd.iterate("(%s) and not polymer and not solvent and ((%s) around 5)" % (obj, rsel),
-                        "ligs.append(resn)", space={"ligs": ligs})
-        except Exception:
-            pass
+    if _has_ligands(obj):
+        rsel = _sel_for_positions(obj, [uni_pos])
+        if rsel:
+            try:
+                cmd.iterate("(%s) and not polymer and not solvent and ((%s) around 5)" % (obj, rsel),
+                            "ligs.append(resn)", space={"ligs": ligs})
+            except Exception:
+                pass
     return {
         "uid": ann["uid"], "pos": uni_pos, "aa": aa,
         "ptms": [p for p in ann["ptms"] if p["position"] <= uni_pos <= p["endPosition"]],
@@ -2568,7 +2589,7 @@ def _load_structure(struct, uid, name=None):
         _set_sifts_map(name, struct["pdbId"], uid)
     else:
         _set_identity_map(name)
-    _GEOM_CACHE.pop(name, None)
+    _GEOM_CACHE.pop(name, None); _LIG_PRESENT.pop(name, None)
     _STATE["obj"] = name
     _STATE.setdefault("sources", {})[name] = struct.get("source", "PDB")
     cmd.orient(name)
@@ -2687,7 +2708,7 @@ def ufv_load(uid, name=None):
     cmd.show("cartoon", name)
     cmd.color("gray80", name)
     _set_identity_map(name)
-    _GEOM_CACHE.pop(name, None)
+    _GEOM_CACHE.pop(name, None); _LIG_PRESENT.pop(name, None)
     _STATE["obj"] = name
     _STATE.setdefault("sources", {})[name] = "AlphaFold"
     fetch_annotations(uid)
@@ -3073,7 +3094,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             except Exception:
                 pass
             (_STATE.get("sources") or {}).pop(name, None)
-            _GEOM_CACHE.pop(name, None)
+            _GEOM_CACHE.pop(name, None); _LIG_PRESENT.pop(name, None)
             if _STATE.get("obj") == name:
                 _STATE["obj"] = (self.loaded_objs() or [None])[0]
             self.refresh_objs()
@@ -3615,7 +3636,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                     ufv_chain(o, ch.text().strip(), us.text().strip(), rs.text().strip() or None, re.text().strip() or None)
                 else:
                     ufv_map(o, uid, "identity")
-                _GEOM_CACHE.pop(o, None); dlg.accept()
+                _GEOM_CACHE.pop(o, None); _LIG_PRESENT.pop(o, None); dlg.accept()
             bb.accepted.connect(apply_and_close); bb.rejected.connect(dlg.reject)
             dlg.exec_()
 
@@ -3666,7 +3687,7 @@ def _load_from_path(struct, path, uid, segments=None):
         _set_sifts_map(name, struct["pdbId"], uid)
     else:
         _set_identity_map(name)
-    _GEOM_CACHE.pop(name, None)
+    _GEOM_CACHE.pop(name, None); _LIG_PRESENT.pop(name, None)
     _STATE["obj"] = name
     _STATE.setdefault("sources", {})[name] = struct.get("source", "PDB")
     cmd.orient(name)
