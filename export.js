@@ -140,7 +140,7 @@ const UFVExport = (() => {
         return null;
     }
 
-    function buildResidueMatrix(sequence, ptms, ptmGroups, variants, amMap, analysis = {}, structure = null, sites = [], mutagenesis = []) {
+    function buildResidueMatrix(sequence, ptms, ptmGroups, variants, amMap, analysis = {}, structure = null, sites = [], mutagenesis = [], protvarByPos = null) {
         const AM_AAS = 'ACDEFGHIKLMNPQRSTVWY';
         const ptmCats = Object.keys(ptmGroups).sort();
         const diseaseSet = new Set();
@@ -232,6 +232,19 @@ const UFVExport = (() => {
                 af != null ? af.toExponential(3) : '',
             ];
         };
+        // ProtVar predictor columns (per-position summaries) — only when supplied (opt-in bulk fetch).
+        const pvHeaders = protvarByPos ? ['protvar_conservation', 'protvar_eve_mean', 'protvar_esm_min', 'protvar_m3d_damaging'] : [];
+        const pvCols = pos => {
+            if (!protvarByPos) return [];
+            const d = protvarByPos.get(pos);
+            if (!d) return ['', '', '', ''];
+            return [
+                d.conservation != null ? d.conservation.toFixed(3) : '',
+                d.eveMean != null ? d.eveMean.toFixed(3) : '',
+                d.esmMin != null ? d.esmMin.toFixed(2) : '',
+                d.m3dDamaging === '' || d.m3dDamaging == null ? '' : d.m3dDamaging,
+            ];
+        };
 
         // Sanitise column names for CSV
         const safe = s => s.replace(/[^A-Za-z0-9_]/g, '_').replace(/_+/g, '_');
@@ -245,6 +258,7 @@ const UFVExport = (() => {
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
                 ...featHeaders,
+                ...pvHeaders,
                 'am_avg_score',
                 'am_max_score',
                 'am_n_subs',
@@ -260,6 +274,7 @@ const UFVExport = (() => {
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
                 ...featHeaders,
+                ...pvHeaders,
                 'am_avg_score',
                 'am_max_score',
                 'am_n_subs',
@@ -299,12 +314,12 @@ const UFVExport = (() => {
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, ...featCols(pos), amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos), ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, ...featCols(pos), ...pvCols(pos), amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos), ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, ...featCols(pos), amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos)].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, ...featCols(pos), ...pvCols(pos), amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos)].join(','));
             }
         });
         return rows.join('\n');

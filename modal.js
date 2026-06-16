@@ -72,6 +72,7 @@ const UFVModal = (() => {
                         <div class="ufv-dl-menu" id="ufv-dl-menu">
                             <button class="ufv-dl-opt" id="ufv-dl-pdb">PDB file</button>
                             <button class="ufv-dl-opt" id="ufv-dl-csv">CSV annotation table</button>
+                            <button class="ufv-dl-opt" id="ufv-dl-csv-pv">CSV + ProtVar predictions (slower)</button>
                             <button class="ufv-dl-opt" id="ufv-dl-pymol">PyMOL session (.pml)</button>
                             <button class="ufv-dl-opt" id="ufv-dl-vmd">VMD session (.tcl)</button>
                         </div>
@@ -243,6 +244,10 @@ const UFVModal = (() => {
         byId('ufv-dl-csv').addEventListener('click', () => {
             byId('ufv-dl-menu').classList.remove('open');
             exportCsv();
+        });
+        byId('ufv-dl-csv-pv').addEventListener('click', () => {
+            byId('ufv-dl-menu').classList.remove('open');
+            exportCsv(true);
         });
         byId('ufv-dl-pymol').addEventListener('click', () => {
             byId('ufv-dl-menu').classList.remove('open');
@@ -1601,6 +1606,7 @@ const UFVModal = (() => {
     // Session-persistent toggles for proximity lines and sphere visibility in focus mode.
     let _proximityLinesOn = false;
     let _showOtherSpheres = true;
+    let _showVarEvidence = false;   // persistent: show Review/dbSNP/gnomAD/Genomic in the variant blocks
     let _lastProximityArgs = null;
 
     // Helper: make a small CSS toggle switch (<label> wrapping hidden <input> + slider span).
@@ -1717,24 +1723,39 @@ const UFVModal = (() => {
                 vtag.style.color = v.consequenceColor;
                 vblock.appendChild(vtag);
                 vblock.appendChild(row('ClinVar', v.clinVarSignificance || v.consequence || '—'));
-                if (v.clinVarReviewStatus) vblock.appendChild(row('Review', v.clinVarReviewStatus));
-                if (v.rsIds?.length) vblock.appendChild(row('dbSNP', v.rsIds.join(', ')));
+                // Evidence rows (Review / dbSNP / gnomAD AF / Genomic) — hidden until the evidence
+                // toggle is on. Marked with a class so the toggle can flip them without a re-render.
+                const evi = (label, value, color) => { const r = row(label, value, color); r.classList.add('ufv-var-evidence'); if (!_showVarEvidence) r.style.display = 'none'; vblock.appendChild(r); };
+                if (v.clinVarReviewStatus) evi('Review', v.clinVarReviewStatus);
+                if (v.rsIds?.length) evi('dbSNP', v.rsIds.join(', '));
                 if (Number.isFinite(v.gnomadAf)) {
                     const af = v.gnomadAf;
                     const txt = af === 0 ? '0 (not observed)' : af >= 0.01 ? `${(af * 100).toFixed(2)}%`
                         : af >= 1e-4 ? `${(af * 100).toFixed(4)}%` : af.toExponential(1);
                     const rarity = af >= 0.01 ? 'common' : af > 0 ? 'rare' : 'absent';
-                    vblock.appendChild(row('gnomAD AF', `${txt} (${rarity})`, af >= 0.01 ? '#43a047' : null));
+                    evi('gnomAD AF', `${txt} (${rarity})`, af >= 0.01 ? '#43a047' : null);
                 } else {
-                    vblock.appendChild(row('gnomAD AF', 'not reported (absent from gnomAD — supports rarity)'));
+                    evi('gnomAD AF', 'not in gnomAD');
                 }
-                if (v.genomicLocation) vblock.appendChild(row('Genomic', v.genomicLocation));
+                if (v.genomicLocation) evi('Genomic', v.genomicLocation);
                 varBody.appendChild(vblock);
             });
             varToggle.addEventListener('click', () => {
                 const open = varBody.classList.toggle('show');
                 varToggle.querySelector('.ufv-am-arrow').textContent = open ? '▴' : '▾';
             });
+            // Evidence toggle: shows/hides Review · dbSNP · gnomAD AF · Genomic for all variants.
+            const eviToggle = document.createElement('a');
+            eviToggle.href = 'javascript:void 0'; eviToggle.style.cssText = 'font-size:11px;color:#1565c0;text-decoration:none;display:inline-block;margin:2px 0 0 4px;';
+            const setEviLabel = () => { eviToggle.textContent = _showVarEvidence ? '▴ hide evidence' : '▸ show evidence (review · dbSNP · gnomAD · genomic)'; };
+            setEviLabel();
+            eviToggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                _showVarEvidence = !_showVarEvidence;
+                varBody.querySelectorAll('.ufv-var-evidence').forEach(r => { r.style.display = _showVarEvidence ? '' : 'none'; });
+                setEviLabel();
+            });
+            varBody.appendChild(eviToggle);
             varSection.append(varToggle, varBody);
             body.appendChild(varSection);
         }
@@ -2275,7 +2296,7 @@ const UFVModal = (() => {
         UFVExport.downloadText(`${s.uniprotId}_${st.id || 'structure'}_${mode}.pdb`, text);
     }
 
-    async function exportCsv() {
+    async function exportCsv(withProtVar = false) {
         const s = UFVState.state;
         if (!s.sequence) return;
         // Compute the constraint-pocket values on demand for the loaded structure so the CSV
@@ -2286,8 +2307,18 @@ const UFVModal = (() => {
         // Per-residue ligand contacts (CCD codes within 5 Å) for the loaded structure.
         s.analysis.ligandContacts = (s.ligands?.length && StructureViewer.ligandContactsByResidue)
             ? StructureViewer.ligandContactsByResidue(5) : null;
-        const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure(), s.sites, s.mutagenesis);
-        UFVExport.downloadText(`${s.uniprotId}_residue_annotations.csv`, text, 'text/csv');
+        // Opt-in: one ProtVar /score request per residue (no bulk endpoint), so it's slow — show progress.
+        let protvarByPos = null;
+        if (withProtVar) {
+            showLoading('ProtVar predictions: 0 / ' + s.sequence.length + ' residues…');
+            try {
+                protvarByPos = await UFVApi.fetchProtVarAll(s.uniprotId, s.sequence.length,
+                    (done, total) => showLoading(`ProtVar predictions: ${done} / ${total} residues…`));
+            } catch (_) { protvarByPos = null; }
+            byId('ufv-loading').classList.add('hidden');
+        }
+        const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure(), s.sites, s.mutagenesis, protvarByPos);
+        UFVExport.downloadText(`${s.uniprotId}_residue_annotations${withProtVar ? '_protvar' : ''}.csv`, text, 'text/csv');
     }
 
     // Download a self-contained PyMOL/VMD script that recreates the current 3-D view (cartoon

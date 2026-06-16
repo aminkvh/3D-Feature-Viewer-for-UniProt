@@ -546,6 +546,49 @@ const UFVApi = (() => {
         return result;
     }
 
+    /**
+     * Bulk ProtVar /score for every residue 1..length (one request per position, bounded
+     * concurrency) → Map<pos, {conservation, eveMean, esmMin, m3dDamaging}> for the CSV. Slow for
+     * large proteins (no bulk endpoint exists), so it's opt-in. onProgress(done, total) for status.
+     */
+    async function fetchProtVarAll(acc, length, onProgress) {
+        const out = new Map();
+        const CONC = 8;
+        let idx = 0, done = 0;
+        const finite = a => a.filter(Number.isFinite);
+        async function worker() {
+            while (idx < length) {
+                const p = (idx++) + 1;
+                try {
+                    const arr = await fetchOptionalJson(PROTVAR_SCORE(acc, p));
+                    if (Array.isArray(arr) && arr.length) {
+                        let conservation = null, m3dDamaging = '';
+                        const eve = [], esm = [];
+                        for (const o of arr) {
+                            if (o.type === 'CONSERV') conservation = o.score;
+                            else if (o.type === 'EVE') eve.push(o.score);
+                            else if (o.type === 'ESM') esm.push(o.score);
+                            else if (o.type === 'M3D' && m3dDamaging === '') m3dDamaging = String(o.prediction || '').toLowerCase().startsWith('damag') ? 1 : 0;
+                        }
+                        const ev = finite(eve), es = finite(esm);
+                        if (conservation != null || ev.length || es.length || m3dDamaging !== '') {
+                            out.set(p, {
+                                conservation,
+                                eveMean: ev.length ? ev.reduce((a, b) => a + b, 0) / ev.length : null,
+                                esmMin: es.length ? Math.min(...es) : null,
+                                m3dDamaging,
+                            });
+                        }
+                    }
+                } catch (_) { /* skip a failed position */ }
+                done++;
+                if (onProgress && (done % 25 === 0 || done === length)) onProgress(done, length);
+            }
+        }
+        await Promise.all(Array.from({ length: CONC }, worker));
+        return out;
+    }
+
     async function loadFeatureData(id) {
         const [featuresData, variationData, proteomicsPtmData, uniprotData, amCsvText] = await Promise.all([
             fetchOptionalJson(FEATURES_URL(id)),
@@ -861,5 +904,5 @@ const UFVApi = (() => {
 
     // getPrimaryStructure: just the canonical AlphaFold model, fetched fast so the viewer can paint
     // immediately while getStructures streams in the experimental/isoform/computed list behind it.
-    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint, fetchProtVar };
+    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint, fetchProtVar, fetchProtVarAll };
 })();
