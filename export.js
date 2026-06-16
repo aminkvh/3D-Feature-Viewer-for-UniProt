@@ -140,7 +140,7 @@ const UFVExport = (() => {
         return null;
     }
 
-    function buildResidueMatrix(sequence, ptms, ptmGroups, variants, amMap, analysis = {}, structure = null) {
+    function buildResidueMatrix(sequence, ptms, ptmGroups, variants, amMap, analysis = {}, structure = null, sites = [], mutagenesis = []) {
         const AM_AAS = 'ACDEFGHIKLMNPQRSTVWY';
         const ptmCats = Object.keys(ptmGroups).sort();
         const diseaseSet = new Set();
@@ -204,16 +204,47 @@ const UFVExport = (() => {
             (v.diseasePairs || []).forEach(p => { if (p.label) diseaseByPos.get(v.position).add(p.label); });
         });
 
+        // Sites (one-hot by category), mutagenesis flag, gnomAD AF and variant counts — per position.
+        const siteCat = d => { const t = (d || '').toLowerCase(); return t.includes('active') ? 'active' : t.includes('metal') ? 'metal' : t.includes('binding') ? 'binding' : 'other'; };
+        const siteByPos = new Map(); // pos → Set<category>
+        (sites || []).forEach(x => {
+            for (let p = x.position; p <= (x.endPosition || x.position); p++) {
+                if (!siteByPos.has(p)) siteByPos.set(p, new Set());
+                siteByPos.get(p).add(siteCat(x.description));
+            }
+        });
+        const mutByPos = new Set();
+        (mutagenesis || []).forEach(mtg => { for (let p = mtg.position; p <= (mtg.endPosition || mtg.position); p++) mutByPos.add(p); });
+        const nVarByPos = new Map(), nPathByPos = new Map(), gnomadByPos = new Map();
+        variants.forEach(v => {
+            nVarByPos.set(v.position, (nVarByPos.get(v.position) || 0) + 1);
+            const path = `${v.consequence || ''} ${v.clinVarSignificance || ''}`.toLowerCase().includes('pathogenic');
+            if (path) nPathByPos.set(v.position, (nPathByPos.get(v.position) || 0) + 1);
+            if (Number.isFinite(v.gnomadAf)) gnomadByPos.set(v.position, Math.max(gnomadByPos.get(v.position) ?? 0, v.gnomadAf));
+        });
+        const featCols = pos => {
+            const sc = siteByPos.get(pos);
+            const af = gnomadByPos.get(pos);
+            return [
+                sc ? 1 : 0, sc?.has('active') ? 1 : 0, sc?.has('binding') ? 1 : 0, sc?.has('metal') ? 1 : 0,
+                mutByPos.has(pos) ? 1 : 0,
+                nVarByPos.get(pos) || 0, nPathByPos.get(pos) || 0,
+                af != null ? af.toExponential(3) : '',
+            ];
+        };
+
         // Sanitise column names for CSV
         const safe = s => s.replace(/[^A-Za-z0-9_]/g, '_').replace(/_+/g, '_');
         // Single-chain: original layout (pdb_residue before the one-hot columns; tiers after
         // am_avg_score).  Multi-chain: structure-dependent columns repeated per chain at the end.
         const proxHeaders = ['ptm_variant_tier', 'nearest_variant_to_ptm', 'ptm_variant_distance_A', 'nearby_variant_count_8A', 'nearby_pathogenic_count_8A'];
+        const featHeaders = ['site', 'site_active', 'site_binding', 'site_metal', 'mutagenesis', 'n_variants', 'n_pathogenic', 'gnomad_max_af'];
         const headers = chains
             ? [
                 'position', 'aa',
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
+                ...featHeaders,
                 'am_avg_score',
                 'am_max_score',
                 'am_n_subs',
@@ -228,6 +259,7 @@ const UFVExport = (() => {
                 'position', 'aa', 'pdb_residue',
                 ...ptmCats.map(c => `ptm_${safe(c)}`),
                 ...diseases.map(d => `disease_${safe(d)}`),
+                ...featHeaders,
                 'am_avg_score',
                 'am_max_score',
                 'am_n_subs',
@@ -267,12 +299,12 @@ const UFVExport = (() => {
                     tierFor(analysis.hotspotsByChain?.get(c), pos, hotspotTierNum),
                     tierFor(analysis.distantContactsByChain?.get(c), pos, hubTierNum),
                 ]);
-                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos), ...structVals].join(','));
+                rows.push([pos, aa, ...ptmFlags, ...diseaseFlags, ...featCols(pos), amAvg, amMax, amN, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos), ...structVals].join(','));
             } else {
                 const pdbResi = uniprotToPdbResi(pos, structure) ?? '';
                 const hotspotTier = tierFor(analysis.hotspots, pos, hotspotTierNum);
                 const hubTier = tierFor(analysis.distantContacts, pos, hubTierNum);
-                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos)].join(','));
+                rows.push([pos, aa, pdbResi, ...ptmFlags, ...diseaseFlags, ...featCols(pos), amAvg, amMax, amN, hotspotTier, hubTier, burden, pocketQ, pocketClass, ...proxVals, ligandCol(pos)].join(','));
             }
         });
         return rows.join('\n');

@@ -313,6 +313,41 @@ const DataProcessor = {
         return { name: fn.value, isAI, source: source || (isAI ? 'ProtNLM' : ''), caution, reviewed };
     },
 
+    /** UniProt 'Mutagenesis' features — residues experimentally mutated, with the observed effect. */
+    extractMutagenesis(uniprotData) {
+        const out = [];
+        ((uniprotData?.features) || []).filter(f => f.type === 'Mutagenesis').forEach(f => {
+            const start = f.location?.start?.value;
+            if (start == null) return;
+            const end = f.location?.end?.value ?? start;
+            const alt = f.alternativeSequence || {};
+            const pubmed = (f.evidences || []).filter(e => e.source === 'PubMed' && e.id).map(e => e.id);
+            out.push({
+                position: start, endPosition: end,
+                wildType: alt.originalSequence || '',
+                mutants: alt.alternativeSequences || [],
+                effect: f.description || '', pubmed, color: '#6d4c41',
+            });
+        });
+        return out.sort((a, b) => a.position - b.position);
+    },
+
+    /** Protein-level function context: short summary, subcellular locations, catalytic activity. */
+    extractFunction(uniprotData) {
+        if (!uniprotData) return null;
+        const strip = (t) => (t || '').replace(/\s*\(PubMed:[^)]*\)/g, '').replace(/\s*\(By similarity\)/g, '')
+            .replace(/\s*\(Ref\.[^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+        let summary = ''; const locations = [], catalytic = [];
+        (uniprotData.comments || []).forEach(c => {
+            if (c.commentType === 'FUNCTION' && !summary) summary = strip(c.texts?.[0]?.value);
+            else if (c.commentType === 'SUBCELLULAR LOCATION') (c.subcellularLocations || []).forEach(sl => {
+                const v = sl.location?.value; if (v && !locations.includes(v)) locations.push(v);
+            });
+            else if (c.commentType === 'CATALYTIC ACTIVITY') { const r = c.reaction?.name; if (r && !catalytic.includes(r)) catalytic.push(r); }
+        });
+        return (summary || locations.length || catalytic.length) ? { summary, locations, catalytic } : null;
+    },
+
     _categorizePTM(desc, type) {
         const d = desc.toLowerCase();
         if (type === 'DISULFID') return 'Disulfide bond';

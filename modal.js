@@ -434,6 +434,14 @@ const UFVModal = (() => {
             s.analysis.alphaMissense = UFVAnalysis.aggregateAlphaMissense(s.variants, s.amMap);
             s.annotationsLoaded = true;
             if (!byId('ufv-protnlm-banner')?.classList.contains('ufv-hidden')) renderProtNLM();
+            const fc = s.functionContext;
+            if (fc) {
+                const bits = [];
+                if (fc.summary) bits.push('Function: ' + fc.summary);
+                if (fc.catalytic?.length) bits.push('Catalytic: ' + fc.catalytic.slice(0, 3).join('; '));
+                if (fc.locations?.length) bits.push('Subcellular location: ' + fc.locations.join(', '));
+                const h = byId('ufv-modal-heading'); if (h) h.title = bits.join('\n\n');
+            }
         } catch (err) {
             showError(err.message || 'Unable to load annotations.');
         }
@@ -1671,6 +1679,13 @@ const UFVModal = (() => {
         s.sites.filter(x => x.position === pos || x.endPosition === pos)
             .forEach(x => body.appendChild(row('Site', x.description, x.color)));
 
+        // ── Mutagenesis (experimental) ──────────────────────────────────────────
+        (s.mutagenesis || []).filter(mtg => mtg.position <= pos && pos <= mtg.endPosition).forEach(mtg => {
+            const r = row('Mutagenesis', `${mtg.wildType}→${(mtg.mutants || []).join(', ')}: ${mtg.effect}`, '#6d4c41');
+            r.title = 'Experimentally mutated residue (UniProt)';
+            body.appendChild(r);
+        });
+
         // ── Variants — collapsible ───────────────────────────────────────────────
         const variants = s.variants.filter(v => v.position === pos).slice(0, 12);
         if (variants.length > 0) {
@@ -2302,7 +2317,7 @@ const UFVModal = (() => {
         // Per-residue ligand contacts (CCD codes within 5 Å) for the loaded structure.
         s.analysis.ligandContacts = (s.ligands?.length && StructureViewer.ligandContactsByResidue)
             ? StructureViewer.ligandContactsByResidue(5) : null;
-        const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure());
+        const text = UFVExport.buildResidueMatrix(s.sequence, s.ptms, s.ptmGroups || {}, s.variants, s.amMap, s.analysis, UFVState.selectedStructure(), s.sites, s.mutagenesis);
         UFVExport.downloadText(`${s.uniprotId}_residue_annotations.csv`, text, 'text/csv');
     }
 

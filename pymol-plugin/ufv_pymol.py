@@ -430,6 +430,66 @@ def _extract_domains(uniprot):
     return sorted(out, key=lambda d: d["position"])
 
 
+MUTAG_COLOR = "#6d4c41"   # experimentally mutated residues (UniProt Mutagenesis features)
+
+
+def _extract_mutagenesis(uniprot):
+    """UniProt 'Mutagenesis' features: residues experimentally mutated in the lab, with the observed
+    effect. The experimental counterpart to the variant-effect predictors. -> [{position, wildType,
+    mutants, effect, pubmed, color}]."""
+    out = []
+    for f in (uniprot or {}).get("features", []):
+        if f.get("type") != "Mutagenesis":
+            continue
+        loc = f.get("location") or {}
+        start = (loc.get("start") or {}).get("value")
+        if start is None:
+            continue
+        end = (loc.get("end") or {}).get("value") or start
+        alt = f.get("alternativeSequence") or {}
+        pubmed = [e.get("id") for e in (f.get("evidences") or [])
+                  if e.get("source") == "PubMed" and e.get("id")]
+        out.append({"position": start, "endPosition": end,
+                    "wildType": alt.get("originalSequence") or "",
+                    "mutants": alt.get("alternativeSequences") or [],
+                    "effect": f.get("description") or "", "pubmed": pubmed, "color": MUTAG_COLOR})
+    return sorted(out, key=lambda d: d["position"])
+
+
+def _strip_refs(text):
+    """Trim UniProt inline citations for a tidy one-line display."""
+    text = re.sub(r"\s*\(PubMed:[^)]*\)", "", text or "")
+    text = re.sub(r"\s*\(By similarity\)", "", text)
+    text = re.sub(r"\s*\(Ref\.[^)]*\)", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _extract_function(uniprot):
+    """Protein-level function context from the entry comments: a short function summary, subcellular
+    locations, and catalytic activity. None if the entry carries nothing useful."""
+    if not uniprot:
+        return None
+    summary, locations, catalytic = "", [], []
+    for c in uniprot.get("comments") or []:
+        t = c.get("commentType")
+        if t == "FUNCTION" and not summary:
+            texts = c.get("texts") or []
+            if texts:
+                summary = _strip_refs(texts[0].get("value") or "")
+        elif t == "SUBCELLULAR LOCATION":
+            for sl in c.get("subcellularLocations") or []:
+                v = (sl.get("location") or {}).get("value")
+                if v and v not in locations:
+                    locations.append(v)
+        elif t == "CATALYTIC ACTIVITY":
+            rxn = (c.get("reaction") or {}).get("name")
+            if rxn and rxn not in catalytic:
+                catalytic.append(rxn)
+    if not (summary or locations or catalytic):
+        return None
+    return {"summary": summary, "locations": locations, "catalytic": catalytic}
+
+
 def _name_with_evidence(desc):
     """(fullName value, evidences) from a proteinDescription's recommendedName or first submissionName."""
     if not desc:
@@ -1084,6 +1144,8 @@ def fetch_annotations(uid, force=False):
         "amMap": am_map,
         "amByPos": _am_by_pos(am_map),
         "protnlm": _extract_protnlm(uniprot),
+        "mutagenesis": _extract_mutagenesis(uniprot),
+        "function": _extract_function(uniprot),
     }
     ann["burden"] = _compute_burden(ann["variants"])
     _CACHE[uid] = ann
@@ -1598,6 +1660,19 @@ def ufv_sites(obj=None, uid=None):
     print("[UFV] %s: site layer on (%d sites)." % (obj, len(ann["sites"])))
 
 
+def ufv_mutagenesis(obj=None, uid=None):
+    """ufv_mutagenesis [object [, uniprot_id]] — experimentally mutated residues (UniProt Mutagenesis)
+    as brown spheres; hover the report for the observed effect."""
+    obj = _resolve_object(obj)
+    ann = fetch_annotations(_resolve_uid(uid))
+    positions = []
+    for mtg in ann.get("mutagenesis", []):
+        for p in range(mtg["position"], mtg["endPosition"] + 1):
+            positions.append(p)
+    _set_sphere_layer(obj, "mutag", {MUTAG_COLOR: positions} if positions else None)
+    print("[UFV] %s: mutagenesis layer on (%d features)." % (obj, len(ann.get("mutagenesis", []))))
+
+
 def _ligand_sel(obj):
     return "(%s) and not polymer and not solvent" % obj
 
@@ -2018,6 +2093,7 @@ def residue_report(obj, uid, uni_pos):
         "variants": var_pos.get(uni_pos, []),
         "sites": [s for s in ann["sites"] if s["position"] <= uni_pos <= s["endPosition"]],
         "domains": [d for d in ann["domains"] if d["position"] <= uni_pos <= d["endPosition"]],
+        "mutagenesis": [mtg for mtg in ann.get("mutagenesis", []) if mtg["position"] <= uni_pos <= mtg["endPosition"]],
         "amMean": ann["amMean"].get(uni_pos),
         "amProfile": ann.get("amByPos", {}).get(uni_pos, []),  # full 19-substitution profile
         "nearby": near,
@@ -2129,7 +2205,7 @@ def format_report_html(rep, expanded=False, protvar="off"):
                      '<a href="ufv:evi" style="color:#1565c0; text-decoration:none; font-size:11px;">%s</a>'
                      '</td></tr>' % link)
 
-    if rep["ptms"] or rep["sites"] or rep["domains"]:
+    if rep["ptms"] or rep["sites"] or rep["domains"] or rep.get("mutagenesis"):
         hdr("Features", "#1565c0")
         for p in rep["ptms"]:
             row("PTM", esc(p["description"]), p.get("color"))
@@ -2137,6 +2213,10 @@ def format_report_html(rep, expanded=False, protvar="off"):
             row("Site", esc(s["description"]), SITE_COLOR)
         for d in rep["domains"]:
             row("Domain", esc(d["description"]), d.get("color"))
+        for mtg in rep.get("mutagenesis", []):
+            sub = "%s→%s" % (esc(mtg.get("wildType", "")), esc(", ".join(mtg.get("mutants", []))))
+            val = "%s <span style='color:#888;'>%s</span>" % (sub, esc(mtg.get("effect", "")))
+            row('<span title="Experimentally mutated residue (UniProt)">Mutagenesis</span>', val, MUTAG_COLOR)
 
     if rep["amMean"] is not None:
         hdr("AlphaMissense", "#6a1b9a")
@@ -2383,7 +2463,7 @@ def ufv_focus(obj=None, uni_pos=None):
         # no rebuild). Restored on reset / next clear.
         disabled = []
         objlist = cmd.get_object_list() or []
-        for tag in ("ptm", "var", "site", "dom", "filt"):
+        for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
             lobj = _ufv_layer_obj(obj, tag)
             if lobj in objlist:
                 try:
@@ -2633,7 +2713,8 @@ if _HAS_PYMOL:
     for _name, _fn in [
         ("ufv_load", ufv_load), ("ufv_fetch", ufv_fetch), ("ufv_map", ufv_map),
         ("ufv_chain", ufv_chain), ("ufv_ptms", ufv_ptms), ("ufv_variants", ufv_variants),
-        ("ufv_sites", ufv_sites), ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
+        ("ufv_sites", ufv_sites), ("ufv_mutagenesis", ufv_mutagenesis),
+        ("ufv_domains", ufv_domains), ("ufv_topology", ufv_topology),
         ("ufv_alphamissense", ufv_alphamissense), ("ufv_burden", ufv_burden),
         ("ufv_plddt", ufv_plddt), ("ufv_bfactor", ufv_bfactor),
         ("ufv_hotspots", ufv_hotspots), ("ufv_contacthubs", ufv_contacthubs), ("ufv_pockets", ufv_pockets),
@@ -2745,12 +2826,15 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             lg = QtWidgets.QGroupBox("Layers (markers)"); lgl = QtWidgets.QVBoxLayout(lg); lay.addWidget(lg)
             lr = QtWidgets.QHBoxLayout(); lgl.addLayout(lr)
             self.cb_ptm = QtWidgets.QCheckBox("PTMs"); self.cb_site = QtWidgets.QCheckBox("Sites")
+            self.cb_mutag = QtWidgets.QCheckBox("Mutagenesis")
+            self.cb_mutag.setToolTip("Experimentally mutated residues (UniProt Mutagenesis)")
             self.cb_lig = QtWidgets.QCheckBox("Ligands")
-            for cb in (self.cb_ptm, self.cb_site, self.cb_lig):
+            for cb in (self.cb_ptm, self.cb_site, self.cb_mutag, self.cb_lig):
                 lr.addWidget(cb)
             lr.addStretch(1)
             self.cb_ptm.clicked.connect(lambda: self.toggle_points("ptm", self.cb_ptm, ufv_ptms))
             self.cb_site.clicked.connect(lambda: self.toggle_points("site", self.cb_site, ufv_sites))
+            self.cb_mutag.clicked.connect(lambda: self.toggle_points("mutag", self.cb_mutag, ufv_mutagenesis))
             self.cb_lig.clicked.connect(self.toggle_ligands)
             vr = QtWidgets.QHBoxLayout(); lgl.addLayout(vr)
             self.cb_var = QtWidgets.QCheckBox("Variants"); vr.addWidget(self.cb_var)
@@ -2780,7 +2864,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             lay.addWidget(ag, 1)
             tr = QtWidgets.QHBoxLayout(); agl.addLayout(tr)
             self.list_kind = QtWidgets.QComboBox()
-            self.list_kind.addItems(["PTMs", "Variants", "Sites", "Domains", "Ligands"])
+            self.list_kind.addItems(["PTMs", "Variants", "Sites", "Mutagenesis", "Domains", "Ligands"])
             self.list_kind.currentIndexChanged.connect(lambda _i: self.refresh_table())
             tr.addWidget(self.list_kind)
             self.filter_edit = QtWidgets.QLineEdit(); self.filter_edit.setPlaceholderText("filter…")
@@ -2907,12 +2991,24 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
         def update_info(self):
             ann = _CACHE.get(self.cur_uid() or "")
             if not ann:
-                self.info.setText("Not fetched."); return
+                self.info.setText("Not fetched."); self.info.setToolTip(""); return
             cons = Counter(_cons_token(v["consequence"]) for v in ann["variants"])
-            self.info.setText("%s · %d aa · PTM %d · Var %d (path %d) · Site %d · Dom %d · AM %s"
-                              % (ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["variants"]),
-                                 cons.get("pathogenic", 0), len(ann["sites"]), len(ann["domains"]),
-                                 "y" if ann["amMean"] else "n"))
+            txt = "%s · %d aa · PTM %d · Var %d (path %d) · Site %d · Mutag %d · Dom %d · AM %s" % (
+                ann["uid"], len(ann["sequence"]), len(ann["ptms"]), len(ann["variants"]),
+                cons.get("pathogenic", 0), len(ann["sites"]), len(ann.get("mutagenesis", [])),
+                len(ann["domains"]), "y" if ann["amMean"] else "n")
+            fn = ann.get("function") or {}
+            if fn.get("locations"):
+                txt += "\nLocation: " + ", ".join(fn["locations"][:4])
+            self.info.setText(txt)
+            tip = []
+            if fn.get("summary"):
+                tip.append("Function: " + fn["summary"])
+            if fn.get("catalytic"):
+                tip.append("Catalytic: " + "; ".join(fn["catalytic"][:3]))
+            if fn.get("locations"):
+                tip.append("Subcellular location: " + ", ".join(fn["locations"]))
+            self.info.setToolTip("\n\n".join(tip))
 
         def loaded_objs(self):
             return [o for o in (cmd.get_object_list() or []) if not o.startswith("ufv_")]
@@ -2961,7 +3057,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
         def toggle_visible(self, name, checked):
             try:
                 (cmd.enable if checked else cmd.disable)(name)
-                for tag in ("ptm", "var", "site", "dom", "filt"):
+                for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
                     lobj = _ufv_layer_obj(name, tag)
                     if lobj in (cmd.get_object_list() or []):
                         (cmd.enable if checked else cmd.disable)(lobj)
@@ -3012,7 +3108,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             if not prep or not prep.get("path"):
                 self.status.setText("Download failed."); return
             name = _load_from_path(struct, prep["path"], uid, prep.get("segments"))
-            for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
+            for cb in (self.cb_ptm, self.cb_site, self.cb_mutag, self.cb_lig, self.cb_var):
                 cb.setChecked(False)
             self.cart.setCurrentIndex(0)
             self.set_active(name)
@@ -3041,7 +3137,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                             first = first or nm
                         except Exception:
                             pass
-                for cb in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
+                for cb in (self.cb_ptm, self.cb_site, self.cb_mutag, self.cb_lig, self.cb_var):
                     cb.setChecked(False)
                 self.cart.setCurrentIndex(0)
                 if first:
@@ -3157,6 +3253,10 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             elif kind == "Sites":
                 for s in ann["sites"]:
                     rows.append((s["position"], s["description"], SITE_COLOR))
+            elif kind == "Mutagenesis":
+                for mtg in ann.get("mutagenesis", []):
+                    sub = "%s→%s" % (mtg.get("wildType", ""), ", ".join(mtg.get("mutants", [])))
+                    rows.append((mtg["position"], "%s · %s" % (sub, mtg.get("effect", "")), MUTAG_COLOR))
             elif kind == "Domains":
                 for d in ann["domains"]:
                     rng = "%d-%d" % (d["position"], d["endPosition"]) if d["isRange"] else str(d["position"])
@@ -3521,7 +3621,7 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
         def on_clear(self):
             ufv_clear(self.obj())
-            for c in (self.cb_ptm, self.cb_site, self.cb_lig, self.cb_var):
+            for c in (self.cb_ptm, self.cb_site, self.cb_mutag, self.cb_lig, self.cb_var):
                 c.setChecked(False)
             self.cart.setCurrentIndex(0); self.detail.setHtml("")
 

@@ -578,7 +578,9 @@ const UFVApi = (() => {
         const domains = DataProcessor.extractDomains(uniprotData);
         const sequence = uniprotData?.sequence?.value || featuresData?.sequence || variationData?.sequence || '';
         const protnlm = DataProcessor.extractProtNLM(uniprotData);
-        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, domains, sequence, amMap, protnlm };
+        const mutagenesis = DataProcessor.extractMutagenesis(uniprotData);
+        const functionContext = DataProcessor.extractFunction(uniprotData);
+        return { featuresData, variationData, proteomicsPtmData, uniprotData, ptms, variants, sites, topology, domains, sequence, amMap, protnlm, mutagenesis, functionContext };
     }
 
     /**
