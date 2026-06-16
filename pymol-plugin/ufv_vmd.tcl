@@ -34,6 +34,20 @@ namespace eval ::ufv {
     variable a_function   ""
     variable a_protnlm    ""
     variable a_residue    ""
+    # tier cache: recomputed when (uid, molid) pair changes
+    variable tiers_uid    ""
+    variable tiers_molid  ""
+    # persistent rep indices (-1 = no rep currently shown)
+    variable lig_rep      -1
+    variable focus_rep    -1
+    # GUI state
+    variable gui_filt_path 1
+    variable gui_filt_del  1
+    variable gui_filt_ben  0
+    variable gui_filt_unc  0
+    variable gui_ann_kind  "PTMs"
+    variable gui_ann_filter ""
+    variable gui_ann_positions {}
 }
 
 # ---- python / backend configuration --------------------------------------------------------
@@ -187,6 +201,147 @@ proc ::ufv::addrep {molid style sel colorid {material Opaque}} {
     mol addrep $molid
 }
 
+# ---- reverse numbering (resi → UniProt) -----------------------------------------------------
+proc ::ufv::resi_to_uni {chain resi} {
+    switch $::ufv::mode {
+        identity { return $resi }
+        manual {
+            variable manual
+            if {![info exists manual($chain)]} { return "" }
+            lassign $manual($chain) us rs re
+            if {$resi < $rs} { return "" }
+            if {$re ne "" && $resi > $re} { return "" }
+            return [expr {$us + ($resi - $rs)}]
+        }
+        sifts {
+            set var ::ufv::s_$chain
+            if {![info exists $var]} { return "" }
+            foreach seg [set $var] {
+                lassign $seg us ue ps pe
+                if {$resi >= $ps && $resi <= $pe} { return [expr {$us + ($resi - $ps)}] }
+            }
+            return ""
+        }
+    }
+    return $resi
+}
+
+# ---- portable temp-file path ----------------------------------------------------------------
+proc ::ufv::tempfile {} {
+    foreach v {TMPDIR TMP TEMP} {
+        if {[info exists ::env($v)] && $::env($v) ne ""} {
+            return [file join $::env($v) ufv_[clock clicks].json]
+        }
+    }
+    return /tmp/ufv_[clock clicks].json
+}
+
+# ---- export Cα coords as JSON (for --compute-tiers) ----------------------------------------
+proc ::ufv::export_ca_coords {molid tmpfile} {
+    set sel [atomselect $molid "protein and name CA"]
+    set chains [$sel get chain]
+    set resids [$sel get resid]
+    set xs     [$sel get x]
+    set ys     [$sel get y]
+    set zs     [$sel get z]
+    $sel delete
+    set items {}
+    foreach ch $chains ri $resids x $xs y $ys z $zs {
+        set uni [::ufv::resi_to_uni $ch $ri]
+        if {$uni eq ""} continue
+        lappend items [format {{"uniPos":%d,"chain":"%s","resi":%d,"x":%.3f,"y":%.3f,"z":%.3f}} \
+            $uni $ch $ri $x $y $z]
+    }
+    set fh [open $tmpfile w]
+    puts $fh "\[[join $items ",\n"]\]"
+    close $fh
+}
+
+# ---- zoom view to a selection ---------------------------------------------------------------
+proc ::ufv::zoom_to {molid selstr} {
+    set sel [atomselect $molid $selstr]
+    if {[$sel num] == 0} { $sel delete; return }
+    set center [measure center $sel weight mass]
+    $sel delete
+    display resetview
+    molinfo $molid set center_matrix [transoffset [vecscale -1.0 $center]]
+}
+
+# ---- ensure hotspot/hub/pocket tiers are computed and cached --------------------------------
+proc ::ufv::ensure_tiers {molid uid} {
+    if {$::ufv::tiers_uid eq $uid && $::ufv::tiers_molid eq $molid} { return 1 }
+    ::ufv::status "computing hotspots / hubs / pockets..."
+    set tmpfile [::ufv::tempfile]
+    if {[catch {::ufv::export_ca_coords $molid $tmpfile} err]} {
+        ::ufv::status "coord export failed: $err"; return 0
+    }
+    if {[catch {eval [::ufv::run --compute-tiers $uid $tmpfile]} err]} {
+        ::ufv::status "tier computation failed: $err"
+        catch { file delete $tmpfile }
+        return 0
+    }
+    catch { file delete $tmpfile }
+    set ::ufv::tiers_uid   $uid
+    set ::ufv::tiers_molid $molid
+    return 1
+}
+
+# ---- populate annotation listbox ------------------------------------------------------------
+proc ::ufv::refresh_ann_list {} {
+    set lb .ufv.canvframe.c.f.ann.lb
+    if {![winfo exists $lb]} return
+    $lb delete 0 end
+    set filter [string tolower $::ufv::gui_ann_filter]
+    set positions {}
+    switch $::ufv::gui_ann_kind {
+        PTMs {
+            if {[info exists ::ufv::a_ptms_rich]} {
+                foreach e $::ufv::a_ptms_rich {
+                    lassign $e pos color desc
+                    set line "[format {%5d} $pos]  $desc"
+                    if {$filter eq "" || [string first $filter [string tolower $line]] >= 0} {
+                        $lb insert end $line
+                        lappend positions $pos
+                    }
+                }
+            }
+        }
+        Variants {
+            if {[info exists ::ufv::a_variants_rich]} {
+                foreach e $::ufv::a_variants_rich {
+                    lassign $e pos color tok wtmut label
+                    set skip 0
+                    switch $tok {
+                        pathogenic  { if {!$::ufv::gui_filt_path} { set skip 1 } }
+                        deleterious { if {!$::ufv::gui_filt_del}  { set skip 1 } }
+                        benign      { if {!$::ufv::gui_filt_ben}   { set skip 1 } }
+                        uncertain   { if {!$::ufv::gui_filt_unc}   { set skip 1 } }
+                    }
+                    if {$skip} continue
+                    set line "[format {%5d} $pos]  $label"
+                    if {$filter eq "" || [string first $filter [string tolower $line]] >= 0} {
+                        $lb insert end $line
+                        lappend positions $pos
+                    }
+                }
+            }
+        }
+        Sites {
+            if {[info exists ::ufv::a_sites_rich]} {
+                foreach e $::ufv::a_sites_rich {
+                    lassign $e pos color desc
+                    set line "[format {%5d} $pos]  $desc"
+                    if {$filter eq "" || [string first $filter [string tolower $line]] >= 0} {
+                        $lb insert end $line
+                        lappend positions $pos
+                    }
+                }
+            }
+        }
+    }
+    set ::ufv::gui_ann_positions $positions
+}
+
 # ---- projection layers ----------------------------------------------------------------------
 proc ::ufv::point_layer {molid items tag} {
     array set groups {}
@@ -326,6 +481,151 @@ proc ufv_clear {{molid ""}} {
     ::ufv::status "cleared overlays on mol $molid."
 }
 
+# ---- ligands --------------------------------------------------------------------------------
+proc ufv_ligands {{molid ""}} {
+    set molid [::ufv::resolve $molid]
+    if {$::ufv::lig_rep >= 0} {
+        catch { mol delrep $::ufv::lig_rep $molid }
+        set ::ufv::lig_rep -1
+    }
+    set chk [atomselect $molid "not protein and not water and noh and not name 'NA' 'CA' 'K' 'MG' 'ZN' 'FE' 'CU' 'MN'"]
+    set n [$chk num]; $chk delete
+    if {$n == 0} { ::ufv::status "no ligands in mol $molid."; return }
+    ::ufv::addrep $molid "Licorice 0.3 12" \
+        "not protein and not water and noh and not name NA CA K MG ZN FE CU MN" \
+        [::ufv::next_color "#f9a825"]
+    set ::ufv::lig_rep [expr {[molinfo $molid get numreps] - 1}]
+    ::ufv::status "ligands shown ($n atoms)."
+}
+
+proc ufv_ligands_hide {{molid ""}} {
+    set molid [::ufv::resolve $molid]
+    if {$::ufv::lig_rep >= 0} {
+        catch { mol delrep $::ufv::lig_rep $molid }
+        set ::ufv::lig_rep -1
+    }
+    ::ufv::status "ligands hidden."
+}
+
+# ---- focus / reset view ---------------------------------------------------------------------
+proc ufv_focus {pos {molid ""}} {
+    set molid [::ufv::resolve $molid]; ::ufv::need ""
+    if {$::ufv::focus_rep >= 0} {
+        catch { mol delrep $::ufv::focus_rep $molid }
+        set ::ufv::focus_rep -1
+    }
+    set sel [::ufv::sel_positions $molid [list $pos] 0]
+    if {$sel eq ""} { ::ufv::status "position $pos not mapped."; return }
+    ::ufv::addrep $molid "Licorice 0.3 12" "byres ($sel or within 5 of ($sel))" \
+        [::ufv::next_color "#ffa726"]
+    set ::ufv::focus_rep [expr {[molinfo $molid get numreps] - 1}]
+    ::ufv::zoom_to $molid $sel
+    ::ufv::status "focused on UniProt $pos."
+}
+
+proc ufv_resetview {{molid ""}} {
+    set molid [::ufv::resolve $molid]
+    if {$::ufv::focus_rep >= 0} {
+        catch { mol delrep $::ufv::focus_rep $molid }
+        set ::ufv::focus_rep -1
+    }
+    set full [atomselect $molid "protein"]
+    if {[$full num] > 0} {
+        set center [measure center $full weight mass]
+        $full delete
+        display resetview
+        molinfo $molid set center_matrix [transoffset [vecscale -1.0 $center]]
+    } else { $full delete; display resetview }
+    ::ufv::status "view reset."
+}
+
+# ---- align (RMSD fit or centroid fallback) --------------------------------------------------
+proc ufv_align {{refmol ""}} {
+    set refmol [::ufv::resolve $refmol]
+    set moved 0
+    foreach m [molinfo list] {
+        if {$m == $refmol} continue
+        set refsel [atomselect $refmol "protein and backbone"]
+        set movsel [atomselect $m     "protein and backbone"]
+        if {[$movsel num] > 0 && [$movsel num] == [$refsel num]} {
+            if {[catch {
+                set mat [measure fit $movsel $refsel]
+                set all [atomselect $m all]; $all move $mat; $all delete
+            }]} {
+                set rc [measure center $refsel weight mass]
+                set mc [measure center $movsel weight mass]
+                set all [atomselect $m all]; $all moveby [vecsub $rc $mc]; $all delete
+            }
+        } elseif {[$movsel num] > 0} {
+            set rc [measure center $refsel weight mass]
+            set mc [measure center $movsel weight mass]
+            set all [atomselect $m all]; $all moveby [vecsub $rc $mc]; $all delete
+        }
+        $refsel delete; $movsel delete
+        incr moved
+    }
+    ::ufv::status "aligned $moved mol(s) to mol $refmol."
+}
+
+# ---- geometry-based cartoon colourings ------------------------------------------------------
+proc ::ufv::apply_tier_colouring {molid tiervar colors label} {
+    if {![info exists $tiervar] || [llength [set $tiervar]] == 0} {
+        ::ufv::status "no $label data."; return
+    }
+    array set buckets {}
+    foreach e [set $tiervar] {
+        lassign $e pos tier
+        lappend buckets($tier) $pos
+    }
+    foreach {tier color} $colors {
+        if {![info exists buckets($tier)]} continue
+        set sel [::ufv::sel_positions $molid $buckets($tier) 0]
+        if {$sel ne ""} { ::ufv::addrep $molid "NewCartoon" $sel [::ufv::next_color $color] }
+    }
+    array unset buckets
+    ::ufv::status "$label shown ([llength [set $tiervar]] residues)."
+}
+
+proc ufv_hotspots {{molid ""}} {
+    set molid [::ufv::resolve $molid]; ::ufv::need ""
+    if {![::ufv::ensure_tiers $molid $::ufv::uid]} return
+    ::ufv::apply_tier_colouring $molid ::ufv::a_hotspots \
+        {1 #b71c1c 2 #e65100 3 #f9a825} "variant hotspots"
+}
+
+proc ufv_contacthubs {{molid ""}} {
+    set molid [::ufv::resolve $molid]; ::ufv::need ""
+    if {![::ufv::ensure_tiers $molid $::ufv::uid]} return
+    ::ufv::apply_tier_colouring $molid ::ufv::a_hubs \
+        {1 #1a237e 2 #3949ab 3 #7986cb} "contact hubs"
+}
+
+proc ufv_pockets {{molid ""}} {
+    set molid [::ufv::resolve $molid]; ::ufv::need ""
+    if {![::ufv::ensure_tiers $molid $::ufv::uid]} return
+    ::ufv::apply_tier_colouring $molid ::ufv::a_pockets \
+        {1 #1b5e20 2 #388e3c 3 #81c784} "constraint pockets"
+}
+
+proc ufv_show_pocket {positions {molid ""}} {
+    set molid [::ufv::resolve $molid]
+    set sel [::ufv::sel_positions $molid $positions 0]
+    if {$sel eq ""} { ::ufv::status "no pocket residues mapped."; return }
+    ::ufv::addrep $molid "Licorice 0.3 12" "byres ($sel)" [::ufv::next_color "#e65100"]
+    ::ufv::status "pocket lining shown ([llength $positions] residues)."
+}
+
+# ---- CSV export -----------------------------------------------------------------------------
+proc ufv_csv {{outfile ""} {molid ""}} {
+    ::ufv::need ""
+    if {$outfile eq ""} { set outfile "[file normalize ${::ufv::uid}_residue_annotations.csv]" }
+    ::ufv::status "writing CSV to $outfile ..."
+    if {[catch { eval [::ufv::run --csv $::ufv::uid $outfile] } err]} {
+        ::ufv::status "CSV export failed: $err"; return
+    }
+    ::ufv::status "CSV written: $outfile"
+}
+
 # ---- residue report -------------------------------------------------------------------------
 proc ufv_residue {pos {molid ""}} {
     ::ufv::need ""
@@ -336,11 +636,12 @@ proc ufv_residue {pos {molid ""}} {
     set molid [::ufv::resolve $molid]
     set sel [::ufv::sel_positions $molid [list $pos] 0]
     if {$sel ne ""} { ::ufv::addrep $molid "Licorice 0.3 12" "byres ($sel)" [::ufv::next_color "#ffa726"] }
-    if {[winfo exists .ufv.rep.t]} {
-        .ufv.rep.t configure -state normal
-        .ufv.rep.t delete 1.0 end
-        .ufv.rep.t insert end $txt
-        .ufv.rep.t configure -state disabled
+    set _reptxt .ufv.canvframe.c.f.rep.t
+    if {[winfo exists $_reptxt]} {
+        $_reptxt configure -state normal
+        $_reptxt delete 1.0 end
+        $_reptxt insert end $txt
+        $_reptxt configure -state disabled
     } else {
         puts $txt
     }
@@ -403,40 +704,69 @@ proc ufv_gui {} {
         -fg white -bg "#00695c" -anchor w -padx 10 -pady 6
     pack .ufv.hdr -fill x
 
-    set f [frame .ufv.f -padx 10 -pady 8]; pack $f -fill both -expand 1
+    # Scrollable main area
+    frame .ufv.canvframe; pack .ufv.canvframe -fill both -expand 1
+    canvas .ufv.canvframe.c -yscrollcommand ".ufv.canvframe.sb set" -highlightthickness 0
+    scrollbar .ufv.canvframe.sb -command ".ufv.canvframe.c yview"
+    pack .ufv.canvframe.sb -side right -fill y
+    pack .ufv.canvframe.c  -side left  -fill both -expand 1
+    set f [frame .ufv.canvframe.c.f -padx 10 -pady 8]
+    .ufv.canvframe.c create window 0 0 -anchor nw -window $f
+    bind $f <Configure> {
+        .ufv.canvframe.c configure -scrollregion [.ufv.canvframe.c bbox all]
+        .ufv.canvframe.c configure -width [winfo reqwidth .ufv.canvframe.c.f]
+    }
 
-    # --- accession + fetch ---
+    # ---- accession + fetch ---
     set s1 [labelframe $f.s1 -text "Structure" -padx 6 -pady 6]; pack $s1 -fill x
-    label $s1.lu -text "UniProt"; grid $s1.lu -row 0 -column 0 -sticky w
-    entry $s1.eu -width 12 -textvariable ::ufv::gui_uid; grid $s1.eu -row 0 -column 1 -sticky w
+    label $s1.lu -text "UniProt:"; grid $s1.lu -row 0 -column 0 -sticky w
+    entry $s1.eu -width 11 -textvariable ::ufv::gui_uid; grid $s1.eu -row 0 -column 1 -sticky w
     set ::ufv::gui_uid $::ufv::uid
     button $s1.fetch -text "Fetch" -command {
         if {$::ufv::gui_uid eq ""} { tk_messageBox -message "Enter an accession."; return }
         ::ufv::status "fetching $::ufv::gui_uid ..."
         ufv_fetch $::ufv::gui_uid
         ::ufv::fetch_structures $::ufv::gui_uid
-        .ufv.f.s1.lb delete 0 end
-        foreach st $::ufv::a_structures { .ufv.f.s1.lb insert end "[lindex $st 1]  ([lindex $st 2])" }
+        .ufv.canvframe.c.f.s1.lb delete 0 end
+        foreach st $::ufv::a_structures {
+            .ufv.canvframe.c.f.s1.lb insert end "[lindex $st 1]  ([lindex $st 2])"
+        }
         ::ufv::ui_function
-        ::ufv::status "fetched $::ufv::gui_uid - choose a structure and Load."
+        ::ufv::refresh_ann_list
+        ::ufv::status "fetched $::ufv::gui_uid — choose a structure and Load."
     }
     grid $s1.fetch -row 0 -column 2 -sticky w -padx 4
-
+    button $s1.uniprot -text "Open UniProt ↗" -command {
+        if {$::ufv::gui_uid ne ""} {
+            catch { exec [auto_execok xdg-open] \
+                "https://www.uniprot.org/uniprotkb/$::ufv::gui_uid" & }
+            catch { exec [auto_execok open] \
+                "https://www.uniprot.org/uniprotkb/$::ufv::gui_uid" & }
+        }
+    }
+    grid $s1.uniprot -row 0 -column 3 -sticky w -padx 2
     listbox $s1.lb -height 5 -width 46 -yscrollcommand "$s1.sb set"
     scrollbar $s1.sb -command "$s1.lb yview"
-    grid $s1.lb -row 1 -column 0 -columnspan 3 -sticky ew -pady 4
-    grid $s1.sb -row 1 -column 3 -sticky ns
-    button $s1.load -text "Load selected" -command {
-        set i [.ufv.f.s1.lb curselection]
+    grid $s1.lb -row 1 -column 0 -columnspan 4 -sticky ew -pady 4
+    grid $s1.sb -row 1 -column 4 -sticky ns
+    button $s1.load   -text "Load selected"  -command {
+        set i [.ufv.canvframe.c.f.s1.lb curselection]
         if {$i eq ""} { tk_messageBox -message "Select a structure from the list."; return }
         ufv_load_structure [lindex [lindex $::ufv::a_structures $i] 0]
     }
-    button $s1.loadaf -text "Quick AlphaFold" -command { if {$::ufv::gui_uid ne ""} { ufv_load $::ufv::gui_uid } }
-    grid $s1.load -row 2 -column 0 -columnspan 2 -sticky w -pady 2
-    grid $s1.loadaf -row 2 -column 2 -columnspan 2 -sticky w -pady 2
+    button $s1.loadall -text "Load all" -command {
+        if {![llength $::ufv::a_structures]} { tk_messageBox -message "Fetch an accession first."; return }
+        foreach st $::ufv::a_structures { ufv_load_structure [lindex $st 0] }
+    }
+    button $s1.loadaf -text "Quick AlphaFold" -command {
+        if {$::ufv::gui_uid ne ""} { ufv_load $::ufv::gui_uid }
+    }
+    grid $s1.load    -row 2 -column 0 -columnspan 2 -sticky w -pady 2
+    grid $s1.loadall -row 2 -column 2 -sticky w -padx 4 -pady 2
+    grid $s1.loadaf  -row 2 -column 3 -sticky w -pady 2
 
-    # --- numbering ---
-    set num [labelframe $f.num -text "Residue numbering" -padx 6 -pady 6]; pack $num -fill x -pady 6
+    # ---- numbering ---
+    set num [labelframe $f.num -text "Residue numbering" -padx 6 -pady 6]; pack $num -fill x -pady 4
     radiobutton $num.i -text "Identity (resid == UniProt)" -variable ::ufv::gui_mode -value identity
     grid $num.i -row 0 -column 0 -columnspan 3 -sticky w
     radiobutton $num.s -text "SIFTS, PDB id:" -variable ::ufv::gui_mode -value sifts
@@ -454,59 +784,122 @@ proc ufv_gui {} {
         if {$::ufv::gui_uid eq ""} { tk_messageBox -message "Enter an accession."; return }
         if {$::ufv::uid ne $::ufv::gui_uid} { ufv_fetch $::ufv::gui_uid }
         switch $::ufv::gui_mode {
-            sifts  { ufv_map sifts $::ufv::gui_pdb }
-            manual { ufv_chain $::ufv::gui_ch $::ufv::gui_us $::ufv::gui_rs $::ufv::gui_re }
+            sifts   { ufv_map sifts $::ufv::gui_pdb }
+            manual  { ufv_chain $::ufv::gui_ch $::ufv::gui_us $::ufv::gui_rs $::ufv::gui_re }
             default { ufv_map identity }
         }
     }
     grid $num.apply -row 3 -column 0 -columnspan 3 -sticky w -pady 4
 
-    # --- marker layers ---
+    # ---- marker layers ---
     set lay [labelframe $f.lay -text "Layers (markers)" -padx 6 -pady 6]; pack $lay -fill x
     set i 0
-    foreach {lbl cmd} {PTMs ufv_ptms "Disease variants" ufv_variants "Functional sites" ufv_sites \
-                       "Mutagenesis" ufv_mutagenesis} {
-        button $lay.b$i -text $lbl -width 17 \
-            -command "if {\$::ufv::gui_uid eq {}} { tk_messageBox -message {Enter an accession.} } else { ufv_fetch \$::ufv::gui_uid ; $cmd }"
-        grid $lay.b$i -row [expr {$i/2}] -column [expr {$i%2}] -sticky w -padx 2 -pady 2
+    foreach {lbl cmd} {PTMs ufv_ptms "Disease variants" ufv_variants "Func. sites" ufv_sites \
+                        Mutagenesis ufv_mutagenesis Ligands ufv_ligands} {
+        button $lay.b$i -text $lbl -width 14 \
+            -command "if {\$::ufv::gui_uid eq {}} { tk_messageBox -message {Enter an accession.} } \
+                      else { ::ufv::need {} ; $cmd }"
+        grid $lay.b$i -row [expr {$i/3}] -column [expr {$i%3}] -sticky w -padx 2 -pady 2
         incr i
     }
+    # Variant consequence filter
+    label $lay.flt -text "Variants filter:"; grid $lay.flt -row 2 -column 0 -sticky w -pady 2
+    checkbutton $lay.fp -text "Pathogenic"  -variable ::ufv::gui_filt_path \
+        -command { ::ufv::refresh_ann_list }
+    checkbutton $lay.fd -text "Deleterious" -variable ::ufv::gui_filt_del \
+        -command { ::ufv::refresh_ann_list }
+    checkbutton $lay.fb -text "Benign"      -variable ::ufv::gui_filt_ben  \
+        -command { ::ufv::refresh_ann_list }
+    checkbutton $lay.fu -text "Uncertain"   -variable ::ufv::gui_filt_unc  \
+        -command { ::ufv::refresh_ann_list }
+    grid $lay.fp -row 2 -column 1 -sticky w
+    grid $lay.fd -row 2 -column 2 -sticky w
+    grid $lay.fb -row 3 -column 1 -sticky w
+    grid $lay.fu -row 3 -column 2 -sticky w
 
-    # --- cartoon colouring ---
-    set col [labelframe $f.col -text "Cartoon colouring" -padx 6 -pady 6]; pack $col -fill x -pady 6
+    # ---- cartoon colouring ---
+    set col [labelframe $f.col -text "Cartoon colouring" -padx 6 -pady 6]; pack $col -fill x -pady 4
     set i 0
     foreach {lbl cmd} {Domains ufv_domains Topology ufv_topology AlphaMissense ufv_alphamissense \
-                       Burden ufv_burden "pLDDT (predicted)" ufv_plddt "B-factor (exp.)" ufv_bfactor} {
-        button $col.b$i -text $lbl -width 17 \
-            -command "if {\$::ufv::gui_uid eq {}} { tk_messageBox -message {Enter an accession.} } else { ufv_fetch \$::ufv::gui_uid ; $cmd }"
-        grid $col.b$i -row [expr {$i/2}] -column [expr {$i%2}] -sticky w -padx 2 -pady 2
+                        Burden ufv_burden "pLDDT (pred.)" ufv_plddt "B-factor (exp.)" ufv_bfactor \
+                        Hotspots ufv_hotspots "Contact hubs" ufv_contacthubs "Constraint pocket" ufv_pockets} {
+        button $col.b$i -text $lbl -width 16 \
+            -command "if {\$::ufv::gui_uid eq {}} { tk_messageBox -message {Enter an accession.} } \
+                      else { ::ufv::need {} ; $cmd }"
+        grid $col.b$i -row [expr {$i/3}] -column [expr {$i%3}] -sticky w -padx 2 -pady 2
         incr i
     }
 
-    # --- residue report ---
-    set rep [labelframe $f.rep -text "Residue report" -padx 6 -pady 6]; pack $rep -fill both -expand 1 -pady 6
-    label $rep.l -text "UniProt position:"; grid $rep.l -row 0 -column 0 -sticky w
-    entry $rep.e -width 8 -textvariable ::ufv::gui_pos; grid $rep.e -row 0 -column 1 -sticky w
+    # ---- residue report ---
+    set rep [labelframe $f.rep -text "Residue report" -padx 6 -pady 6]; pack $rep -fill x -pady 4
+    label $rep.l -text "UniProt pos:"; grid $rep.l -row 0 -column 0 -sticky w
+    entry $rep.e -width 7 -textvariable ::ufv::gui_pos; grid $rep.e -row 0 -column 1 -sticky w
     button $rep.show -text "Show" -command {
         if {$::ufv::gui_pos eq ""} { tk_messageBox -message "Enter a residue position."; return }
-        ::ufv::status "fetching residue $::ufv::gui_pos (incl. ProtVar) ..."
+        ::ufv::status "fetching residue $::ufv::gui_pos ..."
         ufv_residue $::ufv::gui_pos
         ::ufv::status "residue $::ufv::gui_pos report shown."
     }
-    grid $rep.show -row 0 -column 2 -sticky w -padx 4
-    text $rep.t -height 9 -width 52 -wrap word -state disabled -font {Courier 9}
-    grid $rep.t -row 1 -column 0 -columnspan 3 -sticky nsew -pady 4
+    button $rep.focus -text "Focus 3D" -command {
+        if {$::ufv::gui_pos eq ""} { tk_messageBox -message "Enter a residue position."; return }
+        ufv_focus $::ufv::gui_pos
+    }
+    button $rep.reset -text "Reset view" -command { ufv_resetview }
+    grid $rep.show  -row 0 -column 2 -sticky w -padx 2
+    grid $rep.focus -row 0 -column 3 -sticky w -padx 2
+    grid $rep.reset -row 0 -column 4 -sticky w -padx 2
+    text $rep.t -height 9 -width 52 -wrap word -state disabled -font {Courier 9} \
+        -yscrollcommand "$rep.sb set"
+    scrollbar $rep.sb -command "$rep.t yview"
+    grid $rep.t  -row 1 -column 0 -columnspan 5 -sticky nsew -pady 4
+    grid $rep.sb -row 1 -column 5 -sticky ns
     grid rowconfigure $rep 1 -weight 1
-    grid columnconfigure $rep 2 -weight 1
 
-    # --- function context + clear ---
+    # ---- annotation list ---
+    set ann [labelframe $f.ann -text "Annotations" -padx 6 -pady 6]; pack $ann -fill x -pady 4
+    frame $ann.top; pack $ann.top -fill x
+    foreach {lbl kind} {PTMs PTMs Variants Variants Sites Sites} {
+        radiobutton $ann.top.r$kind -text $lbl -variable ::ufv::gui_ann_kind -value $kind \
+            -command ::ufv::refresh_ann_list
+        pack $ann.top.r$kind -side left
+    }
+    label $ann.top.fl -text "  Filter:"; pack $ann.top.fl -side left
+    entry $ann.top.fe -width 14 -textvariable ::ufv::gui_ann_filter
+    pack $ann.top.fe -side left
+    bind $ann.top.fe <KeyRelease> { ::ufv::refresh_ann_list }
+    listbox $ann.lb -height 8 -width 52 -yscrollcommand "$ann.sb set" -font {Courier 9}
+    scrollbar $ann.sb -command "$ann.lb yview"
+    pack $ann.lb -side left  -fill both -expand 1 -pady 4
+    pack $ann.sb -side right -fill y    -pady 4
+    bind $ann.lb <<ListboxSelect>> {
+        set idx [.ufv.canvframe.c.f.ann.lb curselection]
+        if {$idx ne "" && $idx < [llength $::ufv::gui_ann_positions]} {
+            set pos [lindex $::ufv::gui_ann_positions $idx]
+            set ::ufv::gui_pos $pos
+            ufv_focus $pos
+        }
+    }
+
+    # ---- function context ---
     label $f.func -textvariable ::ufv::a_function -anchor w -justify left -wraplength 380 -fg "#5b3a8e"
     pack $f.func -fill x
+
+    # ---- bottom buttons + status ---
     label .ufv.status -text "Ready." -anchor w -relief sunken -padx 6
     pack .ufv.status -fill x -side bottom
     frame $f.bot; pack $f.bot -fill x -pady 4
+    button $f.bot.align -text "Align mols" -command { ufv_align }
     button $f.bot.clear -text "Clear overlays" -command { ufv_clear }
+    button $f.bot.csv   -text "Export CSV" -command {
+        if {$::ufv::uid eq ""} { tk_messageBox -message "Fetch an accession first."; return }
+        set fn [tk_getSaveFile -defaultextension .csv \
+            -initialfile "${::ufv::uid}_residue_annotations.csv" \
+            -filetypes {{"CSV files" .csv} {"All files" *}}]
+        if {$fn ne ""} { ufv_csv $fn }
+    }
+    pack $f.bot.align -side left -padx 2
     pack $f.bot.clear -side left -padx 2
+    pack $f.bot.csv   -side left -padx 2
 }
 
 # Refresh the function-context label after a fetch.
@@ -524,5 +917,7 @@ if {![catch {package present vmd}]} {
 
 puts "\[UFV\] 3D Feature Viewer for UniProt (VMD) loaded - type 'ufv_gui' to open the panel."
 puts "      commands: ufv_load, ufv_fetch, ufv_map, ufv_chain, ufv_ptms, ufv_variants, ufv_sites,"
-puts "      ufv_mutagenesis, ufv_domains, ufv_topology, ufv_alphamissense, ufv_burden, ufv_plddt,"
-puts "      ufv_bfactor, ufv_residue <pos>, ufv_load_structure <key>, ufv_clear, ufv_gui"
+puts "      ufv_mutagenesis, ufv_ligands, ufv_ligands_hide, ufv_domains, ufv_topology,"
+puts "      ufv_alphamissense, ufv_burden, ufv_plddt, ufv_bfactor, ufv_hotspots, ufv_contacthubs,"
+puts "      ufv_pockets, ufv_focus <pos>, ufv_resetview, ufv_align, ufv_show_pocket <positions>,"
+puts "      ufv_residue <pos>, ufv_csv [outfile], ufv_load_structure <key>, ufv_clear, ufv_gui"

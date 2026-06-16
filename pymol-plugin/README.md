@@ -117,13 +117,26 @@ representations; fetching/prediction delegated to `ufv_pymol.py`):
 
 1. Enter an accession → **Fetch** — pulls annotations *and* the structure list (AlphaFold,
    experimental PDB chains, computed models, isoforms) and shows the protein name / function.
-2. Pick a structure → **Load selected** (numbering set automatically: identity / SIFTS), or
-   **Quick AlphaFold** to grab the canonical model.
-3. **Layers (markers):** PTMs · Disease variants · Functional sites · **Mutagenesis** (Cα VDW).
-4. **Cartoon colouring:** Domains · Topology · AlphaMissense · **Burden** · **pLDDT** · **B-factor**.
-5. **Residue report:** type a UniProt position → **Show** — fetches that residue's variants
-   (with disease + gnomAD AF) and **ProtVar predictors** (conservation / EVE / ESM1b / FoldX / M3D /
-   binding pocket) and prints them in the panel while highlighting the residue in 3D.
+   **Open UniProt ↗** opens the UniProt entry page.
+2. Pick a structure → **Load selected** / **Load all** (numbering set automatically: identity /
+   SIFTS), or **Quick AlphaFold** to grab the canonical model. **Align mols** superimposes all
+   loaded structures onto the current molecule (RMSD fit when chains match, centroid fallback).
+3. **Layers (markers):** PTMs · Disease variants · Functional sites · Mutagenesis · **Ligands**
+   (non-protein, non-water atoms as Licorice). Variant filter checkboxes (Pathogenic / Deleterious /
+   Benign / Uncertain) control both the marker layer and the Annotations list.
+4. **Cartoon colouring:** Domains · Topology · AlphaMissense · Burden · pLDDT · B-factor ·
+   **Hotspots** (variant-density clusters, red→orange→yellow tiers) · **Contact hubs**
+   (betweenness-centrality hubs, dark-blue tiers) · **Constraint pocket** (AM-constrained
+   druggable pockets, dark-green tiers). The three geometry analyses run in one Python call and
+   are cached per (accession, molid), so switching between them is instant after the first use.
+5. **Residue report:** type a UniProt position → **Show** — fetches variants + ProtVar predictors
+   (conservation / EVE / ESM1b / FoldX / M3D / binding pocket) and prints them in the panel.
+   **Focus 3D** centres the VMD view on that residue + 5 Å neighbourhood (Licorice overlay).
+   **Reset view** removes the focus overlay and re-centres on the full protein.
+6. **Annotations list** — browse all PTMs / Variants (consequence-filtered) / Sites with
+   descriptions; type in the Filter box to narrow; click any row to jump the 3D view there.
+7. **Export CSV** — saves the per-residue one-hot annotation matrix (same format as the browser
+   extension) via a file-save dialog.
 
 ```
 ufv_load P35498                  ;# download AlphaFold model + annotate
@@ -136,8 +149,14 @@ ufv_map identity                 ;# resid == UniProt position
 ufv_map sifts 7dtd               ;# map via PDBe/SIFTS for PDB 7DTD
 ufv_chain A 200 5 480            ;# chain A resid 5 == UniProt 200, valid 5..480
 ufv_ptms ; ufv_variants ; ufv_variants pathogenic ; ufv_sites ; ufv_mutagenesis
+ufv_ligands                      ;# show ligands as licorice  (ufv_ligands_hide to remove)
 ufv_domains ; ufv_topology ; ufv_alphamissense ; ufv_burden ; ufv_plddt ; ufv_bfactor
+ufv_hotspots ; ufv_contacthubs ; ufv_pockets  ;# geometry analyses (computed once, cached)
+ufv_focus 1378                   ;# zoom to residue + 5Å neighbourhood
+ufv_resetview                    ;# zoom back to full protein
+ufv_align                        ;# superimpose all loaded mols onto current mol
 ufv_residue 959                  ;# per-residue report (variants + ProtVar) in the panel
+ufv_csv annotations.csv          ;# export per-residue annotation matrix to CSV
 ufv_clear
 ```
 

@@ -518,12 +518,13 @@ const UFVApi = (() => {
      * effect). /prediction/foldx gives per-substitution FoldX ΔΔG WITH wt/mut labels. Cached.
      */
     async function fetchProtVar(acc, pos) {
-        const key = `${acc}:${pos}`;
+        const canonAcc = acc.replace(/-\d+$/, '');
+        const key = `${canonAcc}:${pos}`;
         if (_protVarCache.has(key)) return _protVarCache.get(key);
         const [scoreArr, foldxArr, pocketArr] = await Promise.all([
-            fetchOptionalJson(PROTVAR_SCORE(acc, pos)),
-            fetchOptionalJson(PROTVAR_FOLDX(acc, pos)),
-            fetchOptionalJson(PROTVAR_POCKET(acc, pos)),
+            fetchOptionalJson(PROTVAR_SCORE(canonAcc, pos)),
+            fetchOptionalJson(PROTVAR_FOLDX(canonAcc, pos)),
+            fetchOptionalJson(PROTVAR_POCKET(canonAcc, pos)),
         ]);
         let conservation = null, m3d = null; const eveRaw = [], esmRaw = [], eveClsRaw = [];
         for (const o of (scoreArr || [])) {
@@ -562,6 +563,7 @@ const UFVApi = (() => {
      * large proteins (no bulk endpoint exists), so it's opt-in. onProgress(done, total) for status.
      */
     async function fetchProtVarAll(acc, length, onProgress) {
+        const canonAcc = acc.replace(/-\d+$/, '');
         const out = new Map();
         const CONC = 8;
         let idx = 0, done = 0;
@@ -570,7 +572,7 @@ const UFVApi = (() => {
             while (idx < length) {
                 const p = (idx++) + 1;
                 try {
-                    const arr = await fetchOptionalJson(PROTVAR_SCORE(acc, p));
+                    const arr = await fetchOptionalJson(PROTVAR_SCORE(canonAcc, p));
                     if (Array.isArray(arr) && arr.length) {
                         let conservation = null, m3dDamaging = '';
                         const eve = [], esm = [];

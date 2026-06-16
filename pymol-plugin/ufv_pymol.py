@@ -4133,11 +4133,15 @@ def _emit_tcl_annotations(uid):
     out = ["set ::ufv::a_seqlen %d" % len(ann["sequence"])]
 
     ptm_items = []
+    ptm_rich = []
     for p in ann["ptms"]:
         ptm_items.append("{%d %s}" % (p["position"], p["color"]))
         if p["endPosition"] != p["position"]:
             ptm_items.append("{%d %s}" % (p["endPosition"], p["color"]))
+        desc = p.get("description") or p.get("category") or ""
+        ptm_rich.append("{%d %s %s}" % (p["position"], p["color"], _tcl_braced(desc)))
     out.append("set ::ufv::a_ptms { %s }" % " ".join(ptm_items))
+    out.append("set ::ufv::a_ptms_rich { %s }" % " ".join(ptm_rich))
 
     def _cons_token(c):
         c = c.lower()
@@ -4151,13 +4155,29 @@ def _emit_tcl_annotations(uid):
     var_items = ["{%d %s %s}" % (v["position"], v["consequenceColor"], _cons_token(v["consequence"]))
                  for v in ann["variants"]]
     out.append("set ::ufv::a_variants { %s }" % " ".join(var_items))
+    var_rich = []
+    for v in ann["variants"]:
+        wt = v.get("wildType") or "?"
+        mut = v.get("mutant") or "?"
+        tok = _cons_token(v["consequence"])
+        dis = "; ".join(v.get("diseases") or [])
+        label = "%s%d%s  %s%s" % (wt, v["position"], mut, v["consequence"],
+                                  (" — " + dis) if dis else "")
+        var_rich.append("{%d %s %s %s %s}" % (
+            v["position"], v["consequenceColor"], tok,
+            _tcl_braced("%s%s" % (wt, mut)), _tcl_braced(label)))
+    out.append("set ::ufv::a_variants_rich { %s }" % " ".join(var_rich))
 
     site_items = []
+    site_rich = []
     for s in ann["sites"]:
         site_items.append("{%d %s}" % (s["position"], s["color"]))
         if s["endPosition"] != s["position"]:
             site_items.append("{%d %s}" % (s["endPosition"], s["color"]))
+        desc = s.get("description") or "Site"
+        site_rich.append("{%d %s %s}" % (s["position"], s["color"], _tcl_braced(desc)))
     out.append("set ::ufv::a_sites { %s }" % " ".join(site_items))
+    out.append("set ::ufv::a_sites_rich { %s }" % " ".join(site_rich))
 
     dom_items = ["{%d %d %s %d}" % (d["position"], d["endPosition"], d["color"], 1 if d["isRange"] else 0)
                  for d in ann["domains"]]
@@ -4291,6 +4311,52 @@ def _emit_tcl_sifts(pdb_id, uid):
     sys.stdout.write("\n".join(out) + "\n")
 
 
+def _emit_tcl_tiers(uid, coords_file):
+    """Compute hotspot / betweenness-hub / constraint-pocket tiers from exported Cα coordinates
+    (written as JSON by the VMD plugin) and emit the results as Tcl variable assignments so the
+    VMD plugin can colour the cartoon without PyMOL.  The three analyses run together in one call
+    so the expensive coordinate scan only happens once per fetch."""
+    import json
+    ann = _quiet(fetch_annotations, uid)
+    with open(coords_file) as fh:
+        geom = json.load(fh)
+    # hotspots — need variants
+    try:
+        hot = _per_chain_merge(geom, lambda gs: _compute_hotspots(gs, ann["variants"]))
+    except Exception:
+        hot = {}
+    # betweenness contact hubs
+    try:
+        hub = _per_chain_merge(geom, _betweenness_hubs)
+    except Exception:
+        hub = {}
+    # constraint pockets (AlphaMissense required)
+    pocket = {}
+    if ann.get("amMean"):
+        try:
+            pocket = _compute_pockets(geom, ann["amMean"])
+        except Exception:
+            pass
+
+    def _emit(var, d):
+        items = ["{%s %s}" % (pos, tier) for pos, tier in d.items()]
+        sys.stdout.write("set ::ufv::%s { %s }\n" % (var, " ".join(items)))
+
+    _emit("a_hotspots", hot)
+    _emit("a_hubs", hub)
+    _emit("a_pockets", pocket)
+
+
+def _emit_csv_file(uid, outfile):
+    """Write the annotation CSV (without structure tiers) to outfile and emit the path as a Tcl
+    variable so the VMD plugin can open a save-file dialog or display a status message."""
+    ann = _quiet(fetch_annotations, uid)
+    text = _residue_csv(ann, None, None)
+    with open(outfile, "w") as fh:
+        fh.write(text)
+    sys.stdout.write("set ::ufv::a_csv_path %s\n" % _tcl_braced(outfile))
+
+
 def _download_model(uid):
     url = _quiet(_alphafold_url, uid)
     if not url:
@@ -4318,14 +4384,20 @@ if __name__ == "__main__":
         _download_url(_args[1], _args[2] if len(_args) > 2 else "pdb")
     elif len(_args) >= 3 and _args[0] == "--residue":
         _emit_tcl_residue(_args[1], _args[2])
+    elif len(_args) >= 3 and _args[0] == "--compute-tiers":
+        _emit_tcl_tiers(_args[1], _args[2])
+    elif len(_args) >= 3 and _args[0] == "--csv":
+        _emit_csv_file(_args[1], _args[2])
     else:
         sys.stderr.write(
             "3D Feature Viewer for UniProt — backend for the VMD plugin\n"
             "usage:\n"
-            "  python ufv_pymol.py --emit-tcl    <uniprot_id>\n"
-            "  python ufv_pymol.py --emit-sifts  <pdb_id> <uniprot_id>\n"
-            "  python ufv_pymol.py --structures  <uniprot_id>\n"
-            "  python ufv_pymol.py --download     <uniprot_id>\n"
-            "  python ufv_pymol.py --get         <url> <fmt>\n"
-            "  python ufv_pymol.py --residue     <uniprot_id> <pos>\n")
+            "  python ufv_pymol.py --emit-tcl       <uniprot_id>\n"
+            "  python ufv_pymol.py --emit-sifts     <pdb_id> <uniprot_id>\n"
+            "  python ufv_pymol.py --structures     <uniprot_id>\n"
+            "  python ufv_pymol.py --download        <uniprot_id>\n"
+            "  python ufv_pymol.py --get            <url> <fmt>\n"
+            "  python ufv_pymol.py --residue        <uniprot_id> <pos>\n"
+            "  python ufv_pymol.py --compute-tiers  <uniprot_id> <coords.json>\n"
+            "  python ufv_pymol.py --csv            <uniprot_id> <outfile.csv>\n")
         sys.exit(2)
