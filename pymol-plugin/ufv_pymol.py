@@ -1919,10 +1919,25 @@ def _summ(vals):
     return {"min": min(vals), "max": max(vals), "mean": sum(vals) / len(vals), "n": len(vals)}
 
 
+AA_ALPHA = "ACDEFGHIKLMNPQRSTVWY"   # order ProtVar's per-substitution arrays follow (verified vs AM CSV)
+
+
+def _protvar_by_mut(raw, wt):
+    """ProtVar /score's EVE/ESM/AM arrays are the 19 non-wild-type substitutions in alphabetical
+    order (verified against the labelled AlphaMissense CSV). Zip a raw array back to {mutantAA: value};
+    bail (empty) on any length mismatch so we never mislabel."""
+    if not raw or not wt:
+        return {}
+    muts = [a for a in AA_ALPHA if a != wt]
+    if len(raw) != len(muts):
+        return {}
+    return dict(zip(muts, raw))
+
+
 def _parse_protvar_score(arr):
-    """ProtVar /score returns a flat array of typed objects: one CONSERV (per-position), ~19 EVE and
-    ~19 ESM (per-substitution, but with no amino-acid label so we summarise across substitutions),
-    ~19 AM (we already have AlphaMissense), and M3D structural effect."""
+    """ProtVar /score returns a flat array of typed objects: one CONSERV (per-position), 19 EVE and
+    19 ESM and 19 AM (per-substitution, alphabetical mutant order — see _protvar_by_mut), and one M3D
+    structural effect. Keep the raw per-substitution arrays so callers can label them, plus summaries."""
     conserv, eve, esm, eve_cls, m3d = None, [], [], [], None
     for o in arr or []:
         t = o.get("type")
@@ -1930,14 +1945,16 @@ def _parse_protvar_score(arr):
             conserv = o.get("score")
         elif t == "EVE":
             eve.append(o.get("score"))
-            if o.get("eveClass"):
-                eve_cls.append(o["eveClass"])
+            eve_cls.append(o.get("eveClass"))
         elif t == "ESM":
             esm.append(o.get("score"))
         elif t == "M3D" and m3d is None:
             m3d = {"prediction": o.get("prediction"), "feature": o.get("damagingFeature")}
-    return {"conservation": conserv, "eve": _summ(eve), "esm": _summ(esm), "m3d": m3d,
-            "evePath": sum(1 for c in eve_cls if str(c).upper() == "PATHOGENIC"), "eveN": len(eve_cls)}
+    return {"conservation": conserv, "m3d": m3d,
+            "eveRaw": eve, "eveClsRaw": eve_cls, "esmRaw": esm,
+            "eve": _summ(eve), "esm": _summ(esm),
+            "evePath": sum(1 for c in eve_cls if str(c).upper() == "PATHOGENIC"),
+            "eveN": sum(1 for c in eve_cls if c)}
 
 
 def _parse_protvar_foldx(arr):
@@ -2137,41 +2154,58 @@ def format_report_html(rep, expanded=False, protvar="off"):
             T.append("".join(cells))
 
     if protvar != "off":
-        hdr("ProtVar predictors", "#00695c")
+        # Compact labels (full wording lives in tooltips). Per-substitution EVE/ESM/FoldX are tied to
+        # the residue's actual variants; conservation + M3D are per-position.
+        hdr('<span title="EMBL-EBI ProtVar per-residue predictors">ProtVar predictors</span>', "#00695c")
         if protvar == "loading":
             row("Loading", "fetching EVE / ESM1b / conservation / FoldX …")
         elif protvar:
             sc = protvar.get("score") or {}
             fx = protvar.get("foldx") or {}
+            wt = rep["aa"]
             if sc.get("conservation") is not None:
-                row("Conservation", "%.2f <span style='color:#888;'>(0 variable – 1 conserved)</span>" % sc["conservation"])
-            if sc.get("eve"):
-                e = sc["eve"]
-                cls = (" · <span style='color:#d32f2f;'>%d/%d pathogenic</span>" % (sc["evePath"], sc["eveN"])) if sc.get("eveN") else ""
-                row("EVE", "mean %.3f <span style='color:#888;'>(%.2f–%.2f)</span>%s" % (e["mean"], e["min"], e["max"], cls))
-            if sc.get("esm"):
-                e = sc["esm"]
-                row("ESM1b", "mean %.1f <span style='color:#888;'>(min %.1f · lower = more deleterious)</span>" % (e["mean"], e["min"]))
+                row('<span title="Evolutionary conservation across homologues (0 = variable, 1 = invariant)">Conservation</span>',
+                    "%.2f" % sc["conservation"])
             if sc.get("m3d"):
                 md = sc["m3d"]
                 feat = (" — %s" % esc(md["feature"])) if md.get("feature") else ""
                 col = "#d32f2f" if str(md.get("prediction", "")).lower().startswith("damag") else "#388e3c"
-                row("M3D structural", "<span style='color:%s;'>%s</span>%s" % (col, esc(md.get("prediction", "?")), feat))
-            # FoldX ΔΔG: tie to the residue's actual variants when possible, else the per-position range.
-            by_mut = fx.get("byMut") or {}
-            shown_fx = False
+                row('<span title="Missense3D: predicted structural consequence of the substitution">M3D</span>',
+                    "<span style='color:%s;'>%s</span>%s" % (col, esc(md.get("prediction", "?")), feat))
+            eve = _protvar_by_mut(sc.get("eveRaw"), wt)
+            evc = _protvar_by_mut(sc.get("eveClsRaw"), wt)
+            esm = _protvar_by_mut(sc.get("esmRaw"), wt)
+            ddg = fx.get("byMut") or {}
+            shown = False
             for v in rep.get("variants", []):
-                mt = v.get("mutant")
-                if mt and mt in by_mut:
-                    d = by_mut[mt]
-                    col = "#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c"
-                    note = "destabilising" if d >= 2 else "mild" if d >= 1 else "tolerated"
-                    row("FoldX ΔΔG (%s%d%s)" % (esc(v.get("wildType", "")), rep["pos"], esc(mt)),
-                        "<span style='color:%s;'>%+.1f kcal/mol</span> <span style='color:#888;'>(%s)</span>" % (col, d, note))
-                    shown_fx = True
-            if not shown_fx and fx.get("summary"):
-                s = fx["summary"]
-                row("FoldX ΔΔG", "%+.1f to %+.1f kcal/mol <span style='color:#888;'>(across substitutions; >2 destabilising)</span>" % (s["min"], s["max"]))
+                m = v.get("mutant")
+                if not m:
+                    continue
+                parts = []
+                if m in eve and eve[m] is not None:
+                    ec = "#d32f2f" if str(evc.get(m, "")).upper() == "PATHOGENIC" else "#666"
+                    parts.append('<span title="EVE evolutionary variant-effect model (0–1 pathogenicity)">EVE</span> <span style="color:%s;">%.2f</span>' % (ec, eve[m]))
+                if m in esm and esm[m] is not None:
+                    parts.append('<span title="ESM1b protein language-model score; lower = more deleterious">ESM1b</span> %.1f' % esm[m])
+                if m in ddg:
+                    d = ddg[m]
+                    dc = "#d32f2f" if d >= 2 else "#f5a623" if d >= 1 else "#388e3c"
+                    parts.append('<span title="FoldX ΔΔG folding-stability change (kcal/mol); &gt;2 destabilising">FoldX</span> <span style="color:%s;">%+.1f</span>' % (dc, d))
+                if parts:
+                    link = "https://www.ebi.ac.uk/ProtVar/query?search=%s+%s%d%s" % (rep["uid"], wt, rep["pos"], m)
+                    lbl = '<a href="%s" title="Open %s%d%s in ProtVar" style="color:#00695c; text-decoration:none;">%s%d%s ↗</a>' % (
+                        link, wt, rep["pos"], esc(m), esc(wt), rep["pos"], esc(m))
+                    row(lbl, " · ".join(parts))
+                    shown = True
+            if not shown:  # no variants at this position — fall back to the per-position summary
+                if sc.get("eve"):
+                    row('<span title="EVE across the 19 substitutions">EVE</span>',
+                        "mean %.2f%s" % (sc["eve"]["mean"], (" · %d/%d pathogenic" % (sc["evePath"], sc["eveN"])) if sc.get("eveN") else ""))
+                if sc.get("esm"):
+                    row('<span title="ESM1b across substitutions; lower = more deleterious">ESM1b</span>', "mean %.1f" % sc["esm"]["mean"])
+                if fx.get("summary"):
+                    row('<span title="FoldX ΔΔG across substitutions; &gt;2 destabilising">FoldX ΔΔG</span>',
+                        "%+.1f to %+.1f kcal/mol" % (fx["summary"]["min"], fx["summary"]["max"]))
         else:
             row("ProtVar", "<span style='color:#888;'>no predictor data for this position.</span>")
 

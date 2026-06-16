@@ -523,11 +523,11 @@ const UFVApi = (() => {
             fetchOptionalJson(PROTVAR_SCORE(acc, pos)),
             fetchOptionalJson(PROTVAR_FOLDX(acc, pos)),
         ]);
-        let conservation = null, m3d = null; const eve = [], esm = [], eveCls = [];
+        let conservation = null, m3d = null; const eveRaw = [], esmRaw = [], eveClsRaw = [];
         for (const o of (scoreArr || [])) {
             if (o.type === 'CONSERV') conservation = o.score;
-            else if (o.type === 'EVE') { eve.push(o.score); if (o.eveClass) eveCls.push(o.eveClass); }
-            else if (o.type === 'ESM') esm.push(o.score);
+            else if (o.type === 'EVE') { eveRaw.push(o.score); eveClsRaw.push(o.eveClass || null); }
+            else if (o.type === 'ESM') esmRaw.push(o.score);
             else if (o.type === 'M3D' && !m3d) m3d = { prediction: o.prediction, feature: o.damagingFeature };
         }
         const byMut = {}; const ddg = [];
@@ -536,8 +536,9 @@ const UFVApi = (() => {
         }
         const result = {
             score: {
-                conservation, m3d, eve: _summ(eve), esm: _summ(esm),
-                evePath: eveCls.filter(c => String(c).toUpperCase() === 'PATHOGENIC').length, eveN: eveCls.length,
+                conservation, m3d, eveRaw, eveClsRaw, esmRaw, eve: _summ(eveRaw), esm: _summ(esmRaw),
+                evePath: eveClsRaw.filter(c => String(c).toUpperCase() === 'PATHOGENIC').length,
+                eveN: eveClsRaw.filter(Boolean).length,
             },
             foldx: { byMut, summary: _summ(ddg) },
         };

@@ -67,7 +67,6 @@ const UFVModal = (() => {
                     <button class="ufv-icon-btn" id="ufv-btn-theme" title="Toggle theme">${ICON_THEME}</button>
                     <button class="ufv-icon-btn" id="ufv-btn-reset" title="Reset view">${ICON_RESET}</button>
                     <button class="ufv-icon-btn" id="ufv-btn-protnlm" title="Toggle ProtNLM AI-predicted protein name" style="font-size:11px;font-weight:700;">AI</button>
-                    <button class="ufv-icon-btn" id="ufv-btn-uniprot" title="Open this entry on UniProt" style="font-size:11px;font-weight:700;">UP</button>
                     <div class="ufv-dl-wrap" id="ufv-dl-wrap">
                         <button class="ufv-icon-btn" id="ufv-btn-export-pdb" title="Download">${ICON_DOWNLOAD}</button>
                         <div class="ufv-dl-menu" id="ufv-dl-menu">
@@ -223,10 +222,6 @@ const UFVModal = (() => {
                 applyMode();
                 renderSequence();
             });
-        });
-        byId('ufv-btn-uniprot').addEventListener('click', () => {
-            const id = UFVState.state.uniprotId;
-            if (id) window.open(`https://www.uniprot.org/uniprotkb/${id}/entry`, '_blank', 'noopener');
         });
         byId('ufv-btn-protnlm').addEventListener('click', () => {
             const banner = byId('ufv-protnlm-banner');
@@ -1907,7 +1902,7 @@ const UFVModal = (() => {
                 try { pv = await UFVApi.fetchProtVar(acc, p); } catch (_e) { pv = null; }
                 if (s.selectedResidue !== p) return; // user moved on while it loaded
                 pvBody.textContent = '';
-                renderProtVarInto(pvBody, pv, variants, p, wt);
+                renderProtVarInto(pvBody, pv, variants, p, wt, acc);
             });
             pvSection.append(pvToggle, pvBody);
             body.appendChild(pvSection);
@@ -1918,37 +1913,58 @@ const UFVModal = (() => {
         renderSequence();
     }
 
-    function renderProtVarInto(container, pv, variants, pos, wt) {
+    // ProtVar's per-substitution EVE/ESM/AM arrays are the 19 non-wild-type AAs in alphabetical order
+    // (verified vs the AlphaMissense CSV). Zip back to {mut: value}; bail on length mismatch.
+    const PV_AA = 'ACDEFGHIKLMNPQRSTVWY';
+    function pvByMut(raw, wt) {
+        if (!Array.isArray(raw) || !wt) return {};
+        const muts = [...PV_AA].filter(a => a !== wt);
+        if (raw.length !== muts.length) return {};
+        const out = {}; muts.forEach((m, i) => { out[m] = raw[i]; });
+        return out;
+    }
+
+    function renderProtVarInto(container, pv, variants, pos, wt, acc) {
         const sgn = (x) => (x >= 0 ? '+' : '') + x.toFixed(1);
         if (!pv || (!pv.score && !pv.foldx)) {
             container.appendChild(row('ProtVar', 'no predictor data for this position.'));
             return;
         }
         const sc = pv.score || {}, fx = pv.foldx || {};
-        if (sc.conservation != null) container.appendChild(row('Conservation', `${sc.conservation.toFixed(2)} (0 variable – 1 conserved)`));
-        if (sc.eve) {
-            const cls = sc.eveN ? ` · ${sc.evePath}/${sc.eveN} pathogenic` : '';
-            container.appendChild(row('EVE', `mean ${sc.eve.mean.toFixed(3)} (${sc.eve.min.toFixed(2)}–${sc.eve.max.toFixed(2)})${cls}`, '#7c4dff'));
+        // Per-position: concise label, full wording in the title tooltip.
+        if (sc.conservation != null) {
+            const r = row('Conservation', sc.conservation.toFixed(2));
+            r.title = 'Evolutionary conservation across homologues (0 = variable, 1 = invariant)';
+            container.appendChild(r);
         }
-        if (sc.esm) container.appendChild(row('ESM1b', `mean ${sc.esm.mean.toFixed(1)} (min ${sc.esm.min.toFixed(1)} · lower = more deleterious)`));
         if (sc.m3d) {
             const dmg = String(sc.m3d.prediction || '').toLowerCase().startsWith('damag');
-            container.appendChild(row('M3D structural', `${sc.m3d.prediction || '?'}${sc.m3d.feature ? ' — ' + sc.m3d.feature : ''}`, dmg ? '#ef5350' : '#66bb6a'));
+            const r = row('M3D', `${sc.m3d.prediction || '?'}${sc.m3d.feature ? ' — ' + sc.m3d.feature : ''}`, dmg ? '#ef5350' : '#66bb6a');
+            r.title = 'Missense3D: predicted structural consequence of the substitution';
+            container.appendChild(r);
         }
-        // FoldX ΔΔG: tie to the residue's actual variants when possible, else the per-position range.
-        const byMut = fx.byMut || {};
-        let shownFx = false;
+        // Per-substitution EVE / ESM1b / FoldX, tied to the residue's actual variants, with a ProtVar link.
+        const eve = pvByMut(sc.eveRaw, wt), evc = pvByMut(sc.eveClsRaw, wt), esm = pvByMut(sc.esmRaw, wt), ddg = fx.byMut || {};
+        let shown = false;
         (variants || []).forEach(v => {
-            if (v.mutant && byMut[v.mutant] != null) {
-                const d = byMut[v.mutant];
-                const col = d >= 2 ? '#ef5350' : d >= 1 ? '#ffa726' : '#66bb6a';
-                const note = d >= 2 ? 'destabilising' : d >= 1 ? 'mild' : 'tolerated';
-                container.appendChild(row(`FoldX ΔΔG (${v.wildType}${pos}${v.mutant})`, `${sgn(d)} kcal/mol (${note})`, col));
-                shownFx = true;
-            }
+            const m = v.mutant; if (!m) return;
+            const bits = [];
+            if (eve[m] != null) bits.push(`EVE ${eve[m].toFixed(2)}`);
+            if (esm[m] != null) bits.push(`ESM1b ${esm[m].toFixed(1)}`);
+            if (ddg[m] != null) bits.push(`FoldX ${sgn(ddg[m])}`);
+            if (!bits.length) return;
+            const r = row(`${wt}${pos}${m}`, bits.join(' · '));
+            if (String(evc[m] || '').toUpperCase() === 'PATHOGENIC') r.querySelector('.ufv-detail-val').style.color = '#e53935';
+            r.title = 'EVE (evolutionary), ESM1b (protein language model; lower = worse), FoldX ΔΔG (stability, >2 destabilising)';
+            const lbl = r.querySelector('.ufv-detail-lbl');
+            if (acc) { const a = document.createElement('a'); a.href = `https://www.ebi.ac.uk/ProtVar/query?search=${acc}+${wt}${pos}${m}`; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${wt}${pos}${m} ↗`; a.style.color = '#00897b'; a.style.textDecoration = 'none'; lbl.textContent = ''; lbl.appendChild(a); }
+            container.appendChild(r);
+            shown = true;
         });
-        if (!shownFx && fx.summary) {
-            container.appendChild(row('FoldX ΔΔG', `${sgn(fx.summary.min)} to ${sgn(fx.summary.max)} kcal/mol (across substitutions; >2 destabilising)`));
+        if (!shown) {  // no variants at this position — per-position summary
+            if (sc.eve) container.appendChild(row('EVE', `mean ${sc.eve.mean.toFixed(2)}${sc.eveN ? ` · ${sc.evePath}/${sc.eveN} pathogenic` : ''}`, '#7c4dff'));
+            if (sc.esm) container.appendChild(row('ESM1b', `mean ${sc.esm.mean.toFixed(1)} (lower = more deleterious)`));
+            if (fx.summary) container.appendChild(row('FoldX ΔΔG', `${sgn(fx.summary.min)} to ${sgn(fx.summary.max)} kcal/mol`));
         }
     }
 
