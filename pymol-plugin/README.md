@@ -99,7 +99,9 @@ fast, and the whole panel is scrollable so it never outgrows the screen. **Expor
 `ufv_csv`) writes the same per-residue one-hot annotation matrix the browser extension produces
 (position/aa, one-hot PTM-category & disease columns, site/mutagenesis flags, variant counts,
 gnomAD AF, AlphaMissense summary, burden, and hotspot/contact-hub/constraint-pocket tiers for the
-loaded structure).
+loaded structure). **+ ProtVar** (or `ufv_csv …, protvar=1`) additionally fetches ProtVar
+conservation / EVE / ESM1b / M3D for every residue — one request per residue, so it's slow
+(progress is shown in the status line).
 
 For a structure/trajectory you loaded yourself, expand **Advanced numbering** to set identity /
 SIFTS / manual-per-chain (also `ufv_map` / `ufv_chain` on the command line).

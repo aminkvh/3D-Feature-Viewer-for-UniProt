@@ -2097,6 +2097,54 @@ def fetch_protvar(uid, pos):
     return out
 
 
+def _protvar_csv_summary(arr):
+    """Per-position ProtVar /score summary for the CSV: conservation, mean EVE, most-deleterious
+    ESM1b, and an M3D-damaging flag. None if the position has no scores."""
+    if not arr:
+        return None
+    conserv, eve, esm, m3d = None, [], [], ""
+    for o in arr:
+        t = o.get("type")
+        if t == "CONSERV":
+            conserv = o.get("score")
+        elif t == "EVE":
+            eve.append(o.get("score"))
+        elif t == "ESM":
+            esm.append(o.get("score"))
+        elif t == "M3D" and m3d == "":
+            m3d = 1 if str(o.get("prediction", "")).lower().startswith("damag") else 0
+    eve = [x for x in eve if isinstance(x, (int, float))]
+    esm = [x for x in esm if isinstance(x, (int, float))]
+    if conserv is None and not eve and not esm and m3d == "":
+        return None
+    return {"conservation": conserv,
+            "eve_mean": sum(eve) / len(eve) if eve else None,
+            "esm_min": min(esm) if esm else None,
+            "m3d": m3d}
+
+
+def _fetch_protvar_all(uid, length, progress=None):
+    """Bulk ProtVar /score for every residue 1..length (one request per position, bounded
+    concurrency) -> {pos: summary}. Slow — no bulk endpoint exists — so it's opt-in. `progress`
+    (done, total) for status updates."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(pos):
+        try:
+            return pos, _protvar_csv_summary(_get_json(PROTVAR_SCORE.format(uid, pos)))
+        except Exception:
+            return pos, None
+    out, done = {}, 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for pos, summ in ex.map(one, range(1, length + 1)):
+            if summ:
+                out[pos] = summ
+            done += 1
+            if progress and (done % 25 == 0 or done == length):
+                progress(done, length)
+    return out
+
+
 def _site_cat(desc):
     d = (desc or "").lower()
     if "active" in d:
@@ -2108,11 +2156,12 @@ def _site_cat(desc):
     return "other"
 
 
-def _residue_csv(ann, obj=None):
+def _residue_csv(ann, obj=None, protvar_by_pos=None):
     """One-hot residue annotation matrix (one row per residue), mirroring the extension's CSV:
     position/aa + one-hot PTM-category and disease columns, site flags, mutagenesis flag, variant
     counts, gnomAD AF, AlphaMissense summary, burden, and (if a structure is loaded) hotspot /
-    contact-hub / constraint-pocket tiers. Returns the CSV text."""
+    contact-hub / constraint-pocket tiers. With `protvar_by_pos` (from _fetch_protvar_all) it also
+    adds ProtVar conservation / EVE / ESM1b / M3D columns. Returns the CSV text."""
     seq = ann.get("sequence", "")
     if not seq:
         return ""
@@ -2161,11 +2210,24 @@ def _residue_csv(ann, obj=None):
                 pass
     hot_num, hub_num = {"strong": 3, "moderate": 2, "weak": 1}, {"strong": 2, "moderate": 1}
     safe = lambda x: re.sub(r"[^A-Za-z0-9_]", "_", x)
+    pv_headers = ["protvar_conservation", "protvar_eve_mean", "protvar_esm_min", "protvar_m3d_damaging"] if protvar_by_pos else []
+
+    def pv_cols(pos):
+        if not protvar_by_pos:
+            return []
+        d = protvar_by_pos.get(pos)
+        if not d:
+            return ["", "", "", ""]
+        return [("%.3f" % d["conservation"]) if d.get("conservation") is not None else "",
+                ("%.3f" % d["eve_mean"]) if d.get("eve_mean") is not None else "",
+                ("%.2f" % d["esm_min"]) if d.get("esm_min") is not None else "",
+                d["m3d"] if d.get("m3d") not in ("", None) else ""]
     headers = (["position", "aa", "pdb_residue"]
                + ["ptm_" + safe(c) for c in ptm_cats] + ["disease_" + safe(d) for d in diseases]
                + ["site", "site_active", "site_binding", "site_metal", "mutagenesis",
-                  "n_variants", "n_pathogenic", "gnomad_max_af",
-                  "am_avg_score", "am_max_score", "am_n_subs", "residue_burden",
+                  "n_variants", "n_pathogenic", "gnomad_max_af"]
+               + pv_headers
+               + ["am_avg_score", "am_max_score", "am_n_subs", "residue_burden",
                   "hotspot_tier", "contact_hub_tier", "constraint_pocket_class"])
     chains = _mapped_chains(obj) if obj else [""]
     rows = [",".join(headers)]
@@ -2186,8 +2248,9 @@ def _residue_csv(ann, obj=None):
                 + [1 if d in disease_by_pos.get(pos, ()) else 0 for d in diseases]
                 + [1 if sc else 0, 1 if sc and "active" in sc else 0, 1 if sc and "binding" in sc else 0,
                    1 if sc and "metal" in sc else 0, 1 if pos in mut_pos else 0,
-                   nvar.get(pos, 0), npath.get(pos, 0), ("%.3e" % af) if af is not None else "",
-                   ("%.4f" % (sum(scores) / len(scores))) if scores else "",
+                   nvar.get(pos, 0), npath.get(pos, 0), ("%.3e" % af) if af is not None else ""]
+                + pv_cols(pos)
+                + [("%.4f" % (sum(scores) / len(scores))) if scores else "",
                    ("%.4f" % max(scores)) if scores else "", len(scores) if scores else "",
                    1 if pos in burden else 0,
                    hot_num.get(hot.get(pos), 0), hub_num.get(hub.get(pos), 0), pocket.get(pos, "") or ""])
@@ -2195,13 +2258,19 @@ def _residue_csv(ann, obj=None):
     return "\n".join(rows)
 
 
-def ufv_csv(filename=None, obj=None, uid=None):
-    """ufv_csv [filename [, object [, uniprot_id]]] — write the per-residue annotation matrix CSV
-    (one-hot PTM/disease/site/mutagenesis + variant counts, gnomAD, AlphaMissense, burden, and
-    structure tiers for the loaded object)."""
+def ufv_csv(filename=None, obj=None, uid=None, protvar=0):
+    """ufv_csv [filename [, object [, uniprot_id [, protvar]]]] — write the per-residue annotation
+    matrix CSV (one-hot PTM/disease/site/mutagenesis + variant counts, gnomAD, AlphaMissense, burden,
+    and structure tiers). protvar=1 also adds ProtVar conservation/EVE/ESM1b/M3D (one request per
+    residue — slow)."""
     obj = _resolve_object(obj)
     ann = fetch_annotations(_resolve_uid(uid))
-    text = _residue_csv(ann, obj)
+    pv = None
+    if int(protvar):
+        print("[UFV] fetching ProtVar for %d residues ..." % len(ann.get("sequence", "")))
+        pv = _fetch_protvar_all(ann["uid"], len(ann["sequence"]),
+                                lambda d, t: print("[UFV] ProtVar %d/%d" % (d, t)) if d % 200 == 0 else None)
+    text = _residue_csv(ann, obj, pv)
     if not text:
         print("[UFV] no sequence to export.")
         return None
@@ -2986,6 +3055,24 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             except Exception as exc:
                 self.done.emit(exc)
 
+    class _CsvWorker(QtCore.QThread):
+        """Builds the residue CSV off the UI thread, optionally bulk-fetching ProtVar with progress."""
+        done = QtCore.Signal(object)
+        progress = QtCore.Signal(int, int)
+
+        def __init__(self, ann, obj, with_pv):
+            super(_CsvWorker, self).__init__()
+            self.ann, self.obj, self.with_pv = ann, obj, with_pv
+
+        def run(self):
+            try:
+                pv = None
+                if self.with_pv:
+                    pv = _fetch_protvar_all(self.ann["uid"], len(self.ann["sequence"]), self.progress.emit)
+                self.done.emit(_residue_csv(self.ann, self.obj, pv))
+            except Exception as exc:
+                self.done.emit(exc)
+
     class _UFVPanel(QtWidgets.QWidget):
         def __init__(self):
             super(_UFVPanel, self).__init__()
@@ -3149,7 +3236,11 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
             self.csv_btn = QtWidgets.QPushButton("Export CSV")
             self.csv_btn.setToolTip("Save the per-residue annotation matrix (one-hot PTM/disease/site, "
                                     "variant counts, gnomAD, AlphaMissense, burden, structure tiers)")
-            self.csv_btn.clicked.connect(self.on_export_csv); bot.addWidget(self.csv_btn)
+            self.csv_btn.clicked.connect(lambda: self.on_export_csv(False)); bot.addWidget(self.csv_btn)
+            self.csv_pv_btn = QtWidgets.QPushButton("+ ProtVar")
+            self.csv_pv_btn.setToolTip("CSV including ProtVar conservation/EVE/ESM1b/M3D — fetches one "
+                                       "request per residue, so it is slow")
+            self.csv_pv_btn.clicked.connect(lambda: self.on_export_csv(True)); bot.addWidget(self.csv_pv_btn)
             self.clear_btn = QtWidgets.QPushButton("Clear all overlays"); bot.addWidget(self.clear_btn, 1)
             self.clear_btn.clicked.connect(self.on_clear)
 
@@ -3863,17 +3954,26 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                 c.setChecked(False)
             self.cart.setCurrentIndex(0); self.detail.setHtml("")
 
-        def on_export_csv(self):
+        def on_export_csv(self, with_protvar=False):
             uid = self.cur_uid()
             if not uid or uid not in _CACHE:
                 self.status.setText("Fetch an accession first."); return
+            suffix = "_protvar" if with_protvar else ""
             path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self, "Export residue annotation CSV", "%s_residue_annotations.csv" % uid, "CSV (*.csv)")
+                self, "Export residue annotation CSV", "%s_residue_annotations%s.csv" % (uid, suffix), "CSV (*.csv)")
             if not path:
                 return
-            obj = self.obj()
-            self._async(lambda: _residue_csv(_CACHE[uid], obj), lambda text: self._write_csv(path, text),
-                        "Building CSV …")
+            self.setEnabled(False)
+            self.status.setText("Building CSV …" + (" (fetching ProtVar — this is slow)" if with_protvar else ""))
+            wk = _CsvWorker(_CACHE[uid], self.obj(), with_protvar)
+
+            def on_done(res):
+                self.setEnabled(True); self._workers.discard(wk)
+                if isinstance(res, Exception):
+                    self.status.setText("CSV error: %s" % res); return
+                self._write_csv(path, res)
+            wk.progress.connect(lambda d, t: self.status.setText("ProtVar: %d / %d residues …" % (d, t)))
+            wk.done.connect(on_done); self._workers.add(wk); wk.start()
 
         def _write_csv(self, path, text):
             try:
