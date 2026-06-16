@@ -405,6 +405,8 @@ const DataProcessor = {
                 clinVarReviewStatus: impact.clinVarReviewStatus,
                 rsIds:            impact.rsIds,
                 alphaMissenseScore: impact.alphaMissenseScore,
+                gnomadAf:         impact.gnomadAf,
+                genomicLocation:  impact.genomicLocation,
                 xrefs:            f.xrefs || [],
             });
         });
@@ -546,11 +548,22 @@ const DataProcessor = {
             });
         }
 
+        // gnomAD allele frequency + genomic HGVS — already present in the EBI variation payload.
+        let gnomadAf = null;
+        (v.populationFrequencies || []).forEach(pf => {
+            if ((pf.source || '').toLowerCase().includes('gnomad') && Number.isFinite(pf.frequency)) {
+                gnomadAf = gnomadAf === null ? pf.frequency : Math.max(gnomadAf, pf.frequency);
+            }
+        });
+        const genomicLocation = Array.isArray(v.genomicLocation) ? (v.genomicLocation[0] || null) : (v.genomicLocation || null);
+
         return {
             clinVarSignificance: sigs.map(s => s.type).filter(Boolean).join(', '),
             clinVarReviewStatus: sigs.map(s => s.reviewStatus || s.review_status).filter(Boolean).join(', '),
             rsIds: Array.from(rsIds),
             alphaMissenseScore,
+            gnomadAf,
+            genomicLocation,
         };
     },
 

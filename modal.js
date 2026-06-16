@@ -1709,6 +1709,14 @@ const UFVModal = (() => {
                 vblock.appendChild(row('ClinVar', v.clinVarSignificance || v.consequence || '—'));
                 if (v.clinVarReviewStatus) vblock.appendChild(row('Review', v.clinVarReviewStatus));
                 if (v.rsIds?.length) vblock.appendChild(row('dbSNP', v.rsIds.join(', ')));
+                if (Number.isFinite(v.gnomadAf)) {
+                    const af = v.gnomadAf;
+                    const txt = af === 0 ? '0 (not observed)' : af >= 0.01 ? `${(af * 100).toFixed(2)}%`
+                        : af >= 1e-4 ? `${(af * 100).toFixed(4)}%` : af.toExponential(1);
+                    const rarity = af >= 0.01 ? 'common' : af > 0 ? 'rare' : 'not in gnomAD';
+                    vblock.appendChild(row('gnomAD AF', `${txt} (${rarity})`, af >= 0.01 ? '#43a047' : null));
+                }
+                if (v.genomicLocation) vblock.appendChild(row('Genomic', v.genomicLocation));
                 varBody.appendChild(vblock);
             });
             varToggle.addEventListener('click', () => {

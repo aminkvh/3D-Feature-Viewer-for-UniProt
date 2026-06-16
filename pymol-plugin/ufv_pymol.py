@@ -269,6 +269,25 @@ def _disease_labels(v):
     return sorted(labels)
 
 
+def _gnomad_af(f):
+    """Largest gnomAD allele frequency from a variation feature's populationFrequencies (the EBI
+    variation API already carries gnomAD v4 exome/genome AFs — we just surface them). None if absent."""
+    best = None
+    for pf in (f.get("populationFrequencies") or []):
+        if "gnomad" in (pf.get("source") or "").lower():
+            fr = pf.get("frequency")
+            if isinstance(fr, (int, float)):
+                best = fr if best is None else max(best, fr)
+    return best
+
+
+def _genomic_hgvs(f):
+    g = f.get("genomicLocation")
+    if isinstance(g, list):
+        return g[0] if g else None
+    return g or None
+
+
 def _extract_variants(variation, am_map):
     out = []
     for f in (variation or {}).get("features", []):
@@ -304,8 +323,23 @@ def _extract_variants(variation, am_map):
             "clinVarReview": ", ".join(filter(None, (s.get("reviewStatus") or s.get("review_status") or "" for s in sigs))),
             "rsIds": sorted(rs),
             "alphaMissense": am,
+            "gnomad": _gnomad_af(f),
+            "genomic": _genomic_hgvs(f),
         })
     return out
+
+
+def _fmt_af(af):
+    """Human-readable gnomAD allele frequency."""
+    if af is None:
+        return None
+    if af == 0:
+        return "0 (not observed)"
+    if af >= 0.01:
+        return "%.2f%%" % (af * 100)
+    if af >= 1e-4:
+        return "%.4f%%" % (af * 100)
+    return "%.1e" % af
 
 
 def _extract_sites(features):
@@ -2046,14 +2080,19 @@ def format_report_html(rep, expanded=False, protvar="off"):
 
     if rep["variants"]:
         hdr("Variants", "#c62828")
-        has_evidence = any(v.get("clinVar") or v.get("clinVarReview") or v.get("rsIds") or v.get("diseases")
-                           for v in rep["variants"])
+        has_evidence = any(v.get("clinVar") or v.get("clinVarReview") or v.get("rsIds")
+                           or v.get("genomic") or v.get("diseases") for v in rep["variants"])
         for v in rep["variants"]:
             mut = "%s%d%s" % (esc(v.get("wildType", "")), rep["pos"], esc(v.get("mutant", "")))
             c = v.get("consequenceColor", "#9e9e9e")
             row('<span style="color:%s;">%s</span>' % (c, mut), esc(v["consequence"]), c, bold=True)
             if v.get("alphaMissense") is not None:
                 row("AlphaMissense", "%.2f" % v["alphaMissense"], _am_color(v["alphaMissense"]))
+            if v.get("gnomad") is not None:
+                af = v["gnomad"]
+                rarity = "common" if af >= 0.01 else "rare" if af > 0 else "not in gnomAD"
+                row("gnomAD AF", "%s <span style='color:#888;'>(%s)</span>" % (_fmt_af(af), rarity),
+                    "#388e3c" if af >= 0.01 else "#777")
             if expanded:  # evidence rows, folded by default
                 if v.get("clinVar"):
                     row("ClinVar", esc(v["clinVar"]))
@@ -2061,6 +2100,8 @@ def format_report_html(rep, expanded=False, protvar="off"):
                     row("Review", esc(v["clinVarReview"]))
                 if v.get("rsIds"):
                     row("dbSNP", esc(", ".join(v["rsIds"])))
+                if v.get("genomic"):
+                    row("Genomic", '<span style="font-family:monospace; font-size:11px;">%s</span>' % esc(v["genomic"]))
                 if v.get("diseases"):
                     row("Disease", esc("; ".join(v["diseases"])))
         if has_evidence:
