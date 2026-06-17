@@ -640,7 +640,7 @@ const UFVAnalysis = (() => {
      *
      * geometry: array from StructureViewer.residueGeometry() — {uniPos, chain, resi, ca:{x,y,z}}
      */
-    function computePtmVariantProximity(ptms, variants, geometry) {
+    function computePtmVariantProximity(ptms, variants, geometry, d8 = 8, d12 = 12) {
         // Build uniPos → Cα position map (first modelled copy per UniProt position)
         const caByUni = new Map();
         for (const g of geometry) {
@@ -677,16 +677,13 @@ const UFVAnalysis = (() => {
                 if (uniPos === ptmPos) return;
                 const dx = ca.x - ptmCa.x, dy = ca.y - ptmCa.y, dz = ca.z - ptmCa.z;
                 const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist > 12) return;
+                if (dist > d12) return;
                 const varsHere = varsByPos.get(uniPos) || [];
                 if (!varsHere.length) return;
                 varsHere.forEach(v => {
+                    if (!isPathogenic(v)) return;
                     const label = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
-                    if (dist <= 8) {
-                        (isPathogenic(v) ? tier2 : tier3).push({ variant: v, dist });
-                    } else {
-                        tier3.push({ variant: v, dist });
-                    }
+                    (dist <= d8 ? tier2 : tier3).push({ variant: v, dist });
                     if (dist < nearestDist) { nearestDist = dist; nearestVariant = label; }
                 });
             });
@@ -694,13 +691,13 @@ const UFVAnalysis = (() => {
             if (tier1.length && nearestDist > 0) { nearestDist = 0; nearestVariant = `${tier1[0].wildType || ''}${ptmPos}${tier1[0].mutant || ''}`; }
 
             const pathCount8A = tier2.length;
-            const nearbyCount8A = tier1.length + tier2.length + tier3.filter(t => t.dist !== undefined && t.dist <= 8).length;
+            const nearbyCount8A = tier1.length + tier2.length;
             const tier = tier1.length ? 1 : tier2.length ? 2 : tier3.length ? 3 : null;
 
             if (tier !== null) {
                 result.set(ptmPos, {
                     tier, tier1, tier2, tier3,
-                    nearbyCount8A, pathCount8A,
+                    nearbyCount8A, pathCount8A, d8, d12,
                     nearestDist: nearestDist === Infinity ? null : nearestDist,
                     nearestVariant,
                 });
@@ -709,5 +706,51 @@ const UFVAnalysis = (() => {
         return result;
     }
 
-    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity };
+    /**
+     * Per-residue proximity analysis (residue-centric, not PTM-centric).
+     * All distances are measured FROM `pos`, not from any PTM site.
+     *
+     * Returns {
+     *   nearbyPtms:      [{ptm, dist}]     — PTMs within ptmRadius Å, sorted by dist
+     *   nearbyVariants:  [{variant, dist}]  — pathogenic variants within varRadius Å, sorted by dist
+     * }
+     */
+    function computeResidueProximity(pos, ptms, variants, geometry, ptmRadius = 8, varRadius = 12) {
+        const caByUni = new Map();
+        for (const g of geometry) {
+            if (g.uniPos != null && !caByUni.has(g.uniPos)) caByUni.set(g.uniPos, g.ca);
+        }
+        const rCa = caByUni.get(pos);
+        if (!rCa) return { nearbyPtms: [], nearbyVariants: [] };
+
+        const seenPtmPos = new Set();
+        const nearbyPtms = [];
+        for (const ptm of ptms) {
+            const p = ptm.position;
+            if (seenPtmPos.has(p)) continue;
+            seenPtmPos.add(p);
+            const ca = caByUni.get(p);
+            if (!ca) continue;
+            const dx = ca.x - rCa.x, dy = ca.y - rCa.y, dz = ca.z - rCa.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist <= ptmRadius) nearbyPtms.push({ ptm, dist });
+        }
+        nearbyPtms.sort((a, b) => a.dist - b.dist);
+
+        const isPathogenic = v => /pathogenic|deleterious/i.test(v.consequence || v.clinVarSignificance || '');
+        const nearbyVariants = [];
+        for (const v of variants) {
+            if (!isPathogenic(v)) continue;
+            const ca = caByUni.get(v.position);
+            if (!ca) continue;
+            const dx = ca.x - rCa.x, dy = ca.y - rCa.y, dz = ca.z - rCa.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist <= varRadius) nearbyVariants.push({ variant: v, dist });
+        }
+        nearbyVariants.sort((a, b) => a.dist - b.dist);
+
+        return { nearbyPtms, nearbyVariants };
+    }
+
+    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity, computeResidueProximity };
 })();

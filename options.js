@@ -6,6 +6,8 @@ const DEFAULTS = {
     coloringMode: 'default',
     copyFormat: 'pymol',
     showOptionalTracks: false,
+    proxPtmRadius: 8,
+    proxVarRadius: 12,
 };
 
 function byId(id) { return document.getElementById(id); }
@@ -17,6 +19,8 @@ function loadOptions() {
         byId('opt-color').value = s.coloringMode;
         byId('opt-copy').value = s.copyFormat;
         byId('opt-optional').checked = s.showOptionalTracks;
+        byId('opt-ptm-radius').value = s.proxPtmRadius;
+        byId('opt-var-radius').value = s.proxVarRadius;
     };
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
         chrome.storage.local.get(DEFAULTS, doLoad);
@@ -35,6 +39,8 @@ function saveOptions() {
         coloringMode: byId('opt-color').value,
         copyFormat: byId('opt-copy').value,
         showOptionalTracks: byId('opt-optional').checked,
+        proxPtmRadius: Number(byId('opt-ptm-radius').value) || 8,
+        proxVarRadius: Number(byId('opt-var-radius').value) || 12,
     };
     const onSaved = () => {
         const el = byId('save-status');

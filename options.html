@@ -53,7 +53,7 @@
   <div class="field">
     <label for="opt-color">Default coloring mode</label>
     <select id="opt-color">
-      <option value="default">Default cyan</option>
+      <option value="default">Default</option>
       <option value="plddt">pLDDT confidence</option>
       <option value="bfactor">Experimental B-factor</option>
       <option value="alphaMissense">AlphaMissense score</option>
@@ -69,6 +69,18 @@
       <option value="pymol">PyMOL selection</option>
       <option value="vmd">VMD selection</option>
     </select>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Proximity defaults</h2>
+  <div class="field">
+    <label for="opt-ptm-radius">PTM search radius (Å) — shown in residue proximity panel</label>
+    <input type="number" id="opt-ptm-radius" min="2" max="30" step="1" style="width:80px">
+  </div>
+  <div class="field">
+    <label for="opt-var-radius">Pathogenic variant search radius (Å)</label>
+    <input type="number" id="opt-var-radius" min="2" max="30" step="1" style="width:80px">
   </div>
 </div>
 

@@ -101,9 +101,9 @@ const UFVModal = (() => {
                 <div class="ufv-side">
                     <div class="ufv-view-section">
                         <div class="ufv-cm" id="ufv-cm">
-                            <button class="ufv-cm-btn" id="ufv-cm-btn">Default cyan</button>
+                            <button class="ufv-cm-btn" id="ufv-cm-btn">Default</button>
                             <div class="ufv-cm-drop" id="ufv-cm-drop">
-                                <div class="ufv-cm-opt selected" data-value="default">Default cyan</div>
+                                <div class="ufv-cm-opt selected" data-value="default">Default</div>
                                 <div class="ufv-cm-opt" data-value="plddt">pLDDT confidence</div>
                                 <div class="ufv-cm-opt" data-value="bfactor">Experimental B-factor</div>
                                 <div class="ufv-cm-opt ufv-hidden" data-value="topology">Membrane topology</div>
@@ -120,17 +120,17 @@ const UFVModal = (() => {
                         </div>
                     </div>
                     <div id="ufv-ptm-panel" class="ufv-filter-scroll">
-                        <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button></div></div>
+                        <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button><button class="ufv-sm-btn ufv-brush-btn" id="ufv-brush-ptm" title="Colour disease variant spheres by disease">C</button></div></div>
                         <div id="ufv-ptm-list"></div>
-                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-sites-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-ptm-all">All</button><button class="ufv-section-btn" id="ufv-sites-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-ptm-body"><div id="ufv-sites-ptm-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-sites-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-ptm-all">All</button><button class="ufv-section-btn" id="ufv-sites-ptm-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-ptmsite" title="Colour by PTM type">C</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-ptm-body"><div id="ufv-sites-ptm-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-ptm"><div class="ufv-collapsible-hdr" id="ufv-ligands-ptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><label class="ufv-toggle-switch ufv-ions-toggle" title="Exclude water &amp; ions"><input type="checkbox" id="ufv-ligands-ions-ptm"><span class="ufv-toggle-slider"></span></label><button class="ufv-section-btn" id="ufv-ligands-ptm-all">All</button><button class="ufv-section-btn" id="ufv-ligands-ptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-ptm-body"><div id="ufv-ligands-ptm-list"></div></div></div>
                     </div>
                     <div id="ufv-var-panel" class="ufv-filter-scroll ufv-hidden">
-                        <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button></div></div><div id="ufv-dis-list"></div></div>
-                        <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-prov-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Provenance</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-prov-all">All</button><button class="ufv-section-btn" id="ufv-prov-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-prov-body"><div id="ufv-prov-list"></div></div></div>
-                        <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
-                        <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
-                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
+                        <div id="ufv-dis-section" class="ufv-hidden"><div class="ufv-section-title"><span>Disease <span class="ufv-section-source">— HumanVar</span></span><div><button class="ufv-section-btn" id="ufv-dis-all">All</button><button class="ufv-section-btn" id="ufv-dis-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-var" title="Colour variant spheres by disease">C</button></div></div><div id="ufv-dis-list"></div></div>
+                        <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-prov-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Provenance</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-prov-all">All</button><button class="ufv-section-btn" id="ufv-prov-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-prov" title="Colour by consequence">C</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-prov-body"><div id="ufv-prov-list"></div></div></div>
+                        <div class="ufv-collapsible"><div class="ufv-collapsible-hdr" id="ufv-cons-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Consequence</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-cons-all">All</button><button class="ufv-section-btn" id="ufv-cons-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-dis" title="Colour by consequence">C</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-cons-body"><div id="ufv-cons-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-vptm-section"><div class="ufv-collapsible-hdr" id="ufv-vptm-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>PTM sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-vptm-all">All</button><button class="ufv-section-btn" id="ufv-vptm-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-vptm" title="Colour by PTM type">C</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-vptm-body"><div id="ufv-vptm-list"></div></div></div>
+                        <div class="ufv-collapsible ufv-hidden" id="ufv-sites-section-var"><div class="ufv-collapsible-hdr" id="ufv-sites-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Sites</span><div class="ufv-section-actions"><button class="ufv-section-btn" id="ufv-sites-var-all">All</button><button class="ufv-section-btn" id="ufv-sites-var-none">None</button><button class="ufv-section-btn ufv-brush-btn" id="ufv-brush-vsite" title="Colour by consequence">C</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-sites-var-body"><div id="ufv-sites-var-list"></div></div></div>
                         <div class="ufv-collapsible ufv-hidden" id="ufv-ligands-section-var"><div class="ufv-collapsible-hdr" id="ufv-ligands-var-toggle"><span class="ufv-collapsible-chevron">&#9654;</span><span>Ligands</span><div class="ufv-section-actions"><label class="ufv-toggle-switch ufv-ions-toggle" title="Exclude water &amp; ions"><input type="checkbox" id="ufv-ligands-ions-var"><span class="ufv-toggle-slider"></span></label><button class="ufv-section-btn" id="ufv-ligands-var-all">All</button><button class="ufv-section-btn" id="ufv-ligands-var-none">None</button></div></div><div class="ufv-collapsible-body ufv-collapsed" id="ufv-ligands-var-body"><div id="ufv-ligands-var-list"></div></div></div>
                     </div>
                     <div id="ufv-feat-panel" class="ufv-filter-scroll ufv-hidden"></div>
@@ -261,6 +261,13 @@ const UFVModal = (() => {
         byId('ufv-ptm-none').addEventListener('click', () => ptmSetAll(false));
         byId('ufv-cons-all').addEventListener('click', () => varSectionSetAll('consequence', true));
         byId('ufv-cons-none').addEventListener('click', () => varSectionSetAll('consequence', false));
+        byId('ufv-brush-ptm')?.addEventListener('click',     () => setColorProfile('ptm'));
+        byId('ufv-brush-ptmsite')?.addEventListener('click', () => setColorProfile('ptm'));
+        byId('ufv-brush-vptm')?.addEventListener('click',    () => setColorProfile('ptm'));
+        byId('ufv-brush-var')?.addEventListener('click',     () => setColorProfile('disease'));
+        byId('ufv-brush-dis')?.addEventListener('click',     () => setColorProfile('consequence'));
+        byId('ufv-brush-prov')?.addEventListener('click',    () => setColorProfile('provenance'));
+        byId('ufv-brush-vsite')?.addEventListener('click',   () => setColorProfile('sites'));
         byId('ufv-prov-all').addEventListener('click', () => varSectionSetAll('provenance', true));
         byId('ufv-prov-none').addEventListener('click', () => varSectionSetAll('provenance', false));
         byId('ufv-dis-all').addEventListener('click', () => varSectionSetAll('disease', true));
@@ -305,7 +312,7 @@ const UFVModal = (() => {
             StructureViewer._selectedResi = null;
             StructureViewer._inFocusMode = false;
             if (wasFocused && StructureViewer.viewer) {
-                StructureViewer.viewer.zoomTo({}, 600);
+                StructureViewer.resetView();
                 requestAnimationFrame(() => applyMode());
             }
         });
@@ -319,8 +326,6 @@ const UFVModal = (() => {
             } else if (s.selectedResidue != null && StructureViewer.currentStructure) {
                 // rezoom:false — keep the current camera so toggling spheres doesn't zoom.
                 s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain, { annotatedResidues: buildAnnotationMap() }, { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
-                // focusResidue clears shapes — re-draw proximity lines if they were on.
-                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
             }
         });
         byId('ufv-cs-btn').addEventListener('click', e => { e.stopPropagation(); byId('ufv-cs').classList.toggle('open'); });
@@ -331,7 +336,7 @@ const UFVModal = (() => {
                 const val = opt.dataset.value;
                 setColorMode(val);
                 // In-modal coloring is session-only — the persistent startup default lives in the
-                // options page (defaults to "Default cyan"), so the viewer always opens on cyan
+                // options page (defaults to "Default"), so the viewer always opens on cyan
                 // and the expensive constraint-pocket compute is never triggered automatically.
                 const isPocket = val === 'prism';
                 byId('ufv-sens-wrap').classList.toggle('ufv-hidden', !isPocket);
@@ -364,7 +369,9 @@ const UFVModal = (() => {
         const s = UFVState.state;
         const mySeq = ++_openSeq;
         s.currentMode = mode;
+        _colorProfile = mode === 'ptm' ? 'ptm' : 'consequence';
         build();
+        syncColorProfileButtons();
         await UFVState.loadSettings();
         if (_openSeq !== mySeq) return; // superseded by a newer open()
         syncSettingsControls();
@@ -437,6 +444,9 @@ const UFVModal = (() => {
             s.activeConsequences = new Set(Object.keys(DataProcessor.getConsequenceSummary(s.variants)));
             s.activeProvenances = new Set(Object.keys(DataProcessor.getProvenanceSummary(s.variants)));
             s.analysis.alphaMissense = UFVAnalysis.aggregateAlphaMissense(s.variants, s.amMap);
+            DataProcessor.computeDiseaseColors(s.variants);
+            const _ds = DataProcessor.getDiseaseSummary(s.variants);
+            _diseaseColorMap = new Map(Object.entries(_ds).map(([n, m]) => [n, m.color]));
             s.annotationsLoaded = true;
             if (!byId('ufv-protnlm-banner')?.classList.contains('ufv-hidden')) renderProtNLM();
             const fc = s.functionContext;
@@ -593,17 +603,20 @@ const UFVModal = (() => {
         refreshLigandSections();
         StructureViewer.dblClickCb = () => {
             const s = UFVState.state;
+            byId('ufv-details').classList.remove('show');
+            const wasFocused = s.selectedResidue != null || s.selectedLigand != null || StructureViewer._inFocusMode;
             s.selectedResidue = null;
+            s.selectedChain = null;
             s.selectedLigand = null;
             s.nearbyResidues = new Set();
             StructureViewer._selectedResi = null;
-            byId('ufv-details').classList.remove('show');
-            StructureViewer.viewer?.zoomTo({}, 600);
-            // Defer heavy rebuild so the zoom animation starts immediately
-            requestAnimationFrame(() => {
-                applyMode();
-                renderSequence();
-            });
+            StructureViewer._inFocusMode = false;
+            if (wasFocused && StructureViewer.viewer) {
+                StructureViewer.resetView();
+                requestAnimationFrame(() => { applyMode(); renderSequence(); });
+            } else {
+                requestAnimationFrame(() => { applyMode(); renderSequence(); });
+            }
         };
         // Already-loaded structures skip the loadStructure() that would re-frame the camera, so
         // reset the view here — reopening a window should return to the default framing, not keep
@@ -738,10 +751,8 @@ const UFVModal = (() => {
         s.selectedLigand = null;
         s.nearbyResidues = new Set();
         byId('ufv-details')?.classList.remove('show');
-        _proximityLinesOn = false;
         _showOtherSpheres = true;
         const chk = byId('ufv-sphere-chk'); if (chk) chk.checked = true;
-        StructureViewer.clearProximityLines?.();
         StructureViewer.showLigands = true;    // new structure starts with all ligands shown
         s.analysis.ptmVariantProximity = null; // structure-dependent → recompute on next click
         // Coloring resets to the configured default (cyan unless changed; never the pocket mode).
@@ -845,8 +856,48 @@ const UFVModal = (() => {
         return UFVState.state.variants.filter(v => (v.diseases || []).some(d => sel.has(d)));
     }
 
+    // Module-level so dynamically-built sections (e.g. the Disease-variants C button) can call it.
+    function setColorProfile(profile) {
+        _colorProfile = profile;
+        syncColorProfileButtons();
+        applyMode();
+    }
+    function syncColorProfileButtons() {
+        const isPtm = _colorProfile === 'ptm';
+        const isDis = _colorProfile === 'disease';
+        const isCons = _colorProfile === 'consequence';
+        const isProv = _colorProfile === 'provenance';
+        const isSites = _colorProfile === 'sites';
+        byId('ufv-brush-ptm')?.classList.toggle('active', isPtm);
+        byId('ufv-brush-ptmsite')?.classList.toggle('active', isPtm);
+        byId('ufv-brush-vptm')?.classList.toggle('active', isPtm);
+        byId('ufv-brush-var')?.classList.toggle('active', isDis);
+        byId('ufv-brush-dis')?.classList.toggle('active', isCons);
+        byId('ufv-brush-prov')?.classList.toggle('active', isProv);
+        byId('ufv-brush-vsite')?.classList.toggle('active', isSites);
+        // Disease-variant section C buttons (feature/PTM windows) — there can be several.
+        document.querySelectorAll('.ufv-brush-featdis').forEach(b => b.classList.toggle('active', isDis));
+    }
+
     function diseaseSpheres() {
-        return diseaseVariants().map(v => ({ position: v.position, color: v.consequenceColor, hover: v }));
+        const sel = UFVState.state.featDiseases;
+        return diseaseVariants().map(v => {
+            let color;
+            if (_colorProfile === 'consequence' || _colorProfile === 'provenance' || _colorProfile === 'sites') {
+                color = v.consequenceColor;
+            } else {
+                // Use color of first disease that's selected; grey for "Other" variants (no named disease match)
+                const vDiseases = v.diseases || [];
+                const activeDis = vDiseases.find(d => d !== '__other__' && (!sel || !sel.size || sel.has(d)));
+                if (activeDis) {
+                    color = _diseaseColorMap.get(activeDis) || v.consequenceColor;
+                } else {
+                    // Variant has no named disease in the active set → "Other" → grey
+                    color = '#9e9e9e';
+                }
+            }
+            return { position: v.position, color, hover: v };
+        });
     }
 
     // Secondary "Disease variants" collapsible: a checklist of diseases (off by default) with
@@ -858,6 +909,9 @@ const UFVModal = (() => {
         const { box, body } = makeCollapsibleSection('Disease variants', {
             onAll: () => { s.featDiseases = new Set(names); buildAllSecondaryDiseaseSections(); reapply(); },
             onNone: () => { s.featDiseases = new Set(); buildAllSecondaryDiseaseSections(); reapply(); },
+            onBrush: () => setColorProfile('disease'),
+            brushActive: _colorProfile === 'disease',
+            brushTitle: 'Colour disease-variant spheres by disease',
         });
         box.setAttribute('data-ufv-disease', '1');
         if (!names.length) {
@@ -955,8 +1009,9 @@ const UFVModal = (() => {
         }
     }
 
-    // A collapsed-by-default section with a chevron header and optional All/None buttons.
-    function makeCollapsibleSection(title, { onAll, onNone } = {}) {
+    // A collapsed-by-default section with a chevron header and optional All/None/C buttons.
+    // onBrush: makes a "C" colour-profile button (e.g. colour disease-variant spheres by disease).
+    function makeCollapsibleSection(title, { onAll, onNone, onBrush, brushActive, brushTitle } = {}) {
         const box = document.createElement('div'); box.className = 'ufv-collapsible';
         const hdr = document.createElement('div'); hdr.className = 'ufv-collapsible-hdr';
         const chev = document.createElement('span'); chev.className = 'ufv-collapsible-chevron'; chev.innerHTML = '&#9654;';
@@ -965,6 +1020,13 @@ const UFVModal = (() => {
         const mkBtn = (label, fn) => { const b = document.createElement('button'); b.className = 'ufv-section-btn'; b.textContent = label; b.addEventListener('click', e => { e.stopPropagation(); fn(); }); return b; };
         if (onAll) acts.appendChild(mkBtn('All', onAll));
         if (onNone) acts.appendChild(mkBtn('None', onNone));
+        if (onBrush) {
+            const b = mkBtn('C', onBrush);
+            b.classList.add('ufv-brush-btn', 'ufv-brush-featdis');
+            if (brushActive) b.classList.add('active');
+            if (brushTitle) b.title = brushTitle;
+            acts.appendChild(b);
+        }
         hdr.append(chev, t, acts);
         const body = document.createElement('div'); body.className = 'ufv-collapsible-body ufv-collapsed';
         hdr.addEventListener('click', e => { if (e.target.closest('button')) return; const c = body.classList.toggle('ufv-collapsed'); chev.innerHTML = c ? '&#9654;' : '&#9660;'; });
@@ -1059,7 +1121,23 @@ const UFVModal = (() => {
             byId('ufv-count-text').textContent = `${n} PTM site${n === 1 ? '' : 's'}${rangeNote}`;
         } else if (cm === 'variant') {
             const coPtms = activeCoDisplayPtms();
-            const r = StructureViewer.showVariants(filteredVariants, coPtms, siteList);
+            // Sphere colour follows the active "C" profile the user picked on a section header.
+            // showVariants reads v.consequenceColor, so we overwrite that field per profile.
+            let variantsColored = filteredVariants;
+            if (_colorProfile === 'disease') {
+                variantsColored = filteredVariants.map(v => {
+                    const ad = s.activeDiseases;
+                    const firstActiveDis = (v.diseases || []).find(d => !ad || !ad.size || ad.has(d));
+                    const dc = (firstActiveDis && _diseaseColorMap.get(firstActiveDis)) || '#9e9e9e';
+                    return { ...v, consequenceColor: dc };
+                });
+            } else if (_colorProfile === 'provenance') {
+                variantsColored = filteredVariants.map(v => ({
+                    ...v,
+                    consequenceColor: DataProcessor.PROVENANCE_CATEGORIES[v.provenance]?.color || '#9e9e9e',
+                }));
+            } // 'consequence' / 'sites' / 'ptm' ⇒ keep natural consequenceColor
+            const r = StructureViewer.showVariants(variantsColored, coPtms, siteList);
             s.displayedPositions = Array.from(new Set([
                 ...filteredVariants.map(v => v.position),
                 ...coPtms.flatMap(p => p.endPosition && p.endPosition !== p.position ? [p.position, p.endPosition] : [p.position]),
@@ -1373,8 +1451,8 @@ const UFVModal = (() => {
 
     function buildVariantFilters() {
         const s = UFVState.state;
-        fillFilterList('ufv-prov-list', DataProcessor.getProvenanceSummary(s.variants), s.activeProvenances, applyMode);
-        fillFilterList('ufv-cons-list', DataProcessor.getConsequenceSummary(s.variants), s.activeConsequences, applyMode);
+        fillFilterList('ufv-prov-list', DataProcessor.getProvenanceSummary(s.variants), s.activeProvenances, 'provenance');
+        fillFilterList('ufv-cons-list', DataProcessor.getConsequenceSummary(s.variants), s.activeConsequences, 'consequence');
         buildVariantPtmFilters();
         const { names: diseasesToShow, ds } = diseaseNamesToShow();
         const dis = byId('ufv-dis-section');
@@ -1385,10 +1463,8 @@ const UFVModal = (() => {
             s.activeDiseases = new Set(diseasesToShow);
             diseasesToShow.forEach(name => {
                 const meta = ds[name] || { color: '#9e9e9e', count: 0 };
-                list.appendChild(makeFilterItem(name, meta.color, meta.count, true, checked => {
-                    checked ? s.activeDiseases.add(name) : s.activeDiseases.delete(name);
-                    applyMode();
-                }));
+                list.appendChild(makeFilterItem(name, meta.color, meta.count, true,
+                    checked => toggleVariantFilter('disease', name, checked), name));
             });
         } else {
             dis.classList.add('ufv-hidden');
@@ -1396,15 +1472,13 @@ const UFVModal = (() => {
         }
     }
 
-    function fillFilterList(id, summary, activeSet, onChange) {
+    function fillFilterList(id, summary, activeSet, dim) {
         const list = byId(id);
         list.textContent = '';
         Object.entries(summary).forEach(([label, meta]) => {
             activeSet.add(label);
-            list.appendChild(makeFilterItem(label, meta.color, meta.count, true, checked => {
-                checked ? activeSet.add(label) : activeSet.delete(label);
-                onChange();
-            }));
+            list.appendChild(makeFilterItem(label, meta.color, meta.count, true,
+                checked => toggleVariantFilter(dim, label, checked), label));
         });
     }
 
@@ -1603,11 +1677,11 @@ const UFVModal = (() => {
     // One-letter → three-letter amino acid code (all caps) for the residue title.
     const AA1TO3 = { A:'ALA',C:'CYS',D:'ASP',E:'GLU',F:'PHE',G:'GLY',H:'HIS',I:'ILE',K:'LYS',L:'LEU',M:'MET',N:'ASN',P:'PRO',Q:'GLN',R:'ARG',S:'SER',T:'THR',V:'VAL',W:'TRP',Y:'TYR' };
 
-    // Session-persistent toggles for proximity lines and sphere visibility in focus mode.
-    let _proximityLinesOn = false;
+    // Session-persistent toggle for sphere visibility in focus mode.
     let _showOtherSpheres = true;
     let _showVarEvidence = false;   // persistent: show Review/dbSNP/gnomAD/Genomic in the variant blocks
-    let _lastProximityArgs = null;
+    let _colorProfile = 'consequence'; // radio-button color prioritization
+    let _diseaseColorMap = new Map();  // disease name → DISEASE_PALETTE color (from computeDiseaseColors)
 
     // Helper: make a small CSS toggle switch (<label> wrapping hidden <input> + slider span).
     function makeToggle(checked, title) {
@@ -1634,13 +1708,11 @@ const UFVModal = (() => {
         const annotations = buildAnnotationMap();
         s.nearbyResidues = StructureViewer.focusResidue(pos, chain, { annotatedResidues: annotations }, { showOtherSpheres: _showOtherSpheres }) || new Set([pos]);
 
-        // Lazy-compute PTM–variant proximity on first click after a structure load.
+        // Lazy-compute PTM–variant proximity (used by CSV export). Per-residue panel uses computeResidueProximity.
         if (!s.analysis.ptmVariantProximity && s.ptms.length && s.variants.length && StructureViewer.viewer) {
-            s.analysis.ptmVariantProximity = UFVAnalysis.computePtmVariantProximity(s.ptms, s.variants, StructureViewer.residueGeometry());
+            const ptmR = s.settings.proxPtmRadius || 8, varR = s.settings.proxVarRadius || 12;
+            s.analysis.ptmVariantProximity = UFVAnalysis.computePtmVariantProximity(s.ptms, s.variants, StructureViewer.residueGeometry(), ptmR, varR);
         }
-
-        StructureViewer.clearProximityLines();
-        _lastProximityArgs = null;
 
         const body = byId('ufv-details-body');
         body.textContent = '';
@@ -1667,15 +1739,8 @@ const UFVModal = (() => {
         titleEl.appendChild(document.createTextNode((AA1TO3[wt] || wt) + ' ' + pos));
         titleEl.appendChild(bulbRow);
 
-        // ── Position | Nearby grid ──────────────────────────────────────────────
-        const topGrid = document.createElement('div');
-        topGrid.className = 'ufv-detail-grid';
-        const posCell = document.createElement('div');
-        posCell.className = 'ufv-detail-cell';
-        posCell.innerHTML = `<span class="ufv-detail-lbl">Position</span><span class="ufv-detail-val">${pos}</span>`;
-        // Nearby residues — clickable; clicking re-focuses that residue (same as clicking in 3-D).
-        topGrid.append(posCell, makeNearbyCell(s.selectedChain));
-        body.appendChild(topGrid);
+        // ── Nearby box (with live distance slider) ──────────────────────────────
+        body.appendChild(makeNearbyBox(s.selectedChain));
 
         // ── PTM annotations ─────────────────────────────────────────────────────
         const ptmsAtPos = s.ptms.filter(p => p.position === pos || p.endPosition === pos);
@@ -1762,117 +1827,145 @@ const UFVModal = (() => {
             body.appendChild(varSection);
         }
 
-        // ── PTM–Variant Proximity ────────────────────────────────────────────────
-        // Show the clicked residue's own PTM proximity, or — when clicking a residue that is NOT
-        // a PTM but lies within 12 Å of one — the nearest such PTM's proximity (so clicking near
-        // a PTM still surfaces it).
-        const proxMap = s.analysis.ptmVariantProximity;
-        let proximityPos = pos, proximityNote = null;
-        if (proxMap && !proxMap.has(pos)) {
-            const caByUni = new Map();
-            (StructureViewer.residueGeometry?.() || []).forEach(g => { if (g.uniPos != null && !caByUni.has(g.uniPos)) caByUni.set(g.uniPos, g.ca); });
-            const rCa = caByUni.get(pos);
-            if (rCa) {
-                let bestD = Infinity, best = null;
-                proxMap.forEach((_v, ptmPos) => {
-                    const ca = caByUni.get(ptmPos); if (!ca) return;
-                    const dx = ca.x - rCa.x, dy = ca.y - rCa.y, dz = ca.z - rCa.z;
-                    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                    if (d <= 12 && d < bestD) { bestD = d; best = ptmPos; }
+        // ── PTM–Variant Proximity ────────────────────────────────────────────
+        // PTM–Variant Proximity: residue-centric view — all distances are FROM the selected residue.
+        // Slider 1 controls which PTMs appear (within X Å); Slider 2 controls pathogenic variants.
+        {
+            const initPtmR = s.settings.proxPtmRadius || 8;
+            const initVarR = s.settings.proxVarRadius || 12;
+            const geo = StructureViewer.residueGeometry?.() || [];
+
+            const _compute = (ptmR, varR) =>
+                UFVAnalysis.computeResidueProximity(pos, s.ptms, s.variants, geo, ptmR, varR);
+
+            const init = _compute(initPtmR, initVarR);
+
+            if (init.nearbyPtms.length || init.nearbyVariants.length) {
+                const proxSection = document.createElement('div');
+                proxSection.className = 'ufv-am-section';
+
+                const proxToggle = document.createElement('button');
+                proxToggle.className = 'ufv-am-toggle';
+                const proxHdrLeft = document.createElement('span');
+                proxHdrLeft.className = 'ufv-am-hdr-left';
+                proxHdrLeft.appendChild(document.createTextNode('PTM–Variant Proximity'));
+                const proxArrow = document.createElement('span');
+                proxArrow.className = 'ufv-am-arrow';
+                proxArrow.textContent = '▾';
+                const proxHdrRight = document.createElement('span');
+                proxHdrRight.className = 'ufv-am-hdr-right';
+                proxHdrRight.append(proxArrow);
+                proxToggle.append(proxHdrLeft, proxHdrRight);
+
+                const proxBody = document.createElement('div');
+                proxBody.className = 'ufv-am-body';
+
+                const ptmSlider = document.createElement('input');
+                ptmSlider.type = 'range'; ptmSlider.className = 'ufv-nearby-slider';
+                ptmSlider.min = 2; ptmSlider.max = 30; ptmSlider.step = 1; ptmSlider.value = initPtmR;
+                const ptmValEl = document.createElement('span');
+                ptmValEl.className = 'ufv-prox-slider-val'; ptmValEl.textContent = initPtmR + ' Å';
+
+                const varSlider = document.createElement('input');
+                varSlider.type = 'range'; varSlider.className = 'ufv-nearby-slider';
+                varSlider.min = 2; varSlider.max = 30; varSlider.step = 1; varSlider.value = initVarR;
+                const varValEl = document.createElement('span');
+                varValEl.className = 'ufv-prox-slider-val'; varValEl.textContent = initVarR + ' Å';
+
+                const makeSliderRow = (lbl, slider, valEl) => {
+                    const row = document.createElement('div');
+                    row.className = 'ufv-prox-slider-item';
+                    const l = document.createElement('span');
+                    l.className = 'ufv-detail-lbl'; l.textContent = lbl;
+                    row.append(l, slider, valEl);
+                    return row;
+                };
+
+                // PTM slider sits immediately above the PTMs list
+                const ptmContent = document.createElement('div');
+                proxBody.append(makeSliderRow('PTMs within', ptmSlider, ptmValEl), ptmContent);
+
+                // Variant slider sits immediately above the variants list
+                const varContent = document.createElement('div');
+                proxBody.append(makeSliderRow('Variants within', varSlider, varValEl), varContent);
+
+                const renderPtmContent = (nearbyPtms) => {
+                    ptmContent.textContent = '';
+                    if (!nearbyPtms.length) return;
+                    const hdr = document.createElement('div');
+                    hdr.className = 'ufv-prox-tier-hdr'; hdr.style.color = '#4db6ac';
+                    hdr.textContent = 'Nearby PTMs';
+                    ptmContent.appendChild(hdr);
+                    const grid = document.createElement('div');
+                    grid.className = 'ufv-am-grid';
+                    nearbyPtms.forEach(({ ptm, dist }) => {
+                        const cell = document.createElement('button');
+                        cell.className = 'ufv-am-cell ufv-prox-clickable';
+                        cell.title = (ptm.description || ptm.category || '').trim() + ' (click to focus)';
+                        const nameSpan = document.createElement('span');
+                        nameSpan.className = 'ufv-am-cell-mut';
+                        nameSpan.style.color = ptm.color || '#4db6ac';
+                        nameSpan.textContent = (s.sequence?.[ptm.position - 1] || '') + ptm.position;
+                        const distSpan = document.createElement('span');
+                        distSpan.className = 'ufv-am-cell-sc';
+                        distSpan.textContent = dist.toFixed(1) + ' Å';
+                        cell.append(nameSpan, distSpan);
+                        cell.addEventListener('click', () => onClick({ position: ptm.position }, 'focus', s.selectedChain));
+                        grid.appendChild(cell);
+                    });
+                    ptmContent.appendChild(grid);
+                };
+
+                const renderVarContent = (nearbyVariants) => {
+                    varContent.textContent = '';
+                    if (!nearbyVariants.length) return;
+                    const hdr = document.createElement('div');
+                    hdr.className = 'ufv-prox-tier-hdr'; hdr.style.color = '#ef5350';
+                    hdr.textContent = 'Pathogenic variants';
+                    varContent.appendChild(hdr);
+                    const grid = document.createElement('div');
+                    grid.className = 'ufv-am-grid';
+                    nearbyVariants.forEach(({ variant: v, dist }) => {
+                        const cell = document.createElement('button');
+                        cell.className = 'ufv-am-cell ufv-prox-clickable';
+                        cell.title = (v.clinVarSignificance || v.consequence || '').trim() + ' (click to focus)';
+                        const mutSpan = document.createElement('span');
+                        mutSpan.className = 'ufv-am-cell-mut';
+                        mutSpan.style.color = v.consequenceColor || '#ef5350';
+                        mutSpan.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
+                        const distSpan = document.createElement('span');
+                        distSpan.className = 'ufv-am-cell-sc';
+                        distSpan.textContent = dist.toFixed(1) + ' Å';
+                        cell.append(mutSpan, distSpan);
+                        cell.addEventListener('click', () => onClick({ position: v.position }, 'focus', s.selectedChain));
+                        grid.appendChild(cell);
+                    });
+                    varContent.appendChild(grid);
+                };
+
+                renderPtmContent(init.nearbyPtms);
+                renderVarContent(init.nearbyVariants);
+
+                ptmSlider.addEventListener('input', () => { ptmValEl.textContent = ptmSlider.value + ' Å'; });
+                varSlider.addEventListener('input', () => { varValEl.textContent = varSlider.value + ' Å'; });
+                ptmSlider.addEventListener('change', () => {
+                    const ptmR = Number(ptmSlider.value);
+                    s.settings.proxPtmRadius = ptmR; UFVState.saveSettings({ proxPtmRadius: ptmR });
+                    renderPtmContent(_compute(ptmR, Number(varSlider.value)).nearbyPtms);
                 });
-                if (best != null) { proximityPos = best; proximityNote = `Near PTM at residue ${best} (${bestD.toFixed(1)} Å away)`; }
-            }
-        }
-        const proximity = proxMap?.get(proximityPos);
-        if (proximity) {
-            const tierFg = { 1: '#ef5350', 2: '#ff7043', 3: '#ffa726' };
-            const tierLabel = ['', 'Same residue', 'Pathogenic within 8 Å', 'Within 12 Å'];
-
-            const proxSection = document.createElement('div');
-            proxSection.className = 'ufv-am-section';
-
-            // Lines toggle (inline in header, Tier 1+2 only).
-            const geo = StructureViewer.residueGeometry();
-            const linePairs = [];
-            const addPair = (variantPos, tier) => { if (!linePairs.find(p => p.variantPos === variantPos)) linePairs.push({ variantPos, tier }); };
-            proximity.tier1.forEach(v => addPair(v.position, 1));
-            proximity.tier2.forEach(({ variant }) => addPair(variant.position, 2));
-            _lastProximityArgs = { ptmPos: proximityPos, pairs: linePairs, geometry: geo };
-            if (_proximityLinesOn && linePairs.length) StructureViewer.showProximityLines(proximityPos, linePairs, geo);
-
-            const { lbl: linesToggleLbl, chk: linesChk } = makeToggle(_proximityLinesOn, 'Show/hide distances');
-            linesChk.addEventListener('change', () => {
-                _proximityLinesOn = linesChk.checked;
-                if (_proximityLinesOn && _lastProximityArgs?.pairs.length) StructureViewer.showProximityLines(_lastProximityArgs.ptmPos, _lastProximityArgs.pairs, _lastProximityArgs.geometry);
-                else StructureViewer.clearProximityLines();
-            });
-
-            const proxToggle = document.createElement('button');
-            proxToggle.className = 'ufv-am-toggle';
-            const proxHdrLeft = document.createElement('span');
-            proxHdrLeft.className = 'ufv-am-hdr-left';
-            proxHdrLeft.appendChild(document.createTextNode('PTM–Variant Proximity'));
-            const proxArrow = document.createElement('span');
-            proxArrow.className = 'ufv-am-arrow';
-            proxArrow.textContent = '▾';
-            const proxHdrRight = document.createElement('span');
-            proxHdrRight.className = 'ufv-am-hdr-right';
-            proxHdrRight.append(linesToggleLbl, proxArrow);
-            proxToggle.append(proxHdrLeft, proxHdrRight);
-
-            const proxBody = document.createElement('div');
-            proxBody.className = 'ufv-am-body';
-
-            // When showing a nearby PTM's proximity (clicked residue isn't the PTM), say which.
-            if (proximityNote) {
-                proxBody.insertAdjacentHTML('beforeend',
-                    `<div class="ufv-detail-row"><span class="ufv-detail-val" style="color:var(--ufv-text-secondary)">${proximityNote}</span></div>`);
-            }
-
-            // Summary rows.
-            proxBody.insertAdjacentHTML('beforeend',
-                `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearby variants</span><span class="ufv-detail-val">${proximity.nearbyCount8A} within 8 Å (${proximity.pathCount8A} pathogenic)</span></div>`);
-            if (proximity.nearestDist !== null) {
-                proxBody.insertAdjacentHTML('beforeend',
-                    `<div class="ufv-detail-row"><span class="ufv-detail-lbl">Nearest</span><span class="ufv-detail-val">${_esc(proximity.nearestVariant)} — ${proximity.nearestDist === 0 ? 'same residue' : proximity.nearestDist.toFixed(1) + ' Å'}</span></div>`);
-            }
-
-            // Tier groups — two-column grid (mutation | distance), no ClinVar text.
-            [[proximity.tier1, 1], [proximity.tier2, 2], [proximity.tier3, 3]].forEach(([items, t]) => {
-                if (!items.length) return;
-                const hdr = document.createElement('div');
-                hdr.className = 'ufv-prox-tier-hdr';
-                hdr.style.color = tierFg[t];
-                hdr.textContent = tierLabel[t];
-                proxBody.appendChild(hdr);
-                const grid = document.createElement('div');
-                grid.className = 'ufv-am-grid';
-                items.forEach(item => {
-                    const v = item.variant || item;
-                    const distStr = item.dist !== undefined ? item.dist.toFixed(1) + ' Å' : '0.0 Å';
-                    const cell = document.createElement('button');
-                    cell.className = 'ufv-am-cell ufv-prox-clickable';
-                    cell.title = (v.clinVarSignificance || v.consequence || '').trim() + ' (click to focus)';
-                    const mutSpan = document.createElement('span');
-                    mutSpan.className = 'ufv-am-cell-mut';
-                    mutSpan.style.color = v.consequenceColor || tierFg[t];
-                    mutSpan.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
-                    const distSpan = document.createElement('span');
-                    distSpan.className = 'ufv-am-cell-sc';
-                    distSpan.textContent = distStr;
-                    cell.append(mutSpan, distSpan);
-                    cell.addEventListener('click', () => onClick({ position: v.position }, 'focus', s.selectedChain));
-                    grid.appendChild(cell);
+                varSlider.addEventListener('change', () => {
+                    const varR = Number(varSlider.value);
+                    s.settings.proxVarRadius = varR; UFVState.saveSettings({ proxVarRadius: varR });
+                    renderVarContent(_compute(Number(ptmSlider.value), varR).nearbyVariants);
                 });
-                proxBody.appendChild(grid);
-            });
 
-            proxToggle.addEventListener('click', () => {
-                const open = proxBody.classList.toggle('show');
-                proxArrow.textContent = open ? '▴' : '▾';
-            });
-            proxSection.append(proxToggle, proxBody);
-            body.appendChild(proxSection);
+                proxToggle.addEventListener('click', () => {
+                    const open = proxBody.classList.toggle('show');
+                    proxArrow.textContent = open ? '▴' : '▾';
+                });
+                proxSection.append(proxToggle, proxBody);
+                body.appendChild(proxSection);
+            }
         }
 
         // ── Prediction: AlphaMissense (always) + ProtVar EVE/ESM1b/FoldX (lazy) per substitution ──
@@ -2171,6 +2264,61 @@ const UFVModal = (() => {
         return map;
     }
 
+    // Boxed Nearby section with a live distance slider — replaces the old Position|Nearby two-cell
+    // grid in the residue detail panel. Slider adjusts StructureViewer.nearbyDistance on the fly
+    // and immediately re-focuses so the 3-D sticks + list update together.
+    function makeNearbyBox(chain) {
+        const s = UFVState.state;
+        const dist = StructureViewer.nearbyDistance || 5;
+        const box = document.createElement('div');
+        box.className = 'ufv-nearby-box';
+        const hdr = document.createElement('div');
+        hdr.className = 'ufv-nearby-hdr';
+        const lbl = document.createElement('span');
+        lbl.className = 'ufv-detail-lbl';
+        lbl.textContent = 'Nearby';
+        const slider = document.createElement('input');
+        slider.type = 'range'; slider.className = 'ufv-nearby-slider';
+        slider.min = 3; slider.max = 15; slider.step = 1; slider.value = dist;
+        const distVal = document.createElement('span');
+        distVal.className = 'ufv-nearby-dist-val';
+        distVal.textContent = dist + ' Å';
+        hdr.append(lbl, slider, distVal);
+        const listEl = document.createElement('span');
+        listEl.className = 'ufv-detail-val ufv-nearby-val';
+        const rebuildList = () => {
+            listEl.textContent = '';
+            const sorted = Array.from(s.nearbyResidues).sort((a, b) => a - b);
+            const ann = buildAnnotationMap();
+            if (!sorted.length) { listEl.textContent = '—'; return; }
+            sorted.forEach((p, i) => {
+                const span = document.createElement('span');
+                span.className = 'ufv-nearby-res';
+                span.textContent = (s.sequence?.[p - 1] || '') + p;
+                const c = ann.get(p)?.color; if (c) span.style.color = c;
+                span.title = `Focus residue ${p}`;
+                span.addEventListener('click', () => onClick({ position: p }, null, chain ?? null));
+                listEl.appendChild(span);
+                if (i < sorted.length - 1) listEl.appendChild(document.createTextNode(', '));
+            });
+        };
+        rebuildList();
+        slider.addEventListener('input', () => {
+            const v = Number(slider.value);
+            distVal.textContent = v + ' Å';
+            StructureViewer.nearbyDistance = v;
+            if (s.selectedResidue != null) {
+                s.nearbyResidues = StructureViewer.focusResidue(s.selectedResidue, s.selectedChain,
+                    { annotatedResidues: buildAnnotationMap() },
+                    { showOtherSpheres: _showOtherSpheres, rezoom: false }) || s.nearbyResidues;
+            }
+            rebuildList(); renderSequence();
+        });
+        slider.addEventListener('change', () => { UFVState.saveSettings({ nearbyDistance: Number(slider.value) }); });
+        box.append(hdr, listEl);
+        return box;
+    }
+
     // Build a "Nearby" detail-cell whose residue numbers are clickable (clicking re-focuses that
     // residue, in any window). Used by both the residue and ligand detail panels.
     function makeNearbyCell(chain) {
@@ -2185,7 +2333,7 @@ const UFVModal = (() => {
         sorted.forEach((p, i) => {
             const span = document.createElement('span');
             span.className = 'ufv-nearby-res';
-            span.textContent = p;
+            span.textContent = (s.sequence?.[p - 1] || '') + p;
             const c = annotations.get(p)?.color;
             if (c) span.style.color = c;
             span.title = `Focus residue ${p}`;
@@ -2197,12 +2345,14 @@ const UFVModal = (() => {
         return cell;
     }
 
-    function makeFilterItem(label, color, count, checked, onChange) {
+    function makeFilterItem(label, color, count, checked, onChange, value) {
         const el = document.createElement('label');
         el.className = 'ufv-filter-item';
         el.innerHTML = `<input type="checkbox"><span class="ufv-dot"></span><span class="ufv-filter-label"></span><span class="ufv-filter-count"></span>`;
-        el.querySelector('input').checked = checked;
-        el.querySelector('input').addEventListener('change', e => onChange(e.target.checked));
+        const input = el.querySelector('input');
+        input.checked = checked;
+        input.dataset.ufvVal = value != null ? value : label; // used by syncVariantFilterChecks
+        input.addEventListener('change', e => onChange(e.target.checked));
         el.querySelector('.ufv-dot').style.backgroundColor = color || '#888';
         el.querySelector('.ufv-filter-label').textContent = label;
         el.querySelector('.ufv-filter-count').textContent = count;
@@ -2269,15 +2419,68 @@ const UFVModal = (() => {
         applyPTMMode();
     }
 
+    // ---- Additive variant filter model -----------------------------------------------------------
+    // Disease / Consequence / Provenance are three axes over the SAME variants. Checking a value
+    // shows that value's variants; to keep the intersection in filterVariants from hiding them, we
+    // also auto-select (propagate) the values those variants carry on the OTHER two axes. So checking
+    // "DRVT" ticks DRVT's consequence + provenance values too, and the DRVT variants appear. Checking
+    // a second value adds its variants on top; unchecking removes only that one value. None ⇒ nothing.
+    function variantFilterSet(dim) {
+        const s = UFVState.state;
+        return dim === 'consequence' ? s.activeConsequences : dim === 'provenance' ? s.activeProvenances : s.activeDiseases;
+    }
+    function variantMatchesValue(v, dim, value) {
+        if (dim === 'disease') return (v.diseases || []).includes(value);
+        return v[dim] === value;
+    }
+    // Propagate a matched variant's values to the OTHER two axes (never the one being toggled — else
+    // checking one disease would tick every disease that co-occurs on its multi-disease variants).
+    function propagateVariant(v, skipDim) {
+        const s = UFVState.state;
+        if (skipDim !== 'consequence' && s.activeConsequences && DataProcessor.CONSEQUENCE_CATEGORIES[v.consequence]) s.activeConsequences.add(v.consequence);
+        if (skipDim !== 'provenance' && s.activeProvenances && DataProcessor.PROVENANCE_CATEGORIES[v.provenance]) s.activeProvenances.add(v.provenance);
+        if (skipDim !== 'disease' && s.activeDiseases) {
+            (v.diseases || []).filter(d => d !== '__other__').forEach(d => s.activeDiseases.add(d));
+        }
+    }
+    // Re-tick every variant-filter checkbox from the active sets (no DOM rebuild ⇒ scroll/collapse kept).
+    function syncVariantFilterChecks() {
+        const s = UFVState.state;
+        const apply = (id, set) => {
+            if (!set) return;
+            document.querySelectorAll(`#${id} input[type="checkbox"]`).forEach(cb => { cb.checked = set.has(cb.dataset.ufvVal); });
+        };
+        apply('ufv-dis-list', s.activeDiseases);
+        apply('ufv-cons-list', s.activeConsequences);
+        apply('ufv-prov-list', s.activeProvenances);
+    }
+    function toggleVariantFilter(dim, value, checked) {
+        const set = variantFilterSet(dim);
+        if (!set) return;
+        if (!checked) { set.delete(value); syncVariantFilterChecks(); applyMode(); return; }
+        set.add(value);
+        UFVState.state.variants.forEach(v => { if (variantMatchesValue(v, dim, value)) propagateVariant(v, dim); });
+        syncVariantFilterChecks();
+        applyMode();
+    }
+
     function varSectionSetAll(section, select) {
         const s = UFVState.state;
-        const target = section === 'consequence' ? s.activeConsequences : section === 'provenance' ? s.activeProvenances : s.activeDiseases;
+        const target = variantFilterSet(section);
         if (!target) return;
-        target.clear();
-        const summary = section === 'consequence' ? DataProcessor.getConsequenceSummary(s.variants) : section === 'provenance' ? DataProcessor.getProvenanceSummary(s.variants) : DataProcessor.getDiseaseSummary(s.variants);
-        if (select) Object.keys(summary).forEach(k => target.add(k));
         const id = section === 'consequence' ? 'ufv-cons-list' : section === 'provenance' ? 'ufv-prov-list' : 'ufv-dis-list';
-        document.querySelectorAll(`#${id} input[type="checkbox"]`).forEach(cb => cb.checked = select);
+        if (!select) {
+            // None on any axis clears ALL three variant axes: the axes are coupled, so emptying one
+            // would hide everything anyway — keeping the other boxes ticked would be misleading.
+            s.activeDiseases?.clear();
+            s.activeConsequences?.clear();
+            s.activeProvenances?.clear();
+        } else {
+            // Select every value shown in this section, then propagate so the other axes admit them.
+            document.querySelectorAll(`#${id} input[type="checkbox"]`).forEach(cb => target.add(cb.dataset.ufvVal));
+            s.variants.forEach(v => { if (section === 'disease' || v[section]) propagateVariant(v, section); });
+        }
+        syncVariantFilterChecks();
         applyMode();
     }
 
@@ -2367,13 +2570,13 @@ const UFVModal = (() => {
     }
 
     function syncSettingsControls() {
-        let mode = UFVState.state.settings.coloringMode;
-        // Constraint pocket is never a startup mode — it is an opt-in, per-session selection, so
-        // the viewer never auto-runs the expensive compute on open (and any legacy saved value
-        // falls back to the default cyan view).
+        const s = UFVState.state;
+        let mode = s.settings.coloringMode;
         if (mode === 'prism' || mode === 'topos') mode = 'default';
         setColorMode(mode);
         byId('ufv-sens-wrap').classList.add('ufv-hidden');
+        // Apply configurable cutoffs to the live viewer
+        StructureViewer.nearbyDistance = s.settings.nearbyDistance || 5;
     }
 
     function switchTab(_name) { /* tabs removed — settings moved to options page */ }
@@ -2447,6 +2650,9 @@ const UFVModal = (() => {
                 s.activeConsequences = new Set(Object.keys(DataProcessor.getConsequenceSummary(s.variants)));
                 s.activeProvenances = new Set(Object.keys(DataProcessor.getProvenanceSummary(s.variants)));
                 s.analysis.alphaMissense = UFVAnalysis.aggregateAlphaMissense(s.variants, s.amMap);
+                DataProcessor.computeDiseaseColors(s.variants);
+            const _ds = DataProcessor.getDiseaseSummary(s.variants);
+            _diseaseColorMap = new Map(Object.entries(_ds).map(([n, m]) => [n, m.color]));
                 s.annotationsLoaded = true;
             } catch (_) {
                 // Fail silently — open() will retry via loadAnnotations()

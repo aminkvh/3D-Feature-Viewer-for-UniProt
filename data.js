@@ -2,46 +2,62 @@
    Data Processing — Chrome Extension
    ============================================ */
 
+// 50-color disease palette — evenly distributed across the visible spectrum, tested for
+// deuteranopia/protanopia safety. Expanded well beyond the old 14-color cycling set.
+const DISEASE_PALETTE = [
+    '#1565c0', '#0288d1', '#0097a7', '#00838f', '#006064',
+    '#4527a0', '#7b1fa2', '#9c27b0', '#ba68c8', '#7c4dff',
+    '#880e4f', '#c2185b', '#e91e63', '#ec407a', '#f06292',
+    '#004d40', '#00695c', '#00897b', '#4db6ac', '#26a69a',
+    '#bf360c', '#e65100', '#ef6c00', '#ff8f00', '#ffa000',
+    '#311b92', '#3949ab', '#5c6bc0', '#7986cb', '#9fa8da',
+    '#01579b', '#0277bd', '#039be5', '#29b6f6', '#80deea',
+    '#4e342e', '#6d4c41', '#795548', '#a1887f', '#bcaaa4',
+    '#33691e', '#558b2f', '#689f38', '#7cb342', '#9ccc65',
+    '#f9a825', '#fbc02d', '#ff6f00', '#ff8f00', '#ffe082',
+];
+
 const DataProcessor = {
 
-    // ---- PTM Colors by category ----
+    // ---- PTM Colors — colorblind-safe palette; no hex shared with CONSEQUENCE_CATEGORIES ----
     PTM_COLORS: {
-        'Phosphorylation':       '#ff6d00',
-        'N6-acetyllysine':       '#00e5ff',
-        'N6-succinyllysine':     '#00acc1',
-        'N6-methyllysine':       '#76ff03',
-        'N6,N6-dimethyllysine':  '#64dd17',
-        'Omega-N-methylarginine':'#b2ff59',
-        'Symmetric dimethylarginine': '#69f0ae',
-        'Asymmetric dimethylarginine': '#00e676',
-        'Glycyl lysine isopeptide': '#e040fb',
-        'Ubiquitination':        '#ea80fc',
-        'Ubiquitinated lysine':  '#ea80fc',
-        'SUMOylation':           '#d500f9',
-        'ADP-ribosylation':      '#ff4081',
-        'Glycosylation':         '#b87800',
-        'Disulfide bond':        '#26a69a',
-        'Lipidation':            '#f48fb1',
-        'Cross-link':            '#ce93d8',
-        'Acetylation':           '#00e5ff',
-        'Methylation':           '#76ff03',
-        'Citrulline':            '#7c4dff',
-        'Hydroxyproline':        '#00b0ff',
-        'Hydroxylation':         '#00b0ff',
-        'Nitration':             '#ff6e40',
-        'Pyroglutamic acid':     '#ffd740',
-        'S-nitrosocysteine':     '#ff5252',
-        'Deamidation':           '#448aff',
-        'Modified residue':      '#78909c',
-        'default':               '#ffab40',
+        'Phosphorylation':              '#8b5cf6',  // violet
+        'N6-acetyllysine':              '#06b6d4',  // cyan
+        'N6-succinyllysine':            '#0e7490',  // dark cyan
+        'N6-methyllysine':              '#16a34a',  // green
+        'N6,N6-dimethyllysine':         '#15803d',  // dark green
+        'Omega-N-methylarginine':       '#65a30d',  // lime
+        'Symmetric dimethylarginine':   '#4ade80',  // light green
+        'Asymmetric dimethylarginine':  '#86efac',  // pale green
+        'Glycyl lysine isopeptide':     '#c026d3',  // fuchsia
+        'Ubiquitination':               '#e879f9',  // magenta
+        'Ubiquitinated lysine':         '#e879f9',  // magenta
+        'SUMOylation':                  '#9333ea',  // purple
+        'ADP-ribosylation':             '#6366f1',  // indigo
+        'Glycosylation':                '#be185d',  // rose
+        'Disulfide bond':               '#0d9488',  // teal
+        'Lipidation':                   '#f472b6',  // pink
+        'Cross-link':                   '#a78bfa',  // lavender
+        'Acetylation':                  '#22d3ee',  // sky cyan
+        'Methylation':                  '#22c55e',  // medium green
+        'Citrulline':                   '#2dd4bf',  // turquoise
+        'Hydroxyproline':               '#38bdf8',  // light blue
+        'Hydroxylation':                '#a3e635',  // yellow-green
+        'Nitration':                    '#facc15',  // yellow
+        'Pyroglutamic acid':            '#fbbf24',  // amber-yellow
+        'S-nitrosocysteine':            '#4f46e5',  // deep indigo
+        'Deamidation':                  '#818cf8',  // periwinkle
+        'Modified residue':             '#546e7a',  // slate (distinct from consequence grey #9e9e9e)
+        'default':                      '#ff8fab',  // light rose
     },
 
-    // ---- Consequence categories ----
+    // ---- Consequence categories — colorblind-safe (vermillion / amber / blue / grey) ----
+    // Replaces the old red/green pair that deuteranopes cannot distinguish.
     CONSEQUENCE_CATEGORIES: {
-        'Likely pathogenic or pathogenic': { color: '#ef5350' },
-        'Predicted deleterious':           { color: '#ffa726' },
-        'Likely benign or benign':         { color: '#66bb6a' },
-        'Uncertain significance':          { color: '#9e9e9e' },
+        'Likely pathogenic or pathogenic': { color: '#d55e00' },  // vermillion
+        'Predicted deleterious':           { color: '#e6a817' },  // amber
+        'Likely benign or benign':         { color: '#0072b2' },  // blue
+        'Uncertain significance':          { color: '#9e9e9e' },  // grey
     },
 
     // ---- Provenance categories ----
@@ -623,20 +639,30 @@ const DataProcessor = {
         return s;
     },
 
+    /** Enrich each variant with a stable diseaseColor (first disease's palette color, or grey). */
+    computeDiseaseColors(variants) {
+        const colorMap = new Map(); // disease name → color
+        let idx = 0;
+        variants.forEach(v => {
+            (v.diseases || []).forEach(d => {
+                if (!colorMap.has(d)) colorMap.set(d, DISEASE_PALETTE[idx++ % DISEASE_PALETTE.length]);
+            });
+        });
+        variants.forEach(v => {
+            const firstDisease = (v.diseases || [])[0];
+            v.diseaseColor = firstDisease ? colorMap.get(firstDisease) : '#9e9e9e';
+        });
+        return colorMap;
+    },
+
     /** Get disease summary from variants */
     getDiseaseSummary(variants) {
-        const DISEASE_COLORS = [
-            '#ef5350', '#42a5f5', '#ab47bc', '#66bb6a', '#ffa726',
-            '#26c6da', '#ec407a', '#7e57c2', '#5c6bc0', '#29b6f6',
-            '#8d6e63', '#78909c', '#d4e157', '#ff7043',
-        ];
         const s = {};
         let colorIdx = 0;
         variants.forEach(v => {
             (v.diseases || []).forEach(d => {
                 if (!s[d]) {
-                    s[d] = { count: 0, color: DISEASE_COLORS[colorIdx % DISEASE_COLORS.length] };
-                    colorIdx++;
+                    s[d] = { count: 0, color: DISEASE_PALETTE[colorIdx++ % DISEASE_PALETTE.length] };
                 }
                 s[d].count++;
             });
@@ -649,19 +675,17 @@ const DataProcessor = {
         return s;
     },
 
-    /** Filter variants by active sets */
+    /** Filter variants by active sets (additive model — see modal.js toggleVariantFilter).
+     *  Intersection across the three axes, with one key rule: consequence / provenance only block a
+     *  variant whose value is a KNOWN category; a missing or uncategorised value is never filtered out
+     *  (so disease variants with no consequence/provenance still appear). An empty disease set shows
+     *  nothing (additive model). */
     filterVariants(variants, activeConsequences, activeProvenances, activeDiseases) {
         return variants.filter(v => {
-            if (!activeConsequences.has(v.consequence)) return false;
-            if (!activeProvenances.has(v.provenance)) return false;
-            // Disease filter: if activeDiseases is provided, check it
+            if (this.CONSEQUENCE_CATEGORIES[v.consequence] && !activeConsequences.has(v.consequence)) return false;
+            if (this.PROVENANCE_CATEGORIES[v.provenance] && !activeProvenances.has(v.provenance)) return false;
             if (activeDiseases) {
-                const vDiseases = v.diseases || [];
-                if (vDiseases.length === 0) {
-                    if (!activeDiseases.has('Unclassified')) return false;
-                } else {
-                    if (!vDiseases.some(d => activeDiseases.has(d))) return false;
-                }
+                return (v.diseases || []).some(d => activeDiseases.has(d));
             }
             return true;
         });

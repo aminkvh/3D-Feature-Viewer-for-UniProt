@@ -4,6 +4,13 @@
   "version": "1.7.3",
   "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
   "permissions": ["storage"],
+  "sandbox": {
+    "pages": ["viewer-frame.html"]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval'; object-src 'self';"
+  },
   "host_permissions": [
     "https://www.uniprot.org/*",
     "https://rest.uniprot.org/*",
@@ -23,14 +30,13 @@
         "https://www.uniprot.org/uniprotkb/*/variant-viewer*"
       ],
       "js": [
-        "lib/3Dmol-min.js",
         "data.js",
         "api.js",
         "state.js",
         "export.js",
         "analysis.js",
         "algorithms.js",
-        "viewer.js",
+        "viewer-molstar.js",
         "modal.js",
         "injector.js",
         "content.js"
@@ -41,7 +47,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["lib/3Dmol-min.js", "pocket-worker.js", "algorithms.js"],
+      "resources": ["pocket-worker.js", "algorithms.js"],
+      "matches": ["https://www.uniprot.org/*"]
+    },
+    {
+      "resources": ["viewer-frame.html"],
       "matches": ["https://www.uniprot.org/*"]
     }
   ],

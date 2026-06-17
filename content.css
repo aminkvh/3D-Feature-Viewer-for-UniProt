@@ -1127,6 +1127,12 @@
     border-color: var(--ufv-accent-border);
 }
 
+.ufv-brush-btn.active {
+    background: var(--ufv-accent);
+    color: #fff;
+    border-color: var(--ufv-accent);
+}
+
 /* --- Collapsible / Accordion --- */
 .ufv-collapsible {
     border-top: 1px solid var(--ufv-border);
@@ -1349,6 +1355,62 @@
 .ufv-nearby-val {
     white-space: normal;
     word-break: break-word;
+}
+
+/* Nearby box — replaces the old Position|Nearby two-cell grid */
+.ufv-nearby-box {
+    background: var(--ufv-bg-hover);
+    border-radius: 6px;
+    padding: 6px 10px 6px;
+    margin-bottom: 6px;
+}
+.ufv-nearby-hdr {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.ufv-nearby-hdr .ufv-detail-lbl {
+    flex-shrink: 0;
+}
+.ufv-nearby-slider {
+    flex: 1;
+    height: 3px;
+    cursor: pointer;
+    accent-color: var(--ufv-accent, #00bcd4);
+}
+.ufv-nearby-dist-val {
+    font-size: 11px;
+    color: var(--ufv-text-secondary);
+    white-space: nowrap;
+    min-width: 32px;
+    text-align: right;
+}
+
+/* Proximity D8/D12 cutoff sliders inside the PTM–Variant Proximity section */
+.ufv-prox-sliders {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0 8px 0;
+    border-bottom: 1px solid var(--ufv-border, rgba(255,255,255,0.08));
+    margin-bottom: 6px;
+}
+.ufv-prox-slider-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ufv-prox-slider-item .ufv-detail-lbl {
+    flex-shrink: 0;
+    min-width: 80px;
+}
+.ufv-prox-slider-val {
+    font-size: 11px;
+    color: var(--ufv-text-secondary);
+    white-space: nowrap;
+    min-width: 32px;
+    text-align: right;
 }
 
 /* Variant block */
