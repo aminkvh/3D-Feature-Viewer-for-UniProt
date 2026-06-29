@@ -5,7 +5,6 @@ const DEFAULTS = {
     defaultStructure: 'alphafold',
     coloringMode: 'default',
     copyFormat: 'pymol',
-    showOptionalTracks: false,
     showExploratoryAlgorithms: true,
     proxPtmRadius: 8,
     proxVarRadius: 12,
@@ -20,7 +19,6 @@ function loadOptions() {
         byId('opt-structure').value = s.defaultStructure;
         byId('opt-color').value = s.coloringMode;
         byId('opt-copy').value = s.copyFormat;
-        byId('opt-optional').checked = s.showOptionalTracks;
         byId('opt-exploratory').checked = s.showExploratoryAlgorithms ?? true;
         byId('opt-ptm-radius').value = s.proxPtmRadius;
         byId('opt-var-radius').value = s.proxVarRadius;
@@ -42,7 +40,6 @@ function saveOptions() {
         defaultStructure: byId('opt-structure').value,
         coloringMode: byId('opt-color').value,
         copyFormat: byId('opt-copy').value,
-        showOptionalTracks: byId('opt-optional').checked,
         showExploratoryAlgorithms: byId('opt-exploratory').checked,
         proxPtmRadius: Number(byId('opt-ptm-radius').value) || 8,
         proxVarRadius: Number(byId('opt-var-radius').value) || 12,

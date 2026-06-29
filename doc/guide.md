@@ -310,5 +310,4 @@ Open the settings page from your browser's extension management menu. Changes ta
 | **PTM search radius** | The default distance used when searching for nearby PTMs in the details panel |
 | **Variant search radius** | The default distance used when searching for nearby variants |
 | **Font size** | Makes the text in the side panels smaller or larger |
-| **Show optional tracks** | Enables additional conservation and population frequency displays |
 | **Show exploratory algorithms** | When turned off, the four investigational color modes (hotspots, hubs, burden, pockets) are hidden from the color dropdown, giving a simpler interface focused on direct annotations |

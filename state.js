@@ -7,7 +7,6 @@ const UFVState = (() => {
         coloringMode: 'default',
         showClinVar: true,
         showAlphaMissense: true,
-        showOptionalTracks: false,
         showExploratoryAlgorithms: true,
         nearbyDistance: 5,    // Å — residue focus neighbourhood radius
         proxPtmRadius: 8,    // Å — PTM search radius in proximity panel
