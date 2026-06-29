@@ -1,6 +1,6 @@
 # Residue-Prioritization Algorithms — Detailed Methods
 
-This document describes the four browser-side residue-prioritization routines implemented in the 3D Feature Viewer for UniProt (v1.5.1). All four are exploratory heuristics intended to guide visual structural interpretation and hypothesis generation; none is a clinical classifier or a validated pathogenicity predictor. Results should be interpreted together with the underlying variant annotations, structural context, and available experimental evidence.
+This document describes the four browser-side residue-prioritization routines implemented in the 3D Feature Viewer for UniProt (v2.0.0). All four are exploratory heuristics intended to guide visual structural interpretation and hypothesis generation; none is a clinical classifier or a validated pathogenicity predictor. Results should be interpreted together with the underlying variant annotations, structural context, and available experimental evidence.
 
 ---
 

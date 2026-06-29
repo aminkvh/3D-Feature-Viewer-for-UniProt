@@ -22,6 +22,7 @@ chrome-build/
 # Packaged extension and signing key — never commit the private key
 *.crx
 *.pem
+*.zip
 
 # Python bytecode
 __pycache__/
@@ -30,3 +31,7 @@ __pycache__/
 
 graphify-out/
 web-ext-artifacts/
+
+# Internal dev docs — not user-facing
+docs/
+manuscript-update.md

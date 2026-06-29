@@ -1,69 +1,84 @@
 # 3D Feature Viewer for UniProt [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20274183.svg)](https://doi.org/10.5281/zenodo.20274183)
 
-3D Feature Viewer for UniProt is a browser extension that brings structural protein interpretation directly into UniProt. It adds an interactive 3D workspace to UniProt entry and variant pages so users can inspect post-translational modifications, variants, clinical annotations, prediction scores, and residue-prioritization overlays without leaving the UniProt workflow.
+A browser extension that brings structural protein interpretation directly into UniProt. It adds an interactive 3D workspace to UniProt entry pages so you can inspect post-translational modifications, variants, clinical annotations, prediction scores, and residue-prioritization overlays without leaving UniProt.
 
 ![UniProt 3D Viewer Screenshot](/icons/Screenshot.png)
 
-## What It Helps You Do? 
-###You can see most of the Uniprot features on the structure of your choice!
+## Features
 
 - View UniProt PTMs, disease-associated variants, ClinVar annotations, and AlphaMissense scores on available 3D structures.
-- Switch between AlphaFold models and mapped experimental PDB structures when available.
-- Inspect residues in local 3D context, including nearby annotated residues.
-- Use color overlays for pLDDT, beta-factor, AlphaMissense, enrichment hotspots, long-range contact hubs, and mutation/phenotype burden.
-- Export residue sets (or the entire session) and results for follow-up work in PyMOL, VMD, PDB-based workflows, spreadsheets, or machine-learning pipelines.
-- See the structural similarity of the selected ligand in the system within the alphafill ligands.
-  
-## Why Use It
-
-UniProt is often the first stop for protein annotation, but structural interpretation usually requires moving between multiple sites, choosing a structure, matching residue numbers, and manually transferring features into a molecular viewer. This extension keeps that process on the UniProt page and handles residue mapping for AlphaFold and chain-specific PDB structures.
-
-The built-in residue-prioritization views are intended for exploration and hypothesis generation. They highlight regions that may deserve closer inspection; they are not clinical classifiers or validated predictors of pathogenicity.
+- Switch between AlphaFold models and mapped experimental PDB structures.
+- Per-residue predictor table: EVE, ESM1b, FoldX ΔΔG, conservation, and CADD scores via ProtVar.
+- Binding pocket analysis: PDBe-KB known sites, constraint pocket detection, and pocket confidence scoring.
+- Open Targets tractability and drug evidence per residue.
+- Color overlays for pLDDT, AlphaMissense, enrichment hotspots, long-range contact hubs, and mutation burden.
+- Ligand similarity by CACTVS/Tanimoto fingerprint against AlphaFill transplants.
+- Export residue sets and sessions for PyMOL, VMD, spreadsheets, or ML pipelines.
 
 ## Install
 
-### Chrome Web Store
+### From a GitHub Release (recommended)
 
-[3D Feature Viewer for UniProt](https://chromewebstore.google.com/detail/uniprot-3d-feature-viewer/fplpkbigppbpbcdmpkefdoilfgcicaof?authuser=1)
+1. Go to the [Releases page](../../releases) and download the latest release.
+   - `chrome-extension-v2.0.0.zip` for Chrome
+   - `firefox-extension-v2.0.0.zip` for Firefox
+2. Unzip the downloaded file.
 
-### FireFox ADD-ONS
+**Chrome:**
+1. Open `chrome://extensions/`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked** and select the unzipped `chrome-extension-v2.0.0/` folder
 
-[3D Feature Viewer for UniProt](https://addons.mozilla.org/en-US/firefox/addon/3d-feature-viewer-for-uniprot/)
+**Firefox:**
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on**
+3. Select the `manifest.json` file inside the unzipped `firefox-extension-v2.0.0/` folder
 
-### Manual Install
+> Firefox temporary add-ons are removed on browser restart. For persistent installation, submit to [Mozilla Add-ons](https://addons.mozilla.org) or use a signed `.xpi`.
 
-1. Download or clone this repository.
-2. Open your browser's extensions page.
-   - Chrome: `chrome://extensions/`
-   - Firefox: `about:debugging#/runtime/this-firefox`
-3. Enable developer mode or temporary add-on loading.
-4. Load this project folder as an unpacked extension.
+### Build from source
+
+```powershell
+git clone https://github.com/aminkvh/3D-Feature-Viewer-for-UniProt.git
+cd 3D-Feature-Viewer-for-UniProt
+pwsh ./build-all.ps1
+```
+
+This produces `chrome-build/` and `firefox-build/` ready to load as unpacked extensions, plus `.zip` files for distribution.
 
 ## Quick Start
 
-1. Open a UniProt entry page, such as `https://www.uniprot.org/uniprotkb/P14867/entry`.
-2. Go to a section with PTMs, variants, or related residue annotations.
+1. Open any UniProt entry, e.g. `https://www.uniprot.org/uniprotkb/P14867/entry`
+2. Go to a section with PTMs, variants, or related annotations.
 3. Click **View in 3D**.
-4. Choose a structure, filter annotations, select residues, and export any results you want to reuse.
+4. Choose a structure, filter annotations, click residues or the Nearby panel to inspect.
+5. Export results via the Download menu.
 
-## What's new in v1.7.3
+## Changelog
 
-- Functional Features window 
-- Family & Domains window
-- Stream structures: AlphaFold model loads instantly, full discovery (experimental/isoform/computed) streams behind it
-- Isoform AlphaFold models: now fully supported with correct annotation mapping
-- PyMOL/VMD session export: Download menu has two new options to export a self-contained script that reproduces the exact on-screen view, so you can continue working in those programs
-- Ligand similarity by CACTVS fingerprint: Tanimoto scoring against PubChem for finding similar ligands in the structure
+### v2.0.0
+- **3D viewer migrated to Mol\*** — WebGL2 rendering via a sandboxed iframe; smoother interaction on large and multi-chain structures
+- **Per-residue predictor table** — EVE, ESM1b, FoldX ΔΔG, conservation, and CADD scores sourced from ProtVar at the per-substitution level
+- **Binding pocket analysis** — PDBe-KB known binding sites, constraint pocket heuristic (UFVPocket), and mean pocket pLDDT confidence
+- **Open Targets tractability** — drug tractability and clinical evidence per protein, shown in the residue report
+- **Ligand panel improvements** — AlphaFill transplant metadata, Tanimoto similarity display, and direct PubChem links
+- **PyMOL and VMD session export** with full feature parity (all layers, color modes, hotspots, pockets)
+- **Chrome (MV3) + Firefox (MV2) build** — separate manifests with a single `build-all.ps1` producing both packages
 
-## UX & Fixes
-- Buttons are anchored to subheadings instead of the main heading.
-- minor bug fixes.
+### v1.7.3
+- Functional Features and Family & Domains windows
+- Streaming structure load: AlphaFold model loads immediately, experimental/isoform/computed discovery streams behind it
+- Full isoform AlphaFold support with correct annotation mapping
+- PyMOL/VMD session export added to Download menu
+- Ligand similarity by CACTVS fingerprint (Tanimoto vs PubChem)
 
-* See [METHODS.md](METHODS.md) for a detailed description of all four residue-prioritization algorithms.
+## Residue-Prioritization Algorithms
+
+See [METHODS.md](METHODS.md) for a detailed description of all four algorithms: pathogenic-variant enrichment hotspots, long-range contact hubs, mutation/phenotype burden, and AlphaMissense residue scores.
 
 ## Data and Privacy
 
-The extension runs in the browser and has no server-side component. It retrieves protein, structure, and annotation data from public resources including UniProt, PDBe/PDB, AlphaFold DB, and related public endpoints.
+The extension runs entirely in the browser with no server-side component. It retrieves data from public resources (UniProt, PDBe, AlphaFold DB, ProtVar, Open Targets, PubChem, AlphaFill). No personal data is collected. See [PRIVACY_POLICY.md](PRIVACY_POLICY.md) for details.
 
 ## License
 
