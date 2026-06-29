@@ -1,6 +1,6 @@
 # 3D Feature Viewer for UniProt: User Guide
 
-This extension lets you look at a protein's 3D structure and its biological annotations (mutations, modification sites, binding pockets, and more) without leaving the UniProt page. This guide explains what everything does and when you would use it.
+This guide explains what the extension does and how to use it.
 
 ---
 
@@ -26,48 +26,46 @@ This extension lets you look at a protein's 3D structure and its biological anno
 
 ## What This Extension Does
 
-UniProt is a great starting point for learning about a protein, but understanding *where* an annotation sits in 3D space usually means opening a separate viewer, finding the right structure, and manually re-entering position numbers. This extension handles all of that automatically. It reads the UniProt page you are already on, fetches the best available structure, maps all the annotations onto it, and shows everything in one window.
+UniProt annotates proteins richly: post-translational modifications, disease-associated variants, functional sites, domain boundaries, and more. These annotations are presented as flat text lists organized by category. What is hard to see from a list is how these annotations relate to each other in three-dimensional space, and what their structural context is.
 
-You can explore:
-- Where disease-causing mutations cluster in the structure
-- Which residues are near a binding pocket
-- What effect a substitution is predicted to have
-- Which ligands fit into the structure and where
+This extension maps all of those annotation layers onto the protein's 3D structure simultaneously, directly inside the UniProt page. You can see a disease-associated variant at position 52, a phosphorylation site at position 50, and a known active-site residue at position 48 all at once, on the structure, with their spatial relationships visible. Switching between annotation types, color modes, and structures happens without leaving the page or re-entering residue numbers.
+
+The viewer also provides, for each residue you click, aggregated information from several external databases: clinical variant classifications, per-substitution effect predictions from multiple models, binding pocket evidence, and drug tractability data.
 
 ---
 
 ## Opening the Viewer
 
-When you visit a UniProt protein entry (for example `https://www.uniprot.org/uniprotkb/P14867/entry`), the extension adds **View in 3D** buttons directly next to relevant sections on the page. Just click the button closest to the annotations you are interested in.
+When you visit a UniProt protein entry (for example `https://www.uniprot.org/uniprotkb/P14867/entry`), the extension adds **View in 3D** buttons directly next to relevant sections on the page. Click the button closest to the annotation type you want to start with.
 
 | Button | Where it appears | What it opens the viewer with |
 |---|---|---|
-| **View PTMs in 3D** | PTM / Processing section | Chemical modifications highlighted |
-| **View Variants in 3D** | Disease & Variants section | Disease-associated mutations highlighted |
-| **View Sites in 3D** | Function section | Active sites and binding residues highlighted |
+| **View PTMs in 3D** | PTM / Processing section | PTM sites shown as colored spheres |
+| **View Variants in 3D** | Disease & Variants section | Disease-associated variants shown as colored spheres |
+| **View Sites in 3D** | Function section | Active sites and binding residues shown |
 | **View Domains in 3D** | Family & Domains section | Domain boundaries shown and colored |
-| **View in 3D** | Structure section | Full structure, all layers available |
-| **View in 3D** | Subcellular Location | Structure colored by membrane regions |
+| **View in 3D** | Structure section | Full structure, all annotation layers available |
+| **View in 3D** | Subcellular Location | Structure colored by membrane topology |
 
-The viewer opens as a panel on the right side of the page. You can keep reading UniProt on the left while interacting with the 3D viewer on the right.
+The viewer opens on the right side of the page. The UniProt page remains on the left so you can read annotations and see them on the structure at the same time.
 
 ---
 
 ## Choosing a Structure
 
-The **structure selector** is at the top of the viewer. Use the **← →** arrows or the dropdown menu to switch between available structures for this protein.
+The **structure selector** is at the top of the viewer. Use the **← →** arrows or the dropdown menu to switch between available structures.
 
 **What loads and in what order:**
-1. **AlphaFold model:** An AI-predicted structure is available for almost every UniProt entry and loads first so you are never waiting.
-2. **Experimental PDB structures:** Crystal structures, cryo-EM maps, and NMR models are discovered in the background and added to the list. These show where the protein has actually been observed.
-3. **Isoform models:** If the protein has reviewed isoforms, their AlphaFold models appear here.
-4. **Other computed models:** From SWISS-MODEL, ModelArchive, and similar sources.
+1. **AlphaFold model:** A computationally predicted structure from AlphaFold (Jumper et al., 2021, *Nature*) is available for most reviewed UniProt entries and loads first. AlphaFold models cover the full sequence but are predicted; confidence varies by region (see pLDDT in Color Modes).
+2. **Experimental PDB structures:** Crystal structures, cryo-EM maps, and NMR ensembles from the PDB are discovered in the background. These are determined from physical experiments but may cover only part of the sequence, may be from a truncated or mutant construct, and represent the protein under specific experimental conditions.
+3. **Isoform models:** AlphaFold models for reviewed isoforms, where available.
+4. **Other computed models:** From SWISS-MODEL, ModelArchive, and similar repositories.
 
-Each entry in the dropdown shows how much of the protein it covers (as a percentage) and, for experimental structures, the resolution and method. A **⚛** icon means the structure contains chains from more than one organism, which is useful context if you are working with a complex.
+Each entry in the dropdown shows the sequence coverage (as a percentage) and, for experimental structures, the method and resolution. A **⚛** icon means the structure contains chains from more than one organism.
 
-If the protein is part of a multi-chain complex, the **Other chains** button lists the partner proteins and links to their UniProt pages. The **Partners** button lets you overlay annotations from those partner proteins onto the same 3D view.
+For multi-chain structures, the **Other chains** button lists partner proteins with links to their UniProt pages. The **Partners** button overlays annotations from partner chains onto the same view.
 
-You can set which type of structure loads by default in [Settings](#settings).
+Which structure type loads by default can be set in [Settings](#settings).
 
 ---
 
@@ -77,104 +75,98 @@ You can set which type of structure loads by default in [Settings](#settings).
 
 | Action | What it does |
 |---|---|
-| Click a residue or atom | Opens the details panel for that position |
+| Click a residue | Opens the details panel for that position |
 | Click a ligand | Opens the ligand panel |
 | Double-click | Closes the details panel and resets the view |
 | Scroll wheel | Zoom in and out |
 | Click and drag | Rotate the structure |
-| Right-click and drag | Move the view without rotating |
+| Right-click and drag | Pan without rotating |
 
 **Buttons in the top bar:**
 
-- **Reset:** Returns everything to its starting state (default structure, default colors, no focused residue).
-- **☀ / ☾:** Switch between a light and dark background.
-- **📷 Screenshot:** Saves an image of the current view.
-- **Tractability:** Shows drug development data for this protein from Open Targets, including whether approved drugs or clinical candidates exist and whether the protein is considered a good small-molecule or antibody target.
+- **Reset:** Returns to the default structure, default coloring, and no focused residue.
+- **☀ / ☾:** Switch between light and dark background.
+- **📷 Screenshot:** Save an image of the current view.
+- **Tractability:** Drug tractability assessment for this protein from Open Targets (Ochoa et al., 2021, *Nat Genet*), including approved drugs, clinical candidates, and small-molecule or antibody tractability assessments.
 - **Download:** All export options (see [Exporting Your Results](#exporting-your-results)).
 - **✕:** Close the viewer.
 
-**The sequence track** appears below the 3D canvas as a scrollable strip of amino acid letters. Each position is colored to show what is known about it. Grey means the residue is not resolved in the loaded structure; blue means it is present. Orange underlines mark PTM sites and red dots mark variant positions. Click any resolved residue in the sequence strip to select it and focus the 3D view on it.
+**The sequence track** below the 3D canvas shows the full protein sequence as a scrollable strip. Positions are colored to show annotation status. Grey means the residue is not present in the loaded structure; blue means it is modeled. Orange underlines mark PTM sites; red dots mark variant positions. Click any modeled residue to select it and center the 3D view on it.
 
 ---
 
 ## Annotation Panels
 
-The right-side panel shows the biological annotations you can display on the structure. Every section is collapsible; click the header to expand or collapse it. **All** and **None** buttons toggle everything in a section at once. The **C** button switches the coloring style for spheres in that layer.
+The right-side panel controls which annotation layers are visible on the structure. Every section is collapsible. **All** and **None** toggle all items in a section. The **C** button changes the coloring scheme for spheres in that layer.
+
+The key capability here is layering: you can show PTMs, disease-associated variants, functional sites, and domains simultaneously on the same structure, with different sphere colors per layer, so their spatial relationships become visible.
 
 ### PTMs (Post-Translational Modifications)
 
-Post-translational modifications are chemical changes that happen to a protein after it is made, such as phosphorylation, glycosylation, and acetylation. These can switch a protein's activity on or off, change where it goes in the cell, or affect how it interacts with other molecules.
+Post-translational modifications are covalent chemical changes made to a protein after translation, such as phosphorylation, glycosylation, ubiquitination, and acetylation. These are annotated in UniProt from the literature and curated databases.
 
-The PTM panel groups modifications by type. Expand any category to see individual sites, each with a zoom button that centers the 3D view on that residue.
+The PTM panel groups modifications by type. Expand any category to see individual sites. Each row has a zoom button that centers the 3D view on that residue.
 
-You can also overlay disease variants, functional sites, domains, and ligands in the same view using the additional sections lower in the panel.
+Other annotation layers (variants, functional sites, domains, ligands) can be overlaid in the same view using the additional sections in the panel.
 
 ### Disease Variants
 
-These are positions in the protein where a mutation has been linked to a disease, or where a computational tool predicts the change would be damaging.
+These are amino acid positions where variants have been reported in the context of disease or where computational tools predict a change would be deleterious. The annotations are drawn from UniProt, which integrates ClinVar, the published literature, and computational predictors.
 
 **Filtering options:**
-- **By disease:** Show only the variants associated with a disease you care about.
-- **By consequence:** Filter by how confident the annotation is. Options include Likely pathogenic, Predicted deleterious, Uncertain significance, and Likely benign. These categories come from ClinVar (a clinical database) and computational predictions.
-- **By provenance:** Filter by where the annotation came from, such as ClinVar submissions, published literature, or computational predictors.
-
-Use these filters together to focus on, for example, only the high-confidence pathogenic variants in a specific disease.
+- **By disease:** Restrict to variants associated with a specific disease.
+- **By consequence:** Filter by annotation confidence. Categories include Likely pathogenic, Predicted deleterious, Uncertain significance, and Likely benign, following ClinVar's classification framework.
+- **By provenance:** Filter by annotation source (ClinVar submissions, published literature, or computational predictors).
 
 ### Functional Sites
 
-These are residues directly involved in the protein's biological function, for example the amino acids in an enzyme's active site that catalyze a reaction, or a metal-binding residue that coordinates a zinc ion.
-
-Each site has a zoom button. You can overlay PTMs, variants, and domains at the same time.
+Residues annotated in UniProt as directly involved in the protein's biochemical activity: catalytic residues, ligand-binding residues, metal-coordinating residues, and similar functional annotations derived from the literature and curated resources such as the Catalytic Site Atlas.
 
 ### Domains
 
-Domains are stretches of the protein that fold into a recognizable structural unit and often carry a specific function. The **C (color)** button colors the protein backbone by domain, giving each a different color so you can immediately see which part of the structure corresponds to which functional region.
-
-Each domain entry has a zoom button to bring that region into view.
+Annotated domains, regions, coiled coils, transmembrane segments, and signal peptides from UniProt. The **C (color)** button assigns a distinct color to each domain along the protein backbone, making it easy to see which part of the 3D structure corresponds to which annotated region.
 
 ### Ligands
 
-Ligands are small molecules bound to the protein in the loaded structure. For AlphaFold models, the extension uses **AlphaFill**, which transplants ligands from experimentally solved structures of similar proteins into the AlphaFold model to show where they would likely bind.
+Small molecules present in the loaded structure. For AlphaFold models, the extension integrates **AlphaFill** (Hekkelman et al., 2023, *Nat Methods*), which transplants ligands from experimentally determined structures of homologous proteins into the AlphaFold model at structurally equivalent positions.
 
-- Each ligand is listed by its chemical code (e.g. ATP, HEM).
-- For transplanted ligands, you can see the sequence identity of the donor protein (how similar it was to yours) and the donor PDB entry it came from. Higher identity means the transplant is more likely to be accurate.
-- Use the **exclude ions** toggle to hide small ions (Na+, Cl-, Mg2+, etc.) that are often just structural and not the main ligand of interest.
-- Click the zoom button or the ligand name to focus the view and open the [Ligand Panel](#clicking-a-ligand-the-ligand-panel).
+- Each ligand is listed by its CCD code (e.g. ATP, HEM, ZN).
+- For AlphaFill transplants, the donor protein's sequence identity to the query and the source PDB entry are shown. Transplant accuracy is expected to increase with sequence identity, but the placement is a structural inference, not an experimentally determined position for this protein.
+- The **exclude ions** toggle hides monoatomic ions (Na+, Cl-, Mg2+, etc.) that are often crystallographic rather than functional.
+- Click the zoom button or ligand name to focus the view and open the [Ligand Panel](#clicking-a-ligand-the-ligand-panel).
 
 ---
 
 ## Color Modes
 
-The **color mode** dropdown (top-right of the viewer) changes how the protein backbone is colored. It does not affect the annotation spheres, which keep their own colors.
-
-| Mode | What it shows | Best used when |
-|---|---|---|
-| **Default** | Uniform color | You want annotation spheres to stand out clearly |
-| **pLDDT confidence** | AlphaFold's confidence per residue: blue = high confidence, red = low confidence | Working with an AlphaFold model and checking which regions to trust |
-| **Experimental B-factor** | How much each residue moved in the crystal or solution: blue = rigid, red = flexible | Working with an experimental structure |
-| **Membrane topology** | Colors different parts of a membrane protein by location (inside cell, membrane, outside) | Studying a transmembrane protein |
-| **AlphaMissense summary** | Average predicted harmfulness of all possible mutations at each position | Getting a quick overview of which regions are most sensitive to change |
-
-**Exploratory modes** are investigational tools to help generate hypotheses. They are shown only when enabled in [Settings](#settings).
+The **color mode** dropdown changes how the protein backbone is colored. Annotation spheres keep their own colors regardless of the backbone color mode.
 
 | Mode | What it shows |
 |---|---|
-| **Pathogenic variant hotspots** | Positions where disease-causing mutations are more spatially clustered than expected by chance, pointing to potential functional or structurally important regions |
-| **Contact-network centrality** | Residues that act as structural hubs, with many of the shortest communication paths in the protein passing through them, making them candidates for allosteric or stability-critical positions |
-| **Recurrent phenotype residues** | Positions that accumulate multiple different disease labels across independent reports, suggesting broad functional importance |
-| **Constraint pocket clusters** | Groups of residues that form buried, evolutionarily constrained cavities, which are candidate binding sites even without known ligands. A sensitivity slider lets you make the threshold more or less stringent. |
+| **Default** | Uniform backbone color; annotation spheres are most visible here |
+| **pLDDT score** | Per-residue pLDDT from the AlphaFold model, a measure of local structural confidence used by AlphaFold authors (Jumper et al., 2021): blue (pLDDT > 90, high local confidence) to red (pLDDT < 50, low confidence, often disordered). Not applicable to experimental structures. |
+| **Experimental B-factor** | Crystallographic or NMR B-factor per residue, reflecting atomic displacement in the experimental data: blue (low B-factor, more ordered) to red (high B-factor, more disordered or flexible). Applicable to experimental structures only. |
+| **Membrane topology** | Colors transmembrane, cytoplasmic, and extracellular segments when topology annotations are present in UniProt. |
+| **AlphaMissense summary** | Mean AlphaMissense pathogenicity score (Cheng et al., 2023, *Science*) across all 19 possible amino acid substitutions at each position. A high mean score indicates that most substitutions at that position are predicted to be damaging, suggesting the position is functionally constrained. |
 
-These four modes highlight regions worth investigating further. They are not clinical predictions.
+**Exploratory modes** are research-oriented overlays for hypothesis generation. They appear only when enabled in [Settings](#settings). None of these constitute clinical evidence.
+
+| Mode | What it shows |
+|---|---|
+| **Pathogenic variant hotspots** | Residues where disease-associated variants are more spatially concentrated than expected by permutation, using an approach analogous to published spatial clustering methods (e.g. Kamburov et al., 2015, *PNAS*). Tiered by statistical support (strong, moderate, weak). |
+| **Contact-network centrality** | Residues with high betweenness centrality in the Ca-Ca contact graph (8 Å cutoff), computed with Brandes' exact algorithm. High-centrality residues lie on many shortest paths through the contact network and may be relevant to structural communication or stability. |
+| **Recurrent phenotype residues** | Positions that accumulate multiple distinct disease or phenotype labels across independent variant reports, scored by a composite of variant count and phenotype diversity. |
+| **Constraint pocket clusters** | Residue groups forming geometrically buried, evolutionarily constrained cavities, identified using a heuristic analogous to pocket detection methods. A sensitivity slider controls the FDR threshold. |
 
 ---
 
 ## Clicking a Residue: The Details Panel
 
-Click any residue in the 3D canvas or the sequence strip to open the details panel. It pulls together everything known about that specific position.
+Click any modeled residue in the 3D canvas or the sequence strip to open the details panel. It aggregates annotations and predictions for that specific position from multiple sources.
 
 ### Residue header
 
-Shows the amino acid name and position (e.g. **ALA 421**). Small colored flags appear if any exploratory algorithm flagged this residue:
+Shows the three-letter amino acid code and UniProt sequence position (e.g. **ALA 421**). Colored flags indicate which exploratory overlays have flagged this residue:
 
 - Red: Pathogenic variant hotspot
 - Orange: Recurrent phenotype residue
@@ -183,57 +175,57 @@ Shows the amino acid name and position (e.g. **ALA 421**). Small colored flags a
 
 ### Nearby residues
 
-A distance slider (default ~5 Å, adjustable from 2 to 30 Å) lists all residues within that distance in the structure. Each nearby residue is labeled with its annotation colors. Click any of them to refocus the view there.
+A distance slider (default 5 Å, range 2 to 30 Å) lists all residues within that radius in the current structure. Each entry is color-coded by its annotation type. Click any residue in the list to move the focus there.
 
-This is useful for understanding local structural context, for example whether a disease mutation is sitting next to an active site residue.
+This is one of the core uses of the extension: selecting a disease-associated variant and immediately seeing which PTMs, functional sites, and other variants are spatially close to it on the structure.
 
 ### PTMs, Sites, and Mutagenesis
 
-If this position has a post-translational modification, a functional site annotation, or an experimentally tested mutagenesis result, it appears here as labeled chips.
+PTM annotations, functional site annotations, and experimental mutagenesis results at this position are shown as labeled chips.
 
 ### Variants
 
-All mutations annotated at this position are listed. For each one you can see:
-- The amino acid change (e.g. W123M, meaning tryptophan to methionine at position 123)
-- The associated disease(s)
-- The clinical significance (Pathogenic, Likely pathogenic, Uncertain, etc.)
+All variants annotated at this position in UniProt. For each variant:
+- The amino acid change (e.g. W123M: tryptophan to methionine at position 123)
+- Associated disease or phenotype labels
+- Clinical significance classification (Pathogenic, Likely pathogenic, Variant of uncertain significance, Likely benign, Benign) following ClinVar's five-tier framework
 
-Click **Show evidence** to expand each variant and see the ClinVar review level (how many independent submissions support this classification), the dbSNP identifier, how common the variant is in the general population (gnomAD frequency, where a very rare variant in healthy people is more likely to be disease-causing), and the genomic coordinates.
+Click **Show evidence** to expand each variant and see: the ClinVar review status (number of independent submitting laboratories), the dbSNP identifier, the gnomAD population allele frequency (Karczewski et al., 2020, *Nature*), and the genomic coordinates. A variant that is very rare in large population cohorts is more consistent with pathogenicity than one that is common, though rarity alone does not establish disease association.
 
 ### PTM–Variant Proximity
 
-Two sliders let you search for PTMs or pathogenic variants near this position within a chosen radius. Results appear as colored chips you can click to jump to that position. This helps you spot cases where a disease mutation is close to a modification site, which can suggest they interfere with each other.
+Two distance sliders search for PTMs or disease-associated variants within a configurable radius of the selected residue. Results are shown as colored chips. This highlights spatial co-occurrence of different annotation types, such as a variant landing adjacent to a phosphorylation site.
 
 ### Binding & Pockets
 
-Two sources of information about whether this residue is near a binding site:
+**Predicted pockets** (from ProtVar/AutoSite): Geometric cavities identified computationally from the structure. For each pocket near this residue:
+- The residues lining the pocket (click to highlight them in 3D)
+- Buriedness (0 = surface-exposed, 1 = fully buried interior)
+- pLDDT or B-factor at pocket residues, as a local confidence indicator
+- Radius of gyration (a measure of the cavity's spatial extent)
+- Amino acid composition of the pocket lining (fractions hydrophobic, aromatic, acidic, basic, polar)
+- **Find Similar Motifs:** Links to RCSB's structural motif search for this pocket geometry across all PDB structures
 
-**Predicted pockets** are computed from the structure. For each pocket at or near this residue:
-- How many residues line the pocket, with a button to highlight them in 3D
-- How buried the pocket is (0 = fully exposed on the surface, 1 = deeply buried)
-- How confident the structure is in this region (pLDDT for AlphaFold, or B-factor for experimental)
-- The pocket's physical size in Angstroms (roughly how big the cavity is)
-- The amino acid composition of the pocket: what fraction is hydrophobic, aromatic, positively charged, negatively charged, or polar. This tells you what kind of molecule might bind there.
-- **Find Similar Motifs:** Searches the entire Protein Data Bank for structures with a similar pocket geometry. Useful for finding proteins with known ligands that might bind here too.
+These are predicted cavities. Their relevance as binding sites depends on additional evidence.
 
-**Experimental binding** (from PDBe-KB): If any experimental PDB structure has a ligand or protein-protein interface at this position, it is listed here with links to those structures. This is the strongest evidence that a pocket is real and relevant.
+**Experimental binding** (from PDBe-KB): Ligand contacts and protein-protein interface residues observed at this position in experimentally determined structures in the PDB. This is direct structural evidence that the position contacts a ligand or an interacting protein.
 
 ### Predictions
 
-Computational predictions of how harmful a mutation at this position would be, sourced from ProtVar.
+Per-position and per-substitution computational predictions from ProtVar (Nightingale et al., 2023, *Nat Biotechnol*).
 
-**Per-position scores (apply to the whole position):**
-- **Conservation** (0 to 1): How consistent this amino acid is across evolution. A score close to 1 means this position is almost never mutated across species, suggesting it is important.
-- **M3D:** A structural predictor that tells you whether a change here is likely to be damaging and which structural feature (such as a buried hydrophobic core or active site proximity) makes it sensitive.
+**Per-position:**
+- **Conservation** (0 to 1): Evolutionary conservation score. A score near 1 indicates the amino acid at this position is nearly invariant across homologous sequences, consistent with functional or structural constraint.
+- **M3D:** A structure-based predictor of mutational impact at this position, including the structural feature identified as the main driver (e.g. buried position, active site proximity).
 
-**Per-substitution table** (one row per possible amino acid swap). For each of the 19 possible changes you could make at this position:
-- **AlphaMissense:** Google DeepMind's model trained on evolutionary and structural data. Scores range from 0 to 1; above 0.564 is considered likely pathogenic.
-- **EVE:** An evolutionary model that looks at how often this change appears across thousands of related sequences.
-- **CADD:** A score combining many different signals. Higher numbers mean a more likely damaging change (typically above 20 is considered notable).
-- **ESM-1b:** A language model trained on protein sequences, predicting whether this substitution is unusual relative to what evolution has allowed.
-- **FoldX delta-delta-G:** Predicted change in folding stability in kcal/mol. Positive values mean the mutation destabilizes the protein.
+**Per-substitution table** (one row per possible amino acid change):
+- **AlphaMissense** (Cheng et al., 2023, *Science*): A missense pathogenicity score from 0 to 1. Values above 0.564 are classified as likely pathogenic; below 0.34 as likely benign; the interval between is ambiguous. Trained on evolutionary and structural features.
+- **EVE** (Fraternali et al. / Fraternali group): An unsupervised evolutionary model scoring variant fitness from deep sequence alignments. More negative values indicate a substitution less consistent with the evolutionary record.
+- **CADD** (Kircher et al., 2014, *Nat Genet*): A combined annotation score integrating many genomic and functional features. Phred-scaled; values above 20 correspond to the top 1% of deleteriousness across the human genome.
+- **ESM-1b** (Rives et al., 2021, *PNAS*): A protein language model likelihood ratio score. More negative values indicate a substitution less expected by the model trained on millions of protein sequences.
+- **FoldX DDG** (Schymkowitz et al., 2005, *Nucleic Acids Res*): Predicted change in folding free energy in kcal/mol. Positive values indicate the substitution is predicted to destabilize the folded structure.
 
-Variants already documented in UniProt are shown in bold with a marker. Click any row to open the full ProtVar record.
+Variants already documented in UniProt are shown in bold. Click any row to open the full ProtVar record.
 
 ---
 
@@ -241,73 +233,75 @@ Variants already documented in UniProt are shown in bold with a marker. Click an
 
 Click any ligand in the 3D view or in the Ligands section to open the ligand panel.
 
-If the same ligand appears in more than one location in the structure (for example, an enzyme with two active sites), use the left and right arrows to move between copies.
+If the same ligand appears in more than one binding site in the structure, use the left and right arrows to navigate between copies.
 
 ### Nearby residues
 
-Same distance slider as the residue panel. Lists protein residues within range of the ligand, which are the residues most likely to be important for binding.
+Same distance slider as the residue panel. Lists protein residues within range of the ligand, annotated by their type.
 
 ### AlphaFill transplant evidence
 
-For ligands placed by AlphaFill into AlphaFold models:
-- **Sequence identity:** How similar the donor protein was to this one. Higher identity means a more reliable transplant.
-- **Donor PDB entry:** The experimental structure the ligand came from.
-- **Clash score:** Whether the transplanted ligand fits cleanly (low clash) or overlaps with the model atoms (high clash, less reliable).
+For ligands placed by AlphaFill (Hekkelman et al., 2023, *Nat Methods*):
+- **Sequence identity:** The pairwise sequence identity between the donor protein and this protein. Higher identity supports a more reliable structural transfer.
+- **Donor PDB entry:** The experimentally determined structure the ligand was taken from.
+- **Clash score:** An estimate of how well the transplanted ligand fits the AlphaFold model geometry (low = few steric conflicts, high = significant overlap with model atoms).
+
+These are structural inferences. Binding of this ligand to this protein has not necessarily been demonstrated experimentally.
 
 ### Chemical information
 
-The ligand's name, molecular formula, molecular weight, and how many hydrogen-bond donors and acceptors it has. Copy buttons are provided for the SMILES string (a text representation of the molecule's structure) and InChIKey (a unique chemical identifier useful for searching databases).
+Loaded from RCSB: the ligand's IUPAC name, molecular formula, molecular weight, hydrogen-bond donor and acceptor counts. Copy buttons are provided for the SMILES string and InChIKey.
 
 ### Pocket evidence
 
-Same predicted pocket and experimental binding data as the residue panel, focusing on the residues surrounding this ligand.
+Same predicted pocket and experimental binding data as the residue panel, restricted to the region surrounding this ligand.
 
 ### External links
 
-- **PubChem:** Detailed chemistry and bioactivity data for this compound
-- **DrugBank:** Drug and target information if this is a known pharmaceutical
-- **Similarity search:** Find structurally similar molecules in PubChem
+- **PubChem:** Compound record with bioassay and literature data
+- **DrugBank:** Drug and pharmacological target information where applicable
+- **Similarity search:** PubChem 2D or 3D similarity search for structurally related compounds
 
 ### Ligand similarity
 
-Other ligands in the same structure ranked by how chemically similar they are to this one, using a standard molecular fingerprint comparison (Tanimoto similarity, where a score of 1.0 means identical and 0 means completely different). Click any entry to focus on that ligand.
+Other ligands in the same structure ranked by Tanimoto similarity of their CACTVS 881-bit fingerprints (a standard 2D structural fingerprint). A score of 1.0 indicates identical fingerprints; 0 indicates no shared bits. Click any entry to navigate to that ligand.
 
 ---
 
 ## Exporting Your Results
 
-Click **Download** in the top bar to access all export options.
+Click **Download** in the top bar for all export options.
 
 ### CSV annotation table
 
-A spreadsheet with one row per residue and one column per annotation type. Useful for further analysis in Python, R, or Excel. Columns include: UniProt position, amino acid, PTMs (one column per category), diseases (one column per disease), variant counts, how common variants are in the healthy population, AlphaMissense summary scores, exploratory algorithm results, and which ligands are nearby.
+A tabular file with one row per UniProt residue position. Columns include: amino acid identity, PTM annotations (one column per category), disease-associated variant counts and labels, functional site flags, gnomAD population frequencies, AlphaMissense per-position statistics, exploratory algorithm outputs, and nearby ligand CCD codes.
 
-**Download CSV + ProtVar predictions** produces the same file but also includes per-residue conservation, stability, and effect prediction scores from ProtVar for every residue in the protein. This takes longer because it queries ProtVar's API for the whole sequence.
+**Download CSV + ProtVar predictions** extends this with per-residue conservation scores and per-position EVE, ESM-1b, FoldX, and CADD summaries from ProtVar. This requires one additional network request to the ProtVar API.
 
 ### PyMOL session
 
-Downloads a script file that you can open in PyMOL to reproduce the exact view from the extension. The protein will appear with the same coloring, the same annotation spheres, and (if you had a residue selected) the same zoomed focus. Useful for making publication-quality figures or continuing analysis in PyMOL.
+A `.pml` script that reproduces the current view in PyMOL (Schrodinger LLC). The protein cartoon, annotation spheres, ligand representations, and (if a residue is focused) the zoomed selection are all included with the same coloring as the extension. Useful for figure preparation or further analysis.
 
 ### VMD session
 
-Same as the PyMOL session but for VMD, a molecular visualization program widely used in computational biophysics.
+A `.vmd` script that reproduces the current view in VMD (Humphrey et al., 1996, *J Mol Graph*).
 
 ### Copy to clipboard
 
-Copies a selection string (in PyMOL or VMD format) listing the currently visible annotated residues. You can paste this directly into PyMOL or VMD to select those residues in a structure you already have open. The format is set in [Settings](#settings).
+A residue selection string in PyMOL (`resi` syntax) or VMD (`resid` syntax), listing the currently visible annotated residues. The format is set in [Settings](#settings).
 
 ---
 
 ## Settings
 
-Open the settings page from your browser's extension management menu. Changes take effect the next time you open the viewer.
+Open the settings page from your browser's extension management menu. Changes apply the next time you open the viewer.
 
 | Setting | What it controls |
 |---|---|
-| **Default structure** | Whether AlphaFold, the best experimental structure, or the highest-coverage structure loads first |
-| **Default color mode** | The coloring applied when the viewer first opens |
+| **Default structure** | Which structure type loads first: AlphaFold model, experimental (PDB), or highest sequence coverage |
+| **Default color mode** | The backbone coloring applied when the viewer opens |
 | **Clipboard format** | Whether copied selections use PyMOL or VMD syntax |
-| **PTM search radius** | The default distance used when searching for nearby PTMs in the details panel |
-| **Variant search radius** | The default distance used when searching for nearby variants |
-| **Font size** | Makes the text in the side panels smaller or larger |
-| **Show exploratory algorithms** | When turned off, the four investigational color modes (hotspots, hubs, burden, pockets) are hidden from the color dropdown, giving a simpler interface focused on direct annotations |
+| **PTM search radius** | Default radius for nearby PTM search in the details panel |
+| **Variant search radius** | Default radius for nearby variant search in the details panel |
+| **Font size** | Text size in the annotation panels |
+| **Show exploratory algorithms** | When off, the four investigational color modes are hidden from the color dropdown |

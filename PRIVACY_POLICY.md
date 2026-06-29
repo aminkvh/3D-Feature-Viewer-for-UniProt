@@ -14,19 +14,19 @@ The extension operates entirely within your browser. When you open a UniProt ent
 
 ## External Services Accessed
 
-All network requests are read-only calls to public scientific APIs. The requests contain only the protein accession or structure identifier needed to retrieve data — no user identifiers, IP addresses (beyond those inherent to any web request), or browsing history.
+All network requests are read-only calls to public scientific APIs. The requests contain only the protein accession or structure identifier needed to retrieve data. No user identifiers or browsing history are transmitted beyond the network metadata inherent to any web request.
 
-| Service | Data Retrieved | Privacy Policy |
+| Service | Data Retrieved | Privacy Information |
 |---|---|---|
 | [UniProt](https://www.uniprot.org) | Protein sequence, variants, PTMs, functional features | [uniprot.org/help/privacy](https://www.uniprot.org/help/privacy) |
-| [PDBe / EBI](https://www.ebi.ac.uk) | Experimental structures, residue mapping, binding sites, PDBe-KB annotations | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection/privacy-notice/web-services) |
-| [AlphaFold DB](https://alphafold.ebi.ac.uk) | Predicted protein structures and AlphaMissense scores | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection/privacy-notice/alphafold) |
+| [PDBe / EBI](https://www.ebi.ac.uk) | Experimental structures, residue mapping, binding sites, PDBe-KB annotations | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
+| [AlphaFold DB](https://alphafold.ebi.ac.uk) | Predicted protein structures and AlphaMissense scores | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
 | [AlphaFill](https://alphafill.eu) | Transplanted ligand metadata for AlphaFold models | [alphafill.eu](https://alphafill.eu) |
 | [ProtVar](https://www.ebi.ac.uk/ProtVar) | Per-substitution effect predictions (EVE, ESM1b, FoldX, CADD, conservation) | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
 | [Open Targets Platform](https://platform.opentargets.org) | Drug tractability and clinical evidence | [platform.opentargets.org/privacy-policy](https://platform.opentargets.org/privacy-policy) |
 | [RCSB PDB](https://www.rcsb.org) | Structure coordinate files and structural motif search | [rcsb.org/pages/privacy-policy](https://www.rcsb.org/pages/privacy-policy) |
 | [PubChem](https://pubchem.ncbi.nlm.nih.gov) | Ligand chemical descriptors and fingerprints | [ncbi.nlm.nih.gov/home/about/policies](https://www.ncbi.nlm.nih.gov/home/about/policies) |
-| [SWISS-MODEL](https://swissmodel.expasy.org) | Comparative homology models | [swissmodel.expasy.org/privacy-policy](https://swissmodel.expasy.org/privacy-policy) |
+| [SWISS-MODEL](https://swissmodel.expasy.org) | Comparative homology models | [expasy.org/terms-of-use](https://www.expasy.org/terms-of-use) |
 | [ModelArchive](https://www.modelarchive.org) | Deposited computed models | [modelarchive.org](https://www.modelarchive.org) |
 
 ---
