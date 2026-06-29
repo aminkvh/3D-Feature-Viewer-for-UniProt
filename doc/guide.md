@@ -58,8 +58,8 @@ The **structure selector** is at the top of the viewer. Use the **← →** arro
 **What loads and in what order:**
 1. **AlphaFold model:** A computationally predicted structure from AlphaFold (Jumper et al., 2021, *Nature*) is available for most reviewed UniProt entries and loads first. AlphaFold models cover the full sequence but are predicted; confidence varies by region (see pLDDT in Color Modes).
 2. **Experimental PDB structures:** Crystal structures, cryo-EM maps, and NMR ensembles from the PDB are discovered in the background. These are determined from physical experiments but may cover only part of the sequence, may be from a truncated or mutant construct, and represent the protein under specific experimental conditions.
-3. **Isoform models:** AlphaFold models for reviewed isoforms, where available.
-4. **Other computed models:** Comparative homology models from SWISS-MODEL (template-based models built from structures in the PDB) and computationally deposited models from ModelArchive. Coverage and reliability depend on template availability and the depositing group's methods.
+3. **Isoform models:** AlphaFold models for reviewed isoforms, where available. Discovered via the 3D-Beacons network (Varadi et al., 2022, *Nucleic Acids Res*).
+4. **Other computed models:** Comparative homology models from SWISS-MODEL (template-based models built from structures in the PDB) and computationally deposited models from ModelArchive, surfaced through the 3D-Beacons network. Coverage and reliability depend on template availability and the depositing group's methods.
 
 Each entry in the dropdown shows the sequence coverage (as a percentage) and, for experimental structures, the method and resolution. A **⚛** icon means the structure contains chains from more than one organism.
 

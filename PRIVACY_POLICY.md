@@ -19,7 +19,7 @@ All network requests are read-only calls to public scientific APIs. The requests
 | Service | Data Retrieved | Privacy Information |
 |---|---|---|
 | [UniProt](https://www.uniprot.org) | Protein sequence, variants, PTMs, functional features | [uniprot.org/help/privacy](https://www.uniprot.org/help/privacy) |
-| [PDBe / EBI](https://www.ebi.ac.uk) | Experimental structures, residue mapping, binding sites, PDBe-KB annotations | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
+| [PDBe / EBI](https://www.ebi.ac.uk) | Experimental structures, residue mapping, binding sites, PDBe-KB annotations, 3D-Beacons structure index | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
 | [AlphaFold DB](https://alphafold.ebi.ac.uk) | Predicted protein structures and AlphaMissense scores | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
 | [AlphaFill](https://alphafill.eu) | Transplanted ligand metadata for AlphaFold models | [alphafill.eu](https://alphafill.eu) |
 | [ProtVar](https://www.ebi.ac.uk/ProtVar) | Per-substitution effect predictions (EVE, ESM1b, FoldX, CADD, conservation) | [ebi.ac.uk/data-protection](https://www.ebi.ac.uk/data-protection) |
