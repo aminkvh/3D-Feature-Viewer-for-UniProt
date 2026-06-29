@@ -8,6 +8,7 @@ const UFVState = (() => {
         showClinVar: true,
         showAlphaMissense: true,
         showOptionalTracks: false,
+        showExploratoryAlgorithms: true,
         nearbyDistance: 5,    // Å — residue focus neighbourhood radius
         proxPtmRadius: 8,    // Å — PTM search radius in proximity panel
         proxVarRadius: 12,   // Å — pathogenic variant search radius in proximity panel

@@ -6,6 +6,7 @@ const DEFAULTS = {
     coloringMode: 'default',
     copyFormat: 'pymol',
     showOptionalTracks: false,
+    showExploratoryAlgorithms: true,
     proxPtmRadius: 8,
     proxVarRadius: 12,
     fontScale: 0,
@@ -20,6 +21,7 @@ function loadOptions() {
         byId('opt-color').value = s.coloringMode;
         byId('opt-copy').value = s.copyFormat;
         byId('opt-optional').checked = s.showOptionalTracks;
+        byId('opt-exploratory').checked = s.showExploratoryAlgorithms ?? true;
         byId('opt-ptm-radius').value = s.proxPtmRadius;
         byId('opt-var-radius').value = s.proxVarRadius;
         byId('opt-font-scale').value = String(s.fontScale ?? 0);
@@ -41,6 +43,7 @@ function saveOptions() {
         coloringMode: byId('opt-color').value,
         copyFormat: byId('opt-copy').value,
         showOptionalTracks: byId('opt-optional').checked,
+        showExploratoryAlgorithms: byId('opt-exploratory').checked,
         proxPtmRadius: Number(byId('opt-ptm-radius').value) || 8,
         proxVarRadius: Number(byId('opt-var-radius').value) || 12,
         fontScale: Number(byId('opt-font-scale').value) || 0,

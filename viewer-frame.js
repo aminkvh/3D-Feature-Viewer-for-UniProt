@@ -834,7 +834,25 @@
     // manualReset:true disables Mol*'s automatic camera fit on scene/bounds changes — so adding/removing the
     // focus rep, the green highlight sphere, or marker components never auto-zooms. OUR camFocus is then the
     // ONLY camera mover, which removes the "double zoom" (auto-fit + camFocus) on a residue/ligand focus.
-    try { viewer.plugin.canvas3d?.setProps({ camera: { mode: 'orthographic', manualReset: true, helper: { axes: { name: 'off', params: {} } } }, renderer: { backgroundColor: _bgColor }, pickPadding: 5 }); } catch (_) {}
+    const isFirefox = /Firefox\//.test(navigator.userAgent);
+    try {
+      const canvas3dProps = {
+        camera: { mode: 'orthographic', manualReset: true, helper: { axes: { name: 'off', params: {} } } },
+        renderer: { backgroundColor: _bgColor },
+        pickPadding: 5,
+      };
+      // Firefox's WebGL2 driver is significantly slower for MSAA and screen-space post-processing
+      // (ambient occlusion, outline, shadow). Disable them on Firefox to restore interactive framerates.
+      if (isFirefox) {
+        canvas3dProps.multiSample = { mode: 'off' };
+        canvas3dProps.postprocessing = {
+          occlusion: { name: 'off', params: {} },
+          outline:   { name: 'off', params: {} },
+          shadow:    { name: 'off', params: {} },
+        };
+      }
+      viewer.plugin.canvas3d?.setProps(canvas3dProps);
+    } catch (_) {}
     // SUPPRESS *all* of Mol*'s native click reactions so a click on the 3D structure does ONLY our
     // focusResidue — byte-for-byte the same code path as clicking a Nearby chip in the side panel (which
     // never sends a click into Mol* at all). Without this, a single primary click on the structure fires

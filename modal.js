@@ -4045,13 +4045,19 @@ const UFVModal = (() => {
 
     function syncSettingsControls() {
         const s = UFVState.state;
+        const showExploratory = s.settings.showExploratoryAlgorithms ?? true;
+        // Show/hide the 4 exploratory algorithm color modes in the dropdown
+        const exploratoryModes = ['hotspots', 'distantContacts', 'residueBurden', 'prism'];
+        exploratoryModes.forEach(m => {
+            byId('ufv-cm-drop')?.querySelector(`.ufv-cm-opt[data-value="${m}"]`)
+                ?.classList.toggle('ufv-hidden', !showExploratory);
+        });
         let mode = s.settings.coloringMode;
-        if (mode === 'prism' || mode === 'topos') mode = 'default';
+        // If the saved mode is an exploratory one and exploratory is now off, fall back to default
+        if ((!showExploratory && exploratoryModes.includes(mode)) || mode === 'topos') mode = 'default';
         setColorMode(mode);
         byId('ufv-sens-wrap').classList.add('ufv-hidden');
-        // Apply configurable cutoffs to the live viewer
         StructureViewer.nearbyDistance = s.settings.nearbyDistance || 5;
-        // Font-size step (-1 / 0 / +1) — scales the text panels (side list + detail panel), not the 3-D view.
         const fs = s.settings.fontScale || 0;
         modalEl?.classList.toggle('ufv-fs-sm', fs < 0);
         modalEl?.classList.toggle('ufv-fs-lg', fs > 0);
