@@ -762,6 +762,7 @@
     return await vs.getImageDataUri();
   }
   function setBackground(color) {
+    document.body.style.background = color;
     try { viewer.plugin.canvas3d?.setProps({ renderer: { backgroundColor: colorToInt(color) } }); } catch (_) {}
   }
 

@@ -192,7 +192,10 @@ const MolstarViewer = (() => {
         zoom: (_f, dur) => send('reset', { duration: dur ?? 0 }).catch(() => {}),
         resize: () => send('resize').catch(() => {}),
         pngURI: () => null,
-        setBackgroundColor: (color) => send('background', { color }).catch(() => {}),
+        setBackgroundColor: (color) => {
+          if (iframe) iframe.style.background = color;
+          send('background', { color }).catch(() => {});
+        },
       };
     },
 
