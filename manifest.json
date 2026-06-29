@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "3D Feature Viewer for UniProt",
   "version": "2.0.1",
-  "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
+  "description": "Map UniProt residue annotations, variants, ligand context, and precomputed variant-effect evidence onto experimental and predicted protein structures.",
   "permissions": ["storage"],
   "sandbox": {
     "pages": ["viewer-frame.html"]

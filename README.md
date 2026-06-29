@@ -1,6 +1,6 @@
 # 3D Feature Viewer for UniProt [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21040422.svg)](https://doi.org/10.5281/zenodo.21040422)
 
-A browser extension that brings structural protein interpretation directly into UniProt. It adds an interactive 3D workspace to UniProt entry pages so you can inspect post-translational modifications, variants, clinical annotations, prediction scores, and residue-prioritization overlays without leaving UniProt.
+3D Feature Viewer for UniProt is a browser extension that brings structural protein interpretation directly into UniProt. It adds an interactive 3D workspace to UniProt entry pages so users can inspect post-translational modifications, variants, clinical annotations, precomputed variant-effect evidence, ligand context, and structural-context overlays without leaving UniProt.
 
 ![UniProt 3D Viewer Screenshot](icons/Screenshot.png)
 
@@ -9,7 +9,8 @@ A browser extension that brings structural protein interpretation directly into 
 - View UniProt PTMs, disease-associated variants, ClinVar annotations, and AlphaMissense scores on available 3D structures.
 - Switch between AlphaFold models and mapped experimental PDB structures.
 - Per-residue predictor table: EVE, ESM1b, FoldX ΔΔG, conservation, and CADD scores via ProtVar.
-- Binding pocket analysis: PDBe-KB known sites, constraint pocket detection, and pocket confidence scoring.
+- Ligand and pocket context: PDBe-KB known sites, AlphaFill ligand context, PubChem/ChEMBL chemical links, and structure-based pocket inspection.
+- External DrugBank links where available.
 - Open Targets tractability and drug evidence per protein.
 - Ligand similarity by CACTVS/Tanimoto fingerprint against AlphaFill transplants.
 - Export residue sets and annotation data to CSV.
