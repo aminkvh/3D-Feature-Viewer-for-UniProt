@@ -8,6 +8,7 @@ const DEFAULTS = {
     showOptionalTracks: false,
     proxPtmRadius: 8,
     proxVarRadius: 12,
+    fontScale: 0,
 };
 
 function byId(id) { return document.getElementById(id); }
@@ -21,6 +22,7 @@ function loadOptions() {
         byId('opt-optional').checked = s.showOptionalTracks;
         byId('opt-ptm-radius').value = s.proxPtmRadius;
         byId('opt-var-radius').value = s.proxVarRadius;
+        byId('opt-font-scale').value = String(s.fontScale ?? 0);
     };
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
         chrome.storage.local.get(DEFAULTS, doLoad);
@@ -41,6 +43,7 @@ function saveOptions() {
         showOptionalTracks: byId('opt-optional').checked,
         proxPtmRadius: Number(byId('opt-ptm-radius').value) || 8,
         proxVarRadius: Number(byId('opt-var-radius').value) || 12,
+        fontScale: Number(byId('opt-font-scale').value) || 0,
     };
     const onSaved = () => {
         const el = byId('save-status');

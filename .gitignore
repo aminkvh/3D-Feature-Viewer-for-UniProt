@@ -16,10 +16,17 @@ Thumbs.db
 dist/
 out/
 build/
+firefox-build/
+chrome-build/
 
 # Packaged extension and signing key — never commit the private key
 *.crx
 *.pem
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
 
 graphify-out/
 web-ext-artifacts/

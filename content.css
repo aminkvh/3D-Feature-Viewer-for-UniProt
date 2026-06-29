@@ -128,33 +128,36 @@
     border: none;
     border-radius: 20px;
     cursor: pointer;
-    transition: all 0.2s ease;
     vertical-align: middle;
     letter-spacing: 0.2px;
     line-height: 1;
-    box-shadow: 0 1px 4px rgba(24,95,139,0.25);
     position: relative;
     z-index: 10;
 }
 
+/* No motion/animation — just a flat colour change on hover (no lift, no shadow, no transition). */
 .ufv-3d-btn:hover {
     background: #1a6fa0 !important;
-    transform: translateY(-1px);
-    box-shadow: 0 3px 10px rgba(24,95,139,0.35);
 }
 
-.ufv-3d-btn:active {
-    transform: translateY(0);
-}
-
-/* Inline variant for in-content section headers: sits right after the title text on the
-   heading's own line box.  Vertical margins are zeroed and it is vertically centred so it does
-   NOT add height to the heading — keeping the sections below it (and UniProt's scroll/
-   IntersectionObserver left-nav slider) from shifting on first load. */
-.ufv-3d-btn--inline {
+/* Inline variant for in-content section headers. The button sits in a ZERO-SIZE inline anchor and is
+   absolutely positioned, so it contributes NOTHING to the heading's line box — the sections below never
+   shift, so UniProt's left-nav scroll-spy section offsets stay correct (this is what kept the active-section
+   indicator landing on the wrong nav item, esp. for the PTM section). */
+.ufv-3d-btn-anchor {
+    position: relative;
+    display: inline-block;
+    width: 0;
+    height: 0;
     vertical-align: middle;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
+}
+.ufv-3d-btn--inline {
+    position: absolute !important;
+    left: 10px;
+    top: 0;
+    transform: translateY(-50%);
+    margin: 0 !important;
+    white-space: nowrap;
 }
 
 
@@ -238,6 +241,326 @@
     font-weight: 700;
     color: var(--ufv-accent);
     letter-spacing: 0.5px;
+}
+
+/* Shared dropdown component (Partners control in the title row, Other-chains in the footer). Coherent
+   with the modal chrome: a small bordered button + a popover menu, theme-aware in light/dark. */
+.ufv-dropdown {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.ufv-dropdown-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ufv-text-secondary);
+    background: var(--ufv-bg-hover);
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.12s ease, border-color 0.12s ease;
+}
+.ufv-dropdown-btn:hover {
+    color: var(--ufv-text-primary);
+    border-color: var(--ufv-accent-border);
+}
+.ufv-dropdown.ufv-active .ufv-dropdown-btn {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+}
+.ufv-dropdown-caret {
+    font-size: 9px;
+    opacity: 0.7;
+}
+.ufv-dropdown-menu {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    min-width: 140px;
+    max-height: 220px;
+    /* Flush, clipped rows — same pattern as the structure / colour-mode dropdowns (.ufv-cs-drop) so the
+       Other-chains / Partners menus look identical to the rest of the modal chrome. Theme-aware bg/border
+       (the old --ufv-panel-bg was undefined, so it fell back to a hardcoded dark colour in light mode). */
+    overflow: hidden auto;
+    background: var(--ufv-bg-secondary);
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    padding: 0;
+    z-index: 40;
+}
+.ufv-dropdown-menu-up {
+    top: auto;
+    bottom: calc(100% + 4px);
+    left: auto;
+    right: 0;
+}
+.ufv-dropdown.open .ufv-dropdown-menu {
+    display: block;
+}
+.ufv-dropdown-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    font-size: 11.5px;
+    color: var(--ufv-text-primary);
+    cursor: pointer;
+}
+.ufv-dropdown-check:hover {
+    background: var(--ufv-bg-hover);
+}
+.ufv-dropdown-check input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+.ufv-dropdown-item {
+    display: block;
+    padding: 7px 10px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--ufv-accent, #4da3ff);
+    text-decoration: none;
+}
+.ufv-dropdown-item:hover {
+    background: var(--ufv-bg-hover);
+}
+.ufv-nav-chain {
+    display: inline-block;
+    min-width: 16px;
+    margin-right: 6px;
+    font-weight: 700;
+    color: var(--ufv-text-primary);
+}
+/* Partner-protein residues in the Nearby list — italic, on their own line under the our-chain residues. */
+.ufv-nearby-partner {
+    font-style: italic;
+}
+.ufv-nearby-partner-line {
+    display: block;
+    margin-top: 3px;
+}
+.ufv-nearby-chain-lbl {
+    color: var(--ufv-text-secondary);
+    font-size: 10.5px;
+}
+/* Partner residue header: spacing between residue and chain, plus the go-to-UniProt button. */
+.ufv-partner-res {
+    margin-right: 4px;
+}
+.ufv-partner-goto {
+    margin-left: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ufv-accent);
+    text-decoration: none;
+    font-family: 'Courier New', monospace;
+}
+.ufv-partner-goto:hover {
+    text-decoration: underline;
+}
+/* Unnamed ligand external-links row: PubChem · DrugBank · 2D similarity · 3D similarity. */
+.ufv-ligand-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+}
+
+/* Boxed stat numbers (e.g. binding-pocket count / buriedness / druggability) — kept subtle so they read
+   as part of the value column, matching the prediction-table cells rather than standing out as cards. */
+.ufv-stat-boxes {
+    display: inline-flex;
+    gap: 4px;
+}
+.ufv-pocket-stats {
+    padding: 2px 2px 4px;
+}
+.ufv-stat-box {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 38px;
+    padding: 1px 6px;
+    background: var(--ufv-bg-hover);
+    border-radius: 3px;
+    line-height: 1.15;
+}
+.ufv-stat-val {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ufv-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.ufv-stat-lbl {
+    font-size: 7.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--ufv-text-secondary);
+}
+
+/* Per-pocket blocks inside the Pocket section: a label, a row of stat boxes (residues / buriedness /
+   pLDDT / fpocket score), then the clickable residue chips revealed by the residues box. */
+.ufv-pocket-block {
+    margin: 6px 2px 0;
+}
+.ufv-pocket-block-lbl {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--ufv-text-secondary);
+    margin-bottom: 3px;
+}
+/* Per-pocket stats: each is a column with the (small) label ABOVE the number; only the number is boxed. */
+.ufv-pocket-stats {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 4px 6px;
+    padding: 2px 2px 4px;
+}
+.ufv-pstat {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.ufv-pstat-lbl {
+    font-size: 7.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    color: var(--ufv-text-secondary);
+    white-space: nowrap;
+}
+.ufv-pstat-box {
+    min-width: 30px;
+    padding: 2px 6px;
+    background: var(--ufv-bg-hover);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ufv-text-primary);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    line-height: 1.1;
+}
+/* The "res" stat doubles as the toggle for the residue list / 3-D highlight. */
+.ufv-pstat.ufv-stat-box-btn { cursor: pointer; }
+.ufv-pstat.ufv-stat-box-btn:hover .ufv-pstat-box { border-color: var(--ufv-accent-border); }
+.ufv-pstat.ufv-stat-box-btn.ufv-open .ufv-pstat-box {
+    border-color: var(--ufv-accent-border);
+    background: var(--ufv-accent-bg);
+    color: var(--ufv-accent);
+}
+.ufv-pocket-block .ufv-filter-children {
+    padding: 4px 2px 2px;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: none;   /* no nested scrollbar — the residue chips flow with the panel */
+    overflow: visible;
+}
+/* Pocket residue chips inherit the Nearby-list colouring: default text colour, annotation colour set
+   inline per-residue (site/PTM/variant) — no separate accent/disease palette. */
+.ufv-pocket-motif {
+    padding: 4px 2px 2px;
+    font-size: 10.5px;
+}
+
+/* Sub-heading inside the merged "Binding & pockets" section (Predicted pockets / Experimental binding). */
+.ufv-sub-hdr {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 6px 2px 3px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--ufv-text-muted);
+}
+.ufv-sub-hdr:first-child { margin-top: 2px; }
+
+/* Structural context (PDBe-KB) + Target druggability (Open Targets) — value-coloured rows + chips. */
+.ufv-detail-val.ufv-ctx-ligand { color: var(--ufv-ligand-color); }
+.ufv-detail-val.ufv-ctx-iface { color: #ab7df8; }
+.ufv-ctx-chip {
+    display: inline-block;
+    margin: 1px 3px 1px 0;
+    padding: 1px 6px;
+    font-size: 10px;
+    border-radius: 3px;
+    background: var(--ufv-accent-bg);
+    color: var(--ufv-accent);
+    border: 1px solid var(--ufv-accent-border);
+    cursor: help;
+}
+/* Open Targets tractability dropdown menu (header): wider than a plain menu so the chips wrap nicely. */
+.ufv-tract-menu {
+    min-width: 240px;
+    max-width: 320px;
+    max-height: 360px;
+    padding: 8px 10px;
+}
+.ufv-tract-hdr {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--ufv-text-muted);
+    margin-bottom: 4px;
+}
+/* Open Targets tractability: one block per modality — sub-heading, then chips on their own line below. */
+.ufv-drug-block { margin: 4px 2px; }
+.ufv-drug-mod {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--ufv-text-secondary);
+    margin-bottom: 2px;
+}
+.ufv-drug-chips { display: flex; flex-wrap: wrap; }
+
+/* Pocket character radar/spider plot — label above, plot centred below so the larger chart has room. */
+.ufv-pocket-spider-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+}
+.ufv-pocket-spider {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+/* Compact radar shown inside an expanded ProtVar pocket (above its residue chips). */
+.ufv-pocket-spider-mini {
+    padding: 2px 0 4px;
+}
+.ufv-pocket-spider-mini .ufv-spider {
+    max-width: 150px;
+    height: auto;
+}
+.ufv-spider {
+    overflow: visible;
+}
+
+/* Footer actions: the "Other chains" dropdown sitting next to the Copy button. */
+.ufv-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .ufv-modal-actions {
@@ -677,6 +1000,7 @@
     bottom: 10px;
     z-index: 15;
     display: flex;
+    align-items: center;
     gap: 8px;
     flex-wrap: wrap;
     max-width: calc(100% - 20px);
@@ -690,11 +1014,17 @@
     display: none;
 }
 
+/* Forces the following legend item onto a new line (used to separate the stick legend from the coloring legend). */
+.ufv-legend-break { flex-basis: 100%; height: 0; margin: 0; padding: 0; }
+
+/* Flex-centre the swatch with its label so they share a vertical centre line. The swatch box is then
+   nudged up ~0.5px so it optically aligns with the label's cap-height (the line-box middle reads slightly
+   low next to caps), keeping the coloured box centred against the text. */
 .ufv-legend-item {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
     font-size: 10.5px;
+    line-height: 1;
     color: var(--ufv-text-secondary);
     white-space: nowrap;
 }
@@ -703,16 +1033,19 @@
     width: 10px;
     height: 10px;
     border-radius: 2px;
-    display: inline-block;
-    flex-shrink: 0;
+    flex: none;
+    margin-right: 4px;
+    position: relative;
+    top: -0.5px;
 }
 
 .ufv-legend-gradient {
     display: inline-block;
+    vertical-align: middle;
     width: 110px;
     height: 12px;
     border-radius: 3px;
-    flex-shrink: 0;
+    margin-right: 4px;
 }
 
 /* Method note (e.g. "spatial clustering") — italic text, no colour swatch. */
@@ -848,6 +1181,13 @@
     position: relative;
 }
 
+/* Font-size step (Options → Font size). `zoom` scales the text panels' content (and controls) without
+   touching the 3-D canvas. Applied as a class on .ufv-modal in syncSettingsControls. */
+.ufv-modal.ufv-fs-lg .ufv-side,
+.ufv-modal.ufv-fs-lg .ufv-details { zoom: 1.14; }
+.ufv-modal.ufv-fs-sm .ufv-side,
+.ufv-modal.ufv-fs-sm .ufv-details { zoom: 0.88; }
+
 .ufv-tabs {
     display: flex;
     border-bottom: 1px solid var(--ufv-border);
@@ -942,12 +1282,16 @@
 }
 
 .ufv-panel-hdr {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--ufv-border);
+    /* Match .ufv-collapsible-hdr layout exactly: chevron + title grouped on the left, actions pushed
+       right (margin-left:auto). The old space-between centred the title and made the header look unlike
+       the other sections. */
+    padding: 8px 9px 4px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
     flex-shrink: 0;
+    cursor: pointer;
+    user-select: none;
 }
 
 .ufv-empty {
@@ -958,34 +1302,37 @@
 
 .ufv-nearby-res {
     cursor: pointer;
-    text-decoration: underline dotted transparent;
 }
-.ufv-nearby-res:hover {
-    text-decoration: underline dotted currentColor;
-}
+/* Hover effect disabled (per request) — the nearby residues stay clickable to zoom, but don't react on hover. */
 
 .ufv-panel-hdr h3 {
-    font-size: 13px;
-    font-weight: 600;
+    /* Match the collapsible-section header so the focused-category title is the same size in every window. */
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
     margin: 0;
-    color: var(--ufv-text-primary);
+    color: var(--ufv-text-muted);
 }
 
 .ufv-panel-actions {
     display: flex;
-    gap: 5px;
+    gap: 3px;
+    margin-left: auto;
 }
 
+/* Match .ufv-section-btn so the PTM-window primary header's All/None/C are the same size as every
+   other window's section buttons (they were noticeably larger). */
 .ufv-sm-btn {
-    padding: 3px 9px;
-    font-size: 10.5px;
+    font-size: 9px;
     font-weight: 500;
-    background: var(--ufv-bg-hover);
+    padding: 1px 6px;
+    background: none;
     border: 1px solid var(--ufv-border-hover);
-    border-radius: 5px;
-    color: var(--ufv-text-secondary);
+    border-radius: 3px;
+    color: var(--ufv-text-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
 }
 
 .ufv-sm-btn:hover {
@@ -996,9 +1343,10 @@
 /* --- Filter items --- */
 .ufv-filter-scroll {
     flex: 1;
+    min-height: 0;          /* allow the flex child to shrink so overflow-y actually scrolls (was clipping the last item) */
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 6px;
+    padding: 6px 6px 16px;  /* extra bottom padding so the last item clears the footer / isn't flush */
 }
 
 .ufv-filter-scroll::-webkit-scrollbar { width: 5px; }
@@ -1019,6 +1367,13 @@
 .ufv-filter-item:hover {
     background: var(--ufv-bg-hover);
 }
+
+/* Annotation whose residue isn't resolved in the loaded structure — shown but disabled (can't draw it). */
+.ufv-filter-item.ufv-unresolved {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.ufv-filter-item.ufv-unresolved .ufv-dot { filter: grayscale(1); }
 
 .ufv-filter-item input[type="checkbox"] {
     appearance: none;
@@ -1274,6 +1629,42 @@
     align-items: center;
 }
 
+/* ‹ N/M › rotation between multiple copies of the same ligand (in the zoomed-in ligand panel). */
+.ufv-lig-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.ufv-lig-nav-name {
+    font-weight: 600;
+}
+.ufv-lig-nav-count {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ufv-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.ufv-lig-nav-btn {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    border: 1px solid var(--ufv-border-hover);
+    background: var(--ufv-bg-hover);
+    color: var(--ufv-text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+}
+.ufv-lig-nav-btn:hover {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+    background: var(--ufv-accent-bg);
+}
+
 .ufv-details-close {
     width: 22px;
     height: 22px;
@@ -1357,11 +1748,9 @@
     word-break: break-word;
 }
 
-/* Nearby box — replaces the old Position|Nearby two-cell grid */
+/* Nearby section — unboxed (no background/border), just the slider header + residue list. */
 .ufv-nearby-box {
-    background: var(--ufv-bg-hover);
-    border-radius: 6px;
-    padding: 6px 10px 6px;
+    padding: 2px 0 4px;
     margin-bottom: 6px;
 }
 .ufv-nearby-hdr {
@@ -1459,6 +1848,32 @@
 
 .ufv-am-toggle:hover {
     color: var(--ufv-accent);
+}
+
+/* Variant header row: the collapsible "Variants" toggle + a "details" evidence switch on the right. */
+.ufv-am-hdr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ufv-am-hdr-row > .ufv-am-toggle {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+}
+.ufv-am-hdr-row > .ufv-am-right-toggle {
+    flex: 0 0 auto;
+    width: auto;
+}
+.ufv-evi-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+.ufv-evi-lbl {
+    font-size: 11px;
+    color: var(--ufv-text-secondary);
 }
 
 .ufv-am-wt {
@@ -1580,6 +1995,30 @@
 
 /* ── Ligand detail panel ─────────────────────────────────────────────────── */
 .ufv-ligand-info { margin-top: 4px; }
+
+/* Small section heading that visually separates pocket similarity from ligand links */
+.ufv-ligand-section-hdr {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--ufv-border);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--ufv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Sub-heading inside the Pocket dropdown, above the "find similar pockets" link */
+.ufv-pocket-subhdr {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--ufv-border);
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--ufv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
 .ufv-copy-chip {
     font-family: 'Courier New', monospace;
     font-size: 11px;
@@ -1629,6 +2068,153 @@
 .ufv-ligand-loc { font-size: 9.5px; color: var(--ufv-text-secondary); }
 /* Smaller toggle in the Ligands header (exclude water & ions) */
 .ufv-ions-toggle { transform: scale(0.82); margin-right: 1px; }
+
+/* Ligand list (nested): per-CCD group with a visibility checkbox + click-to-focus, copies nested. */
+.ufv-lig-group { margin: 1px 0; }
+.ufv-lig-row {
+    display: flex; align-items: center; gap: 7px;
+    padding: 3px 4px; border-radius: 5px; min-width: 0;
+}
+.ufv-lig-row:hover { background: var(--ufv-accent-bg); }
+.ufv-lig-row.selected { background: var(--ufv-accent-bg); box-shadow: inset 2px 0 0 var(--ufv-ligand-color); }
+/* DEFENSIVE GUARD against the whole bug class below: UniProt's global `[type=checkbox]{margin:0 0 1rem}`
+   leaks a 1rem bottom margin into any of our checkboxes whose selector only ties its (0,1,0) specificity.
+   This resets just that bottom margin for every checkbox inside our UI (0,2,1 beats the global), without
+   disturbing intended left/right/top margins (e.g. .ufv-ions-toggle's margin-right). */
+.ufv-modal input[type="checkbox"], .ufv-overlay input[type="checkbox"] { margin-block-end: 0; }
+
+/* THE ROOT CAUSE of the long-running misalignment: UniProt's (Franklin's) global stylesheet sets
+   `[type=checkbox] { margin: 0 0 1rem; }`. Its specificity (0,1,0) TIES a bare `.ufv-lig-eye`
+   (also 0,1,0), so it won on source order and gave the checkbox a 16px BOTTOM MARGIN. In the flex
+   row, align-items:center then centres the 32px margin-box and pins the visible 16px square to the
+   top — the orange block seen under it in DevTools. The filter checkboxes never hit this because
+   `.ufv-filter-item input[type=checkbox]` (0,2,1) out-specifies the global rule. Fix: match that
+   specificity (input + class + attribute = 0,2,1) so OUR margin:0 wins. */
+input.ufv-lig-eye[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--ufv-checkbox-border);
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    align-self: center;
+    transition: all 0.12s ease;
+    background: transparent;
+    margin: 0;
+    padding: 0;
+    vertical-align: middle;
+}
+input.ufv-lig-eye[type="checkbox"]:checked { background: var(--ufv-accent); border-color: var(--ufv-accent); }
+/* Checkmark centred in the box. */
+input.ufv-lig-eye[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 5px;
+    height: 9px;
+    border: solid var(--ufv-checkbox-check);
+    border-width: 0 2px 2px 0;
+    transform: translate(-50%, -58%) rotate(45deg);
+}
+/* Courier New seats its caps low inside a tall, accent-padded line box, so flex align-items:center
+   centres the BOX while the visible glyphs land ~1-2px below the checkbox and sans-serif counts.
+   text-box-trim (Chrome 133+) trims the line box to the cap..baseline span, so centring acts on the
+   real glyphs — a font-metric-independent fix, no magic offsets. Engines without it fall back to a
+   1px optical lift via @supports. Applied only to the monospace labels (the misaligned elements). */
+.ufv-lig-ccd, .ufv-lig-loc {
+    text-box-trim: trim-both;
+    text-box-edge: cap alphabetic;
+}
+@supports not (text-box-trim: trim-both) {
+    .ufv-lig-ccd, .ufv-lig-loc { position: relative; top: -1px; }
+}
+.ufv-lig-ccd { font-family: 'Courier New', monospace; font-weight: 700; font-size: 12px; line-height: 1; color: var(--ufv-ligand-color); }
+.ufv-lig-loc { font-family: 'Courier New', monospace; font-size: 10.5px; color: var(--ufv-text-secondary); line-height: 1; }
+.ufv-lig-clickable { cursor: pointer; }
+.ufv-lig-clickable:hover { text-decoration: underline; }
+.ufv-lig-meta { font-size: 10px; color: var(--ufv-text-secondary); margin-left: auto; }
+.ufv-lig-chevron { font-size: 8px; color: var(--ufv-text-secondary); cursor: pointer; margin-left: 6px; flex: none; }
+.ufv-lig-copies { margin-left: 16px; }
+.ufv-lig-copies.ufv-collapsed { display: none; }
+.ufv-lig-copy .ufv-lig-ccd { font-weight: 600; font-size: 11px; color: var(--ufv-text-secondary); }
+
+/* "Zoom to" magnifier button used in sidebar list rows. */
+.ufv-zoom-btn {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; padding: 0; margin-left: 4px;
+    background: none; border: none; border-radius: 4px; cursor: pointer;
+    color: var(--ufv-text-secondary);
+}
+.ufv-zoom-btn:hover { background: var(--ufv-accent-bg); color: var(--ufv-accent); }
+/* Low-key formula appended to a detail-panel title. */
+.ufv-title-sub { font-weight: 400; font-size: 11px; color: var(--ufv-text-secondary); font-family: 'Courier New', monospace; }
+
+/* AlphaFill transplant identity badge + the identity-threshold slider row. */
+.ufv-lig-id {
+    flex: none; font-size: 10px; color: var(--ufv-text-secondary);
+    font-variant-numeric: tabular-nums; min-width: 30px; text-align: right;
+}
+.ufv-lig-thresh {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 5px 4px 7px; margin-bottom: 3px; border-bottom: 1px solid var(--ufv-border);
+}
+.ufv-lig-thresh-lbl { flex: none; font-size: 11px; color: var(--ufv-text-secondary); white-space: nowrap; margin-right: 2px; }
+.ufv-thresh-btn {
+    flex: none; padding: 2px 7px; font-size: 10.5px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--ufv-border); border-radius: 4px; cursor: pointer;
+    background: transparent; color: var(--ufv-text-secondary); transition: all 0.12s ease;
+}
+.ufv-thresh-btn:hover { background: var(--ufv-accent-bg); color: var(--ufv-text); }
+.ufv-thresh-btn.active { background: var(--ufv-accent); border-color: var(--ufv-accent); color: #fff; }
+.ufv-lig-thresh-cnt { flex: none; margin-left: auto; font-size: 10px; color: var(--ufv-text-secondary); font-variant-numeric: tabular-nums; }
+/* Clash-score band colours in the ligand detail panel (low = clean pose … high = passes through protein). */
+.ufv-detail-val.ufv-clash-low { color: #2e9e5b; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-clash-moderate { color: #c9881f; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-clash-high { color: #d2453f; font-variant-numeric: tabular-nums; }
+
+/* Pocket-evidence (M6): mean-pLDDT confidence bands (AlphaFold colour scale) + functional-site hit. */
+.ufv-detail-val.ufv-plddt-very-high { color: #0053d6; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-plddt-confident { color: #4aa3df; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-plddt-low { color: #c9881f; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-plddt-very-low { color: #d2683f; font-variant-numeric: tabular-nums; }
+.ufv-detail-val.ufv-pocket-site { color: var(--ufv-ligand-color); }
+
+/* Info popover (M7): an ⓘ icon next to a section title that opens a dismissible explanation panel. */
+.ufv-info-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 5px; width: 14px; height: 14px;
+    font-size: 11px; line-height: 1; color: var(--ufv-text-muted);
+    cursor: help; flex: none; transition: color 0.12s ease;
+}
+.ufv-info-icon:hover { color: var(--ufv-accent); }
+.ufv-info-pop {
+    position: fixed; z-index: 100001; width: 300px; max-width: calc(100vw - 16px);
+    background: var(--ufv-bg-secondary); border: 1px solid var(--ufv-border-hover);
+    border-radius: 9px; box-shadow: 0 8px 30px var(--ufv-shadow);
+    padding: 12px 14px; color: var(--ufv-text-primary); font-size: 11.5px; line-height: 1.45;
+    animation: ufv-fadeIn 0.12s ease;
+}
+.ufv-info-close {
+    position: absolute; top: 6px; right: 8px; width: 18px; height: 18px;
+    background: none; border: none; color: var(--ufv-text-muted);
+    font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.ufv-info-close:hover { color: var(--ufv-text-primary); background: var(--ufv-bg-hover); }
+.ufv-info-title { font-weight: 700; font-size: 12px; margin-bottom: 6px; padding-right: 18px; }
+.ufv-info-body p { margin: 0 0 7px; }
+.ufv-info-body p:last-child { margin-bottom: 0; }
+.ufv-info-body b { color: var(--ufv-text-primary); }
+.ufv-info-body a { color: var(--ufv-accent); text-decoration: none; white-space: nowrap; }
+.ufv-info-body a:hover { text-decoration: underline; }
+
+/* Per-variant rows under an expanded disease entry: residue label + zoom icon, right-aligned. */
+.ufv-disease-var { padding: 4px 9px; }
+.ufv-disease-var .ufv-filter-label { flex: 1; font-size: 11px; font-family: 'Courier New', monospace; }
 
 /* Similar-ligand cells (clickable, reuse the AlphaMissense cell look) */
 .ufv-prox-clickable { cursor: pointer; border: 1px solid transparent; }

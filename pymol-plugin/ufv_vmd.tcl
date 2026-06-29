@@ -26,7 +26,7 @@ namespace eval ::ufv {
     variable uid     ""
     variable molid   ""
     variable mode    "identity"
-    variable colorid 33
+    variable colorid 17
     variable manual
     array set manual {}
     # annotation lists a_* / sifts s_* are created by sourcing the backend output
@@ -37,8 +37,8 @@ namespace eval ::ufv {
     # tier cache: recomputed when (uid, molid) pair changes
     variable tiers_uid    ""
     variable tiers_molid  ""
-    # persistent rep indices (-1 = no rep currently shown)
-    variable lig_rep      -1
+    # persistent rep indices (-1 / {} = no rep currently shown)
+    variable lig_reps     {}
     variable focus_rep    -1
     # GUI state
     variable gui_filt_path 1
@@ -166,7 +166,9 @@ proc ::ufv::next_color {hex} {
     set id $colorid
     color change rgb $id [expr {$r/255.0}] [expr {$g/255.0}] [expr {$b/255.0}]
     incr colorid
-    if {$colorid > 1000} { set colorid 33 }
+    # Stay within VMD's secondary named slots 17–32 (reliably paintable; not used by element/Name colouring).
+    # IDs 33+ alias the colour scale and render goldish regardless of `color change rgb`.
+    if {$colorid > 32} { set colorid 17 }
     return $id
 }
 
@@ -482,28 +484,59 @@ proc ufv_clear {{molid ""}} {
 }
 
 # ---- ligands --------------------------------------------------------------------------------
+# Per-copy selection for one ligand component (handles a blank chain).
+proc ::ufv::lig_copy_sel {base rn ch ri} {
+    if {[string trim $ch] eq ""} {
+        return "$base and resname $rn and resid $ri"
+    }
+    return "$base and resname $rn and chain $ch and resid $ri"
+}
+
 proc ufv_ligands {{molid ""}} {
     set molid [::ufv::resolve $molid]
-    if {$::ufv::lig_rep >= 0} {
-        catch { mol delrep $::ufv::lig_rep $molid }
-        set ::ufv::lig_rep -1
+    ufv_ligands_hide $molid
+    set base "not protein and not nucleic and not water and noh"
+    set all [atomselect $molid $base]
+    if {[$all num] == 0} { $all delete; ::ufv::status "no ligands in mol $molid."; return }
+    # Enumerate distinct (resname, chain, resid) copies.
+    set keys {}
+    foreach rn [$all get resname] ch [$all get chain] ri [$all get resid] {
+        lappend keys "$rn\t$ch\t$ri"
     }
-    set chk [atomselect $molid "not protein and not water and noh and not name 'NA' 'CA' 'K' 'MG' 'ZN' 'FE' 'CU' 'MN'"]
-    set n [$chk num]; $chk delete
-    if {$n == 0} { ::ufv::status "no ligands in mol $molid."; return }
-    ::ufv::addrep $molid "Licorice 0.3 12" \
-        "not protein and not water and noh and not name NA CA K MG ZN FE CU MN" \
-        [::ufv::next_color "#f9a825"]
-    set ::ufv::lig_rep [expr {[molinfo $molid get numreps] - 1}]
-    ::ufv::status "ligands shown ($n atoms)."
+    $all delete
+    set keys [lsort -unique $keys]
+    # Each ORGANIC copy (>=2 atoms) gets its own rep; single-atom ions/metals are grouped into one.
+    set reps {}; set ions {}
+    foreach k $keys {
+        lassign [split $k "\t"] rn ch ri
+        set csel [::ufv::lig_copy_sel $base $rn $ch $ri]
+        set cs [atomselect $molid $csel]; set na [$cs num]; $cs delete
+        if {$na >= 2} {
+            ::ufv::addrep $molid "Licorice 0.3 12" $csel [::ufv::next_color "#f9a825"]
+            lappend reps [expr {[molinfo $molid get numreps] - 1}]
+        } else {
+            lappend ions $k
+        }
+    }
+    if {[llength $ions]} {
+        set clauses {}
+        foreach k $ions {
+            lassign [split $k "\t"] rn ch ri
+            lappend clauses "([string range [::ufv::lig_copy_sel {} $rn $ch $ri] 5 end])"
+        }
+        ::ufv::addrep $molid "VDW 0.5 12" "$base and ([join $clauses { or }])" [::ufv::next_color "#9e9e9e"]
+        lappend reps [expr {[molinfo $molid get numreps] - 1}]
+    }
+    set ::ufv::lig_reps $reps
+    ::ufv::status "ligands shown ([llength $reps] objects)."
 }
 
 proc ufv_ligands_hide {{molid ""}} {
     set molid [::ufv::resolve $molid]
-    if {$::ufv::lig_rep >= 0} {
-        catch { mol delrep $::ufv::lig_rep $molid }
-        set ::ufv::lig_rep -1
+    foreach r [lsort -integer -decreasing $::ufv::lig_reps] {
+        catch { mol delrep $r $molid }
     }
+    set ::ufv::lig_reps {}
     ::ufv::status "ligands hidden."
 }
 

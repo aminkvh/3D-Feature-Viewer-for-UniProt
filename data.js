@@ -2,19 +2,19 @@
    Data Processing — Chrome Extension
    ============================================ */
 
-// 50-color disease palette — evenly distributed across the visible spectrum, tested for
-// deuteranopia/protanopia safety. Expanded well beyond the old 14-color cycling set.
+// 50-colour disease palette, ORDERED so that consecutive entries come from different hue families
+// (blue, orange, pink, green, purple, yellow, teal, brown, indigo, light-blue …). Diseases are coloured
+// in order, so this guarantees the first handful are maximally distinct — the previous grouping (5 blues,
+// then 5 purples, …) made 5-6 diseases look like near-duplicates. Colourblind-safe across families.
 const DISEASE_PALETTE = [
-    '#1565c0', '#0288d1', '#0097a7', '#00838f', '#006064',
-    '#4527a0', '#7b1fa2', '#9c27b0', '#ba68c8', '#7c4dff',
-    '#880e4f', '#c2185b', '#e91e63', '#ec407a', '#f06292',
-    '#004d40', '#00695c', '#00897b', '#4db6ac', '#26a69a',
-    '#bf360c', '#e65100', '#ef6c00', '#ff8f00', '#ffa000',
-    '#311b92', '#3949ab', '#5c6bc0', '#7986cb', '#9fa8da',
-    '#01579b', '#0277bd', '#039be5', '#29b6f6', '#80deea',
-    '#4e342e', '#6d4c41', '#795548', '#a1887f', '#bcaaa4',
-    '#33691e', '#558b2f', '#689f38', '#7cb342', '#9ccc65',
-    '#f9a825', '#fbc02d', '#ff6f00', '#ff8f00', '#ffe082',
+    // first 10: one strongly-distinct hue per family (covers the common "few diseases" case)
+    '#1565c0', '#bf360c', '#880e4f', '#33691e', '#7b1fa2', '#f9a825', '#00897b', '#6d4c41', '#3949ab', '#039be5',
+    // next 10: a second, shifted shade from each family
+    '#0288d1', '#e65100', '#c2185b', '#558b2f', '#9c27b0', '#fbc02d', '#004d40', '#795548', '#5c6bc0', '#29b6f6',
+    // remaining shades, still interleaved across families
+    '#0097a7', '#ef6c00', '#e91e63', '#689f38', '#4527a0', '#ff6f00', '#4db6ac', '#a1887f', '#7986cb', '#80deea',
+    '#00838f', '#ffa000', '#ec407a', '#7cb342', '#ba68c8', '#ffe082', '#26a69a', '#bcaaa4', '#9fa8da', '#006064',
+    '#311b92', '#f06292', '#9ccc65', '#7c4dff', '#01579b', '#0277bd', '#ff8f00', '#00695c', '#4e342e', '#fdd835',
 ];
 
 const DataProcessor = {
@@ -50,6 +50,14 @@ const DataProcessor = {
         'Modified residue':             '#546e7a',  // slate (distinct from consequence grey #9e9e9e)
         'default':                      '#ff8fab',  // light rose
     },
+
+    // Well-separated hues for PTM categories that have no specific PTM_COLORS entry (e.g. N-terminal
+    // acetylation, large-scale "sumoylation"/"acetylation" labels) — without this they all collapse to
+    // the single 'default' pink and become indistinguishable. Assigned per present category at grouping.
+    PTM_FALLBACK_PALETTE: [
+        '#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899', '#10b981', '#3b82f6',
+        '#ef4444', '#a3e635', '#f97316', '#14b8a6', '#d946ef', '#eab308',
+    ],
 
     // ---- Consequence categories — colorblind-safe (vermillion / amber / blue / grey) ----
     // Replaces the old red/green pair that deuteranopes cannot distinguish.
@@ -413,6 +421,18 @@ const DataProcessor = {
                 groups[p.category] = { category: p.category, color: p.color, items: [], visible: true };
             }
             groups[p.category].items.push(p);
+        });
+        // Categories that resolved to the shared 'default' pink (no specific PTM_COLORS entry) would all
+        // render the same colour — give each a distinct fallback hue, skipping any already in use, and
+        // propagate it to the items so spheres/sticks match the legend.
+        const used = new Set(Object.values(groups).map(g => g.color).filter(c => c !== this.PTM_COLORS.default));
+        const pal = this.PTM_FALLBACK_PALETTE.filter(c => !used.has(c));
+        let fi = 0;
+        Object.values(groups).forEach(g => {
+            if (g.color !== this.PTM_COLORS.default) return;
+            const color = pal[fi++ % pal.length] || g.color;
+            g.color = color;
+            g.items.forEach(it => { it.color = color; });
         });
         return groups;
     },

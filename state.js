@@ -11,6 +11,7 @@ const UFVState = (() => {
         nearbyDistance: 5,    // Å — residue focus neighbourhood radius
         proxPtmRadius: 8,    // Å — PTM search radius in proximity panel
         proxVarRadius: 12,   // Å — pathogenic variant search radius in proximity panel
+        fontScale: 0,        // modal font size step: -1 (smaller) / 0 (default) / +1 (larger)
     };
 
     const state = {

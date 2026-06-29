@@ -1701,47 +1701,81 @@ def _has_ligands(obj):
     return c
 
 
+def _lig_copy_obj(obj, resn, chain, resi):
+    """Object name for one organic-ligand copy: ufv_<obj>_lig_<resn>_<chain>_<resi> (sanitised)."""
+    tail = re.sub(r"[^A-Za-z0-9]", "_", "%s_%s_%s" % (resn, chain or "x", resi))
+    return "%s_%s" % (_ufv_layer_obj(obj, "lig"), tail)
+
+
+def _lig_objs(obj):
+    """Every ligand-layer object for `obj`: the grouped ions object (ufv_<obj>_lig) and each
+    per-copy organic object (ufv_<obj>_lig_*)."""
+    base = _ufv_layer_obj(obj, "lig")
+    return [o for o in (cmd.get_object_list() or []) if o == base or o.startswith(base + "_")]
+
+
 def ufv_ligands(obj=None, uid=None):
-    """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water) as element-coloured
-    sticks on their OWN persistent object (ufv_<obj>_lig). Built once; toggling afterwards is an
-    instant enable/disable that never rebuilds the (possibly huge, e.g. AlphaFill) main structure."""
+    """ufv_ligands [object] — show bound ligands/cofactors (non-polymer, non-water). Each ORGANIC
+    ligand/cofactor copy gets its OWN object (ufv_<obj>_lig_<resn>_<chain>_<resi>) so multiple copies
+    of the same component are individually selectable; ions / inorganics stay grouped on a single
+    ufv_<obj>_lig object. Built once; toggling afterwards is an instant enable/disable that never
+    rebuilds the (possibly huge, e.g. AlphaFill) main structure."""
     obj = _resolve_object(obj)
-    lobj = _ufv_layer_obj(obj, "lig")
-    if lobj in (cmd.get_object_list() or []):
-        cmd.enable(lobj)
-        return cmd.count_atoms(lobj)
+    existing = _lig_objs(obj)
+    if existing:
+        for o in existing:
+            cmd.enable(o)
+        return sum(cmd.count_atoms(o) for o in existing)
     sel = _ligand_sel(obj)
     n = cmd.count_atoms(sel)
     if not n:
         print("[UFV] %s: no ligands/cofactors present." % obj)
         return 0
+    rows = []
+    try:
+        cmd.iterate("(%s) and organic and not solvent" % obj,
+                    "rows.append((resn, chain, resi))", space={"rows": rows})
+    except Exception:
+        pass
+    copies = sorted(set(rows))
     with _batch():
-        cmd.create(lobj, sel)                 # separate object — decoupled from the main structure
-        cmd.hide("everything", lobj)
-        cmd.show("sticks", lobj)
-        try:
-            cmd.color("green", "(%s) and elem C" % lobj)
-            cmd.color("atomic", "(%s) and (not elem C)" % lobj)
-        except Exception:
-            pass
-        ions = "(%s) and inorganic" % lobj
-        if cmd.count_atoms(ions):
-            cmd.show("spheres", ions)
-            cmd.set("sphere_scale", 0.3, ions)
+        for resn, chain, resi in copies:        # one object per organic copy
+            cname = _lig_copy_obj(obj, resn, chain, resi)
+            csel = ("(%s) and resn %s and chain %s and resi %s and not solvent" % (obj, resn, chain, resi)
+                    if chain else
+                    "(%s) and resn %s and resi %s and not solvent" % (obj, resn, resi))
+            cmd.create(cname, csel)
+            cmd.hide("everything", cname)
+            cmd.show("sticks", cname)
+            try:
+                cmd.color("green", "(%s) and elem C" % cname)
+                cmd.color("atomic", "(%s) and (not elem C)" % cname)
+            except Exception:
+                pass
+        ions_sel = "(%s) and inorganic and not solvent" % obj   # ions/metals: one grouped object
+        if cmd.count_atoms(ions_sel):
+            base = _ufv_layer_obj(obj, "lig")
+            cmd.create(base, ions_sel)
+            cmd.hide("everything", base)
+            cmd.show("spheres", base)
+            cmd.set("sphere_scale", 0.3, base)
+            try:
+                cmd.color("atomic", base)
+            except Exception:
+                pass
         cmd.hide("sticks", sel)               # ensure the main object's copies aren't drawn twice
-    print("[UFV] %s: ligands shown (%d atoms)." % (obj, n))
+    print("[UFV] %s: ligands shown (%d copies, %d atoms)." % (obj, len(copies), n))
     return n
 
 
 def ufv_ligands_hide(obj=None):
-    """ufv_ligands_hide [object] — hide the ligand layer (instant: just disables ufv_<obj>_lig)."""
+    """ufv_ligands_hide [object] — hide the ligand layer (instant: disables every ufv_<obj>_lig*)."""
     obj = _resolve_object(obj)
-    lobj = _ufv_layer_obj(obj, "lig")
-    try:
-        if lobj in (cmd.get_object_list() or []):
-            cmd.disable(lobj)
-    except Exception:
-        pass
+    for o in _lig_objs(obj):
+        try:
+            cmd.disable(o)
+        except Exception:
+            pass
 
 
 def enumerate_ligands(obj):
@@ -1810,10 +1844,9 @@ def ufv_ligand_focus(obj=None, resn=None, chain=None, resi=None):
     pocket = "byres ((%s) around 5) and polymer" % lig
     cmap = _annotation_color_map(_CACHE.get(_resolve_uid(None)) or {})
     disabled = []
-    lig_layer = _ufv_layer_obj(obj, "lig")      # hide the all-ligands layer so this copy isn't drawn twice
     with _batch():
         _clear_focus(obj)                       # drop any previous residue/ligand focus sticks (+ label)
-        if lig_layer in (cmd.get_object_list() or []):
+        for lig_layer in _lig_objs(obj):        # hide the ligand-layer objects so this copy isn't drawn twice
             try:
                 cmd.disable(lig_layer); disabled.append(lig_layer)
             except Exception:
@@ -2725,6 +2758,11 @@ def _clear_focus(obj, restore_spheres=True):
             cmd.color("gray80", prev["sel"])  # undo the element colouring of the selected residue
     except Exception:
         pass
+    for nm in prev.get("selnames", []):       # drop the named focus selections we created
+        try:
+            cmd.delete(nm)
+        except Exception:
+            pass
     if restore_spheres:
         for lobj in prev.get("disabled", []):
             try:
@@ -2744,15 +2782,21 @@ def ufv_focus(obj=None, uni_pos=None):
     if not sel:
         print("[UFV] position %s not modelled in %s." % (uni_pos, obj))
         return
-    nb = "byres ((%s) around 5) and polymer" % sel
-    focus_sel = "(%s) or (%s)" % (sel, nb)
+    # Materialise the residue + its 5 Å neighbourhood as NAMED selections (per object, so the
+    # multi-structure focus loop doesn't collide on one global name). PyMOL stores a named
+    # selection as a fixed atom set, so the `around 5` distance search — costly on big models —
+    # runs ONCE here instead of being re-evaluated by every show / colour / hide of the string.
+    fnb = _ufv_layer_obj(obj, "focusnb")
+    fset = _ufv_layer_obj(obj, "focusset")
     cmap = _annotation_color_map(ann)
     with _batch():
         _clear_focus(obj)                       # clear previous focus sticks
-        cmd.show("sticks", focus_sel)
-        cmd.set("stick_color", "grey70", focus_sel)
+        cmd.select(fnb, "byres ((%s) around 5) and polymer" % sel, enable=0)
+        cmd.select(fset, "(%s) or (%s)" % (sel, fnb), enable=0)
+        cmd.show("sticks", fset)
+        cmd.set("stick_color", "grey70", fset)
         nb_atoms = []
-        cmd.iterate(nb + " and name CA", "nb_atoms.append((chain, resi))", space={"nb_atoms": nb_atoms})
+        cmd.iterate(fnb + " and name CA", "nb_atoms.append((chain, resi))", space={"nb_atoms": nb_atoms})
         by_color, per_chain = {}, {}
         for ch, resi in set(nb_atoms):
             per_chain.setdefault(ch, []).append(resi)
@@ -2785,8 +2829,8 @@ def ufv_focus(obj=None, uni_pos=None):
                     disabled.append(lobj)
                 except Exception:
                     pass
-    _FOCUS_SHOWN[obj] = {"sticks": focus_sel, "sel": sel, "disabled": disabled}
-    cmd.zoom(focus_sel, 3, animate=0)
+    _FOCUS_SHOWN[obj] = {"sticks": fset, "sel": sel, "disabled": disabled, "selnames": [fset, fnb]}
+    cmd.zoom(fset, 3, animate=0)
 
 
 def ufv_resetview(obj=None):
@@ -3458,11 +3502,15 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
 
         def toggle_visible(self, name, checked):
             try:
-                (cmd.enable if checked else cmd.disable)(name)
-                for tag in ("ptm", "var", "site", "dom", "filt", "mutag", "lig"):
+                fn = cmd.enable if checked else cmd.disable
+                fn(name)
+                objlist = cmd.get_object_list() or []
+                for tag in ("ptm", "var", "site", "dom", "filt", "mutag"):
                     lobj = _ufv_layer_obj(name, tag)
-                    if lobj in (cmd.get_object_list() or []):
-                        (cmd.enable if checked else cmd.disable)(lobj)
+                    if lobj in objlist:
+                        fn(lobj)
+                for lobj in _lig_objs(name):   # ligands are now one object per organic copy (+ grouped ions)
+                    fn(lobj)
             except Exception:
                 pass
 
@@ -3877,7 +3925,12 @@ def _build_panel_class(QtWidgets, QtCore, QtGui):
                     return ["Click any atom to zoom to its residue / ligand."]
 
                 def get_panel(self):
-                    return [[1, "UFV pick", ""], [2, "Stop picking", "cmd.set_wizard()"]]
+                    # Panel command strings (3rd field) are run through PyMOL's command parser. An
+                    # EMPTY command makes some PyMOL builds dump the whole command list to the console
+                    # ("parser: matching commands: abort accept …"), so the banner uses a harmless,
+                    # valid no-op call instead of "".
+                    return [[1, "UFV pick", "cmd.get_wizard()"],
+                            [2, "Stop picking", "cmd.set_wizard()"]]
 
                 def _grab(self, selection):
                     atoms = []

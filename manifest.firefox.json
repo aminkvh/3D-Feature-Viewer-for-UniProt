@@ -1,17 +1,10 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "3D Feature Viewer for UniProt",
   "version": "2.0.0",
   "description": "Visualize PTMs and genetic variants on AlphaFold structures directly on UniProt entry pages.",
-  "permissions": ["storage"],
-  "sandbox": {
-    "pages": ["viewer-frame.html"]
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
-    "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval'; object-src 'self';"
-  },
-  "host_permissions": [
+  "permissions": [
+    "storage",
     "https://www.uniprot.org/*",
     "https://rest.uniprot.org/*",
     "https://www.ebi.ac.uk/*",
@@ -24,11 +17,10 @@
     "https://pubchem.ncbi.nlm.nih.gov/*",
     "https://api.platform.opentargets.org/*"
   ],
+  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
   "content_scripts": [
     {
-      "matches": [
-        "https://www.uniprot.org/uniprotkb*"
-      ],
+      "matches": ["https://www.uniprot.org/uniprotkb*"],
       "js": [
         "data.js",
         "api.js",
@@ -46,18 +38,16 @@
     }
   ],
   "web_accessible_resources": [
-    {
-      "resources": ["pocket-worker.js", "algorithms.js"],
-      "matches": ["https://www.uniprot.org/*"]
-    },
-    {
-      "resources": ["viewer-frame.html"],
-      "matches": ["https://www.uniprot.org/*"]
-    }
+    "viewer-frame.html",
+    "pocket-worker.js",
+    "algorithms.js"
   ],
   "icons": {
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "options_ui": {
+    "page": "options.html"
   },
   "browser_specific_settings": {
     "gecko": {
@@ -68,8 +58,5 @@
         "optional": []
       }
     }
-  },
-  "options_ui": {
-    "page": "options.html"
   }
 }

@@ -23,11 +23,52 @@ const UFVApi = (() => {
     const LIGAND_CCD = (ccd) => `https://data.rcsb.org/rest/v1/core/chemcomp/${encodeURIComponent(String(ccd).toUpperCase())}`;
     // PubChem PUG-REST: the published 881-bit CACTVS 2D substructure fingerprint, by InChIKey.
     const PUBCHEM_FP = (ikey) => `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/${encodeURIComponent(ikey)}/property/Fingerprint2D/JSON`;
+    // PubChem compound page for a ligand, resolved by InChIKey (PubChem redirects to the CID page).
+    const pubchemUrl = (ikey) => ikey ? `https://pubchem.ncbi.nlm.nih.gov/compound/${encodeURIComponent(ikey)}` : null;
+    // Resolve an InChIKey to its PubChem CID (cached) — needed for the 2D/3D similarity SEARCH pages, whose
+    // URL keys on the CID (`#query=CID<cid> structure&tab=similarity[_3d]`), the real similarity hit lists.
+    const _cidCache = new Map();
+    function pubchemCid(ikey) {
+        if (!ikey) return Promise.resolve(null);
+        if (_cidCache.has(ikey)) return _cidCache.get(ikey);
+        const p = fetchOptionalJson(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/${encodeURIComponent(ikey)}/cids/JSON`)
+            .then(j => j?.IdentifierList?.CID?.[0] ?? null).catch(() => null);
+        _cidCache.set(ikey, p);
+        return p;
+    }
+    const pubchemSimilarity2dUrl = (cid) => cid ? `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent('CID' + cid + ' structure')}&tab=similarity` : null;
+    const pubchemSimilarity3dUrl = (cid) => cid ? `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent('CID' + cid + ' structure')}&tab=similarity_3d` : null;
+    // Eager (no CID round-trip) similarity links keyed by InChIKey — PubChem resolves the InChIKey to the
+    // compound, so these render IMMEDIATELY; the modal upgrades the href to the CID-based query above once
+    // pubchemCid() resolves. Without this the 2D/3D links never appeared when the CID lookup was slow/failed.
+    const pubchemSimilarity2dByKey = (ikey) => ikey ? `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent(ikey)}&tab=similarity` : null;
+    const pubchemSimilarity3dByKey = (ikey) => ikey ? `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent(ikey)}&tab=similarity_3d` : null;
     // ProtVar (EMBL-EBI) per-residue predictors that complement AlphaMissense: conservation, EVE,
     // ESM1b, M3D structural effect and FoldX ΔΔG stability — keyed by UniProt accession + position.
     const PROTVAR_SCORE = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/score/${acc}/${pos}`;
+    // CADD is genomic (not in /score). ProtVar's /mapping endpoint maps a protein variant to its codon's
+    // single-nucleotide variants, each carrying a caddScore — so ONE call per position returns CADD for
+    // every SNV-reachable substitution. alt '*' makes ProtVar return the whole codon's SNV set (an
+    // unreachable target → "show all"), which we key by the resulting amino acid.
+    const PROTVAR_MAPPING = (q) => `https://www.ebi.ac.uk/ProtVar/api/mapping?q=${encodeURIComponent(q)}&assembly=AUTO`;
+    const AA3_TO_1 = { Ala: 'A', Arg: 'R', Asn: 'N', Asp: 'D', Cys: 'C', Gln: 'Q', Glu: 'E', Gly: 'G', His: 'H', Ile: 'I', Leu: 'L', Lys: 'K', Met: 'M', Phe: 'F', Pro: 'P', Ser: 'S', Thr: 'T', Trp: 'W', Tyr: 'Y', Val: 'V' };
+    async function fetchCaddByMut(acc, pos, wt) {
+        const ref = (wt && /^[A-Z]$/.test(wt)) ? wt : 'A'; // ProtVar corrects a wrong ref from the sequence
+        const j = await fetchOptionalJson(PROTVAR_MAPPING(`${acc} ${pos} ${ref} *`));
+        const gvs = j?.content?.inputs?.[0]?.derivedGenomicVariants || [];
+        const out = {};
+        for (const gv of gvs) {
+            const g = gv.genes?.[0]; if (!g || g.caddScore == null) continue;
+            const iso = (g.isoforms || []).find(i => i.canonical) || g.isoforms?.[0];
+            const aa1 = AA3_TO_1[iso?.variantAA]; if (!aa1) continue;
+            if (out[aa1] == null || g.caddScore > out[aa1]) out[aa1] = g.caddScore; // most deleterious codon path
+        }
+        return out;
+    }
     const PROTVAR_FOLDX = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/${acc}/${pos}`;
     const PROTVAR_POCKET = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}/${pos}`;
+    // Public: the raw ProtVar pocket endpoint for a residue, so the UI can link users to the source data.
+    const protVarPocketUrl = (acc, pos) => PROTVAR_POCKET(String(acc || '').replace(/-\d+$/, ''), pos);
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
     const BEACON_ALLOWED_HOSTS = new Set([
         'alphafold.ebi.ac.uk', 'www.ebi.ac.uk', 'files.rcsb.org', 'swissmodel.expasy.org',
@@ -326,6 +367,80 @@ const UFVApi = (() => {
         return promise;
     }
 
+    // Auth → mmCIF-label residue map for an RCSB strucmotif (pocket) search. Mol*'s label_seq_id (from the
+    // PDBe CIF) does NOT match RCSB's deposited mmCIF, so we derive the real label ids from PDBe's
+    // residue_listing: struct_asym_id = label_asym_id, residue_number = label_seq_id, keyed by auth chain +
+    // author_residue_number. Cached per entry. Returns Map("authChain|authResi" -> {labelAsym, labelSeq}).
+    const _resLabelCache = new Map();
+    function fetchPocketLabelIds(pdbId) {
+        const key = String(pdbId || '').toLowerCase();
+        if (!key) return Promise.resolve(new Map());
+        if (_resLabelCache.has(key)) return _resLabelCache.get(key);
+        const p = (async () => {
+            const map = new Map();
+            const j = await fetchOptionalJson(`https://www.ebi.ac.uk/pdbe/api/pdb/entry/residue_listing/${key}`);
+            for (const mol of (j?.[key]?.molecules || []))
+                for (const ch of (mol.chains || [])) {
+                    const labelAsym = ch.struct_asym_id, authChain = ch.chain_id;
+                    if (!labelAsym) continue;
+                    for (const r of (ch.residues || [])) {
+                        if (r.author_residue_number == null || r.residue_number == null) continue;
+                        map.set(`${authChain}|${r.author_residue_number}`, { labelAsym, labelSeq: r.residue_number });
+                    }
+                }
+            return map;
+        })();
+        _resLabelCache.set(key, p);
+        return p;
+    }
+
+    // Full partner-protein annotations for DISPLAY (multichain): for every partner chain, fetch that
+    // protein's variants and map each annotated UniProt position to its PDB author residue on that chain,
+    // keeping the full variant objects so the residue panel/sphere colouring can use them. Returns
+    // [{ chainId, accession, byResi: Map(pdbResi -> { uniPos, variants }) }]. Cached per structure.
+    const _partnerAnnotCache = new Map();
+    async function loadPartnerAnnotations(structure) {
+        const partners = structure?.partners || [];
+        if (!partners.length) return [];
+        const cacheKey = `A|${structure.pdbId}|${(structure.chainIds || [structure.chainId]).join(',')}`;
+        if (_partnerAnnotCache.has(cacheKey)) return _partnerAnnotCache.get(cacheKey);
+        const promise = (async () => {
+            const byAcc = new Map();
+            partners.forEach(p => { if (!byAcc.has(p.accession)) byAcc.set(p.accession, []); byAcc.get(p.accession).push(p); });
+            const accs = [...byAcc.keys()].slice(0, PARTNER_ACCESSION_CAP);
+            const out = [];
+            await Promise.all(accs.map(async acc => {
+                // Disease variants + PTMs + sites: used for OUR-cutoff focus colouring of partner neighbours,
+                // the Nearby list, and the opt-in partner sphere layers (Partners accordion).
+                const [variation, features] = await Promise.all([fetchOptionalJson(VARIATION_URL(acc)), fetchOptionalJson(FEATURES_URL(acc))]);
+                const variants = DataProcessor.extractVariants(variation);
+                DataProcessor.computeDiseaseColors(variants); // assign each partner variant a per-disease colour
+                const ptms = DataProcessor.extractPTMs(features);
+                DataProcessor.groupPTMsByCategory(ptms); // assigns each PTM a category colour (mutates items)
+                const sites = DataProcessor.extractSites(features);
+                if (!variants.length && !ptms.length && !sites.length) return;
+                const byUni = new Map();
+                const ensure = (pos) => { if (!byUni.has(pos)) byUni.set(pos, { variants: [], ptms: [], sites: [] }); return byUni.get(pos); };
+                variants.forEach(v => ensure(v.position).variants.push(v));
+                ptms.forEach(p => { ensure(p.position).ptms.push(p); if (p.endPosition && p.endPosition !== p.position) ensure(p.endPosition).ptms.push({ ...p, position: p.endPosition }); });
+                sites.forEach(s => { const end = s.endPosition || s.position; for (let pos = s.position; pos <= end; pos++) ensure(pos).sites.push(s); });
+                for (const m of byAcc.get(acc)) {
+                    const resolve = await partnerUniToAuthor(structure.pdbId, m);
+                    const byResi = new Map();
+                    byUni.forEach((data, uniPos) => {
+                        if (uniPos < m.uniprotStart || uniPos > m.uniprotEnd) return;
+                        const author = resolve(uniPos);
+                        if (author != null) byResi.set(author, { uniPos, variants: data.variants, ptms: data.ptms, sites: data.sites });
+                    });
+                    if (byResi.size) out.push({ chainId: m.chainId, accession: acc, byResi });
+                }
+            }));
+            return out;
+        })();
+        _partnerAnnotCache.set(cacheKey, promise);
+        return promise;
+    }
+
     // Fetch modelled residue count matching by author chain ID (auth_asym_id),
     // not label_asym_id, so auxiliary/accessory subunits don't get mixed up.
     async function fetchModelledResidueCount(pdbId, chainId) {
@@ -357,6 +472,17 @@ const UFVApi = (() => {
             s.otherChains = mols.some(m => (m.in_chains || []).some(c => !currentChains.has(c)));
             const chainMol = mols.find(m => (m.in_chains || []).includes(s.chainId));
             if (chainMol) s.chainName = chainMol.molecule_name?.[0] || chainMol.molecule_type || '';
+
+            // ⚛ Chimeric flag — ONLY when OUR protein's own chain is the chimera: its entity spans >1 source
+            // organism, OR SIFTS maps >1 distinct UniProt entry to it (a fusion). A complex that merely
+            // CONTAINS other-organism chains (e.g. a mouse Fab fiducial on a human target) is NOT flagged —
+            // our protein there is not chimeric, and its mapping is intact.
+            const ourOrgs = [...new Set((chainMol?.source || []).map(src => src.organism_scientific_name).filter(Boolean))];
+            let ourAccCount = 0;
+            const siftsUni0 = sifts?.[s.pdbId.toLowerCase()]?.UniProt;
+            if (siftsUni0) for (const acc of Object.keys(siftsUni0)) { if ((siftsUni0[acc].mappings || []).some(m => m.chain_id === s.chainId)) ourAccCount++; }
+            s.organisms = ourOrgs;
+            s.chimeric = ourOrgs.length > 1 || ourAccCount > 1;
 
             // Override mappedRanges with accurate SIFTS per-segment mappings
             if (uniprotId && sifts) {
@@ -504,6 +630,43 @@ const UFVApi = (() => {
         return [...byPdb.values()];
     }
 
+    // Binding-pocket ONLY (one lightweight endpoint), so the residue panel can show the pocket box on click
+    // without waiting for the full per-substitution Predictions fetch. Returns
+    //   { count, buriedness, score, pockets: [{ pocketId, buriedness, score, meanPlddt, resid: [uniprot pos…] }] }
+    // (best pocket's buriedness/score lifted to the top for the summary boxes), or null (the endpoint 404s
+    // for residues that don't line a pocket). The per-pocket `resid` lets the UI list / highlight the actual
+    // residues lining each pocket. ProtVar predicts pockets with AutoSite (NAR 2024); `score` is AutoSite's
+    // per-pocket ranking score (~hundreds), NOT a 0–1 druggability probability (no druggability is provided).
+    // Cached separately.
+    const _pocketCache = new Map();
+    function normalizePockets(arr) {
+        const raw = (Array.isArray(arr) ? arr : (arr ? [arr] : [])).filter(o => o && typeof o === 'object');
+        return raw
+            .map(o => ({
+                pocketId: o.pocketId,
+                buriedness: o.buriedness,
+                score: o.score,
+                meanPlddt: o.meanPlddt,
+                radGyration: o.radGyration,   // radius of gyration (Å) — pocket compactness/extent (AutoSite)
+                energyPerVol: o.energyPerVol, // AutoSite affinity energy per pocket volume
+                resid: Array.isArray(o.resid) ? o.resid.filter(Number.isFinite) : [],
+            }))
+            .sort((a, b) => (b.score || 0) - (a.score || 0)); // best (highest pocket score) first
+    }
+    function fetchProtVarPocket(acc, pos) {
+        const canonAcc = acc.replace(/-\d+$/, '');
+        const key = `${canonAcc}:${pos}`;
+        if (_pocketCache.has(key)) return _pocketCache.get(key);
+        const p = (async () => {
+            const pockets = normalizePockets(await fetchOptionalJson(PROTVAR_POCKET(canonAcc, pos)));
+            if (!pockets.length) return null;
+            const best = pockets[0];
+            return { count: pockets.length, buriedness: best.buriedness, score: best.score, pockets };
+        })();
+        _pocketCache.set(key, p);
+        return p;
+    }
+
     const _protVarCache = new Map();
     function _summ(vals) {
         const v = vals.filter(x => Number.isFinite(x));
@@ -517,14 +680,15 @@ const UFVApi = (() => {
      * amino-acid labels, so we summarise; ~19 AM — we already have AlphaMissense; one M3D structural
      * effect). /prediction/foldx gives per-substitution FoldX ΔΔG WITH wt/mut labels. Cached.
      */
-    async function fetchProtVar(acc, pos) {
+    async function fetchProtVar(acc, pos, wt) {
         const canonAcc = acc.replace(/-\d+$/, '');
         const key = `${canonAcc}:${pos}`;
         if (_protVarCache.has(key)) return _protVarCache.get(key);
-        const [scoreArr, foldxArr, pocketArr] = await Promise.all([
+        const [scoreArr, foldxArr, pocketArr, caddByMut] = await Promise.all([
             fetchOptionalJson(PROTVAR_SCORE(canonAcc, pos)),
             fetchOptionalJson(PROTVAR_FOLDX(canonAcc, pos)),
             fetchOptionalJson(PROTVAR_POCKET(canonAcc, pos)),
+            fetchCaddByMut(canonAcc, pos, wt).catch(() => ({})),
         ]);
         let conservation = null, m3d = null; const eveRaw = [], esmRaw = [], eveClsRaw = [];
         for (const o of (scoreArr || [])) {
@@ -546,7 +710,7 @@ const UFVApi = (() => {
         }
         const result = {
             score: {
-                conservation, m3d, eveRaw, eveClsRaw, esmRaw, eve: _summ(eveRaw), esm: _summ(esmRaw),
+                conservation, m3d, eveRaw, eveClsRaw, esmRaw, caddByMut: caddByMut || {}, eve: _summ(eveRaw), esm: _summ(esmRaw),
                 evePath: eveClsRaw.filter(c => String(c).toUpperCase() === 'PATHOGENIC').length,
                 eveN: eveClsRaw.filter(Boolean).length,
             },
@@ -876,10 +1040,14 @@ const UFVApi = (() => {
             const j = await fetchOptionalJson(LIGAND_CCD(key));
             const d = j?.rcsb_chem_comp_descriptor || {};
             const db = (j?.rcsb_chem_comp_related || []).find(x => x.resource_name === 'DrugBank');
+            const info = j?.rcsb_chem_comp_info || {};
             return {
                 id: key,
                 name: j?.chem_comp?.name || null,
                 formula: j?.chem_comp?.formula || null,
+                weight: typeof j?.chem_comp?.formula_weight === 'number' ? j.chem_comp.formula_weight : null, // Da (M6 descriptor)
+                hbondDonors: typeof info.atom_count_hydrogen_bond_donors === 'number' ? info.atom_count_hydrogen_bond_donors : null,
+                hbondAcceptors: typeof info.atom_count_hydrogen_bond_acceptors === 'number' ? info.atom_count_hydrogen_bond_acceptors : null,
                 smiles: d.SMILES_stereo || d.SMILES || null,
                 inchikey: d.InChIKey || null,
                 drugbank: db?.resource_accession_code || null,
@@ -914,7 +1082,151 @@ const UFVApi = (() => {
         return p;
     }
 
+    // 2D-similarity search of ChEMBL by SMILES (client-side; EBI allows CORS). Returns the top similar
+    // bioactive compounds with names + ChEMBL IDs + % similarity, so a ligand can be linked out to its
+    // chemical analogues. Cached. Returns [] on failure (the UI then falls back to a search link).
+    const _simCache = new Map();
+    const chemblCompoundUrl = (id) => id ? `https://www.ebi.ac.uk/chembl/compound_report_card/${encodeURIComponent(id)}/` : null;
+    const chemblSearchUrl = (smiles) => smiles ? `https://www.ebi.ac.uk/chembl/g/#search_results/all/query=${encodeURIComponent(smiles)}` : null;
+    function getSimilarLigands(smiles, threshold = 70) {
+        if (!smiles) return Promise.resolve([]);
+        const key = `${smiles}|${threshold}`;
+        if (_simCache.has(key)) return _simCache.get(key);
+        const p = (async () => {
+            const url = `https://www.ebi.ac.uk/chembl/api/data/similarity/${encodeURIComponent(smiles)}/${threshold}.json?limit=8`;
+            const j = await fetchOptionalJson(url);
+            const mols = (j && Array.isArray(j.molecules)) ? j.molecules : [];
+            return mols
+                .map(m => ({ chemblId: m.molecule_chembl_id || null, name: m.pref_name || null, similarity: m.similarity != null ? Number(m.similarity) : null }))
+                .filter(m => m.chemblId)
+                .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
+                .slice(0, 6);
+        })().catch(() => []);
+        _simCache.set(key, p);
+        return p;
+    }
+
+    // AlphaFill transplant metadata: maps each transplanted ligand's chain (label/auth asym_id, which
+    // equals the loaded structure's auth chain) to its donor sequence identity, clash score, donor PDB
+    // and RMSD. Used to filter overlapping low-identity transplants (the "blob") like the AlphaFill site.
+    const _affCache = new Map();
+    function getAlphaFillTransplants(affId) {
+        if (!affId) return Promise.resolve(null);
+        const key = String(affId).toUpperCase();
+        if (_affCache.has(key)) return _affCache.get(key);
+        const p = (async () => {
+            const j = await fetchOptionalJson(`https://alphafill.eu/v1/aff/${encodeURIComponent(key)}/json`);
+            if (!j || !Array.isArray(j.hits)) return null;
+            const map = new Map(); // asym_id (= structure auth chain) -> { identity, clash, compound, donorPdb, rmsd }
+            for (const h of j.hits) {
+                const identity = h.alignment && typeof h.alignment.identity === 'number' ? h.alignment.identity : null;
+                const donorPdb = h.pdb_id || null;
+                for (const t of (h.transplants || [])) {
+                    if (!t.asym_id) continue;
+                    map.set(String(t.asym_id), {
+                        identity,
+                        clash: t.clash && typeof t.clash.score === 'number' ? t.clash.score : null,
+                        compound: t.compound_id || null,
+                        donorPdb,
+                        rmsd: typeof t.local_rmsd === 'number' ? t.local_rmsd : null,
+                    });
+                }
+            }
+            return map;
+        })();
+        _affCache.set(key, p);
+        return p;
+    }
+
+    // ─── Open Targets: target-level druggability (tractability) ──────────────────────────────────
+    // Druggability is answerable at the TARGET level, not per-pocket. Open Targets gives tractability
+    // buckets per modality (small molecule / antibody / PROTAC). Keyed by Ensembl gene id, so we map
+    // UniProt→Ensembl first (via UniProt's own xref). Cached. CORS-clean.
+    const _ensgCache = new Map();
+    async function ensemblGeneForUniProt(acc) {
+        const canon = String(acc || '').replace(/-\d+$/, '');
+        if (_ensgCache.has(canon)) return _ensgCache.get(canon);
+        const p = (async () => {
+            const j = await fetchOptionalJson(`https://rest.uniprot.org/uniprotkb/${canon}.json?fields=xref_ensembl`);
+            for (const r of (j?.uniProtKBCrossReferences || [])) {
+                if (r.database !== 'Ensembl') continue;
+                const g = (r.properties || []).find(x => x.key === 'GeneId');
+                if (g?.value) return g.value.split('.')[0]; // ENSG00000169432.19 → ENSG00000169432
+            }
+            return null;
+        })();
+        _ensgCache.set(canon, p);
+        return p;
+    }
+    const OT_GQL = 'https://api.platform.opentargets.org/api/v4/graphql';
+    const _otCache = new Map();
+    function fetchOpenTargets(acc) {
+        const canon = String(acc || '').replace(/-\d+$/, '');
+        if (_otCache.has(canon)) return _otCache.get(canon);
+        const p = (async () => {
+            const ensg = await ensemblGeneForUniProt(canon);
+            if (!ensg) return null;
+            const query = `{ target(ensemblId:"${ensg}"){ approvedSymbol tractability{ label modality value } } }`;
+            let j = null;
+            try {
+                const res = await fetch(OT_GQL, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ query }) });
+                if (res.ok) j = await res.json();
+            } catch (_) {}
+            const t = j?.data?.target;
+            if (!t) return null;
+            // Keep only the POSITIVE tractability evidence, grouped by modality.
+            const MOD = { SM: 'Small molecule', AB: 'Antibody', PR: 'PROTAC', OC: 'Other' };
+            const byMod = {};
+            (t.tractability || []).forEach(x => { if (x.value) { (byMod[x.modality] ||= []).push(x.label); } });
+            const groups = Object.entries(byMod).map(([mod, labels]) => ({ modality: MOD[mod] || mod, labels }));
+            return { symbol: t.approvedSymbol, ensemblId: ensg, groups, url: `https://platform.opentargets.org/target/${ensg}` };
+        })();
+        _otCache.set(canon, p);
+        return p;
+    }
+
+    // ─── PDBe-KB: per-residue ligand-binding & PPI-interface context (experimental, whole-PDB) ───────
+    // ligand_sites/{acc} and interface_residues/{acc} are UniProt-indexed: each ligand / partner lists the
+    // UniProt residues it contacts (across ALL PDB structures of the protein). We invert them to per-position
+    // maps for the residue panel. Free EBI, CORS-clean, instant. Cached per accession.
+    const PDBEKB = (ep, acc) => `https://www.ebi.ac.uk/pdbe/graph-api/uniprot/${ep}/${acc}`;
+    const _pdbeKbCache = new Map();
+    function fetchPdbeKbContext(acc) {
+        const canon = String(acc || '').replace(/-\d+$/, '');
+        if (_pdbeKbCache.has(canon)) return _pdbeKbCache.get(canon);
+        const p = (async () => {
+            const [lig, iface] = await Promise.all([
+                fetchOptionalJson(PDBEKB('ligand_sites', canon)),
+                fetchOptionalJson(PDBEKB('interface_residues', canon)),
+            ]);
+            const ligandByPos = new Map();    // pos → [{ code, name, drugbank, chembl, pdbCount }]
+            const interfaceByPos = new Map(); // pos → [{ accession, name, pdbCount }]
+            const addRange = (map, item, residues) => {
+                for (const r of (residues || [])) {
+                    const a = r.startIndex, b = r.endIndex ?? r.startIndex;
+                    const entries = r.interactingPDBEntries || r.allPDBEntries || [];
+                    const pdb = (entries[0] && (entries[0].pdbId || entries[0])) || null; // a representative PDB entry
+                    for (let pos = a; pos <= b; pos++) {
+                        if (!map.has(pos)) map.set(pos, []);
+                        map.get(pos).push({ ...item, pdb, pdbCount: entries.length });
+                    }
+                }
+            };
+            const ligData = lig && lig[canon] && lig[canon].data;
+            (ligData || []).forEach(d => {
+                const ad = d.additionalData || {};
+                addRange(ligandByPos, { code: d.accession, name: d.name, drugbank: ad.drugBankId || null, chembl: ad.chemblId || null }, d.residues);
+            });
+            const ifData = iface && iface[canon] && iface[canon].data;
+            (ifData || []).forEach(d => addRange(interfaceByPos, { accession: d.accession, name: d.name }, d.residues));
+            if (!ligandByPos.size && !interfaceByPos.size) return null;
+            return { ligandByPos, interfaceByPos };
+        })();
+        _pdbeKbCache.set(canon, p);
+        return p;
+    }
+
     // getPrimaryStructure: just the canonical AlphaFold model, fetched fast so the viewer can paint
     // immediately while getStructures streams in the experimental/isoform/computed list behind it.
-    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, getPaeMatrix, getLigandInfo, getLigandFingerprint, fetchProtVar, fetchProtVarAll };
+    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, loadPartnerAnnotations, fetchPocketLabelIds, fetchProtVarPocket, protVarPocketUrl, getPaeMatrix, getLigandInfo, getLigandFingerprint, pubchemUrl, pubchemCid, pubchemSimilarity2dUrl, pubchemSimilarity3dUrl, pubchemSimilarity2dByKey, pubchemSimilarity3dByKey, getSimilarLigands, chemblCompoundUrl, chemblSearchUrl, getAlphaFillTransplants, fetchProtVar, fetchProtVarAll, fetchOpenTargets, fetchPdbeKbContext };
 })();

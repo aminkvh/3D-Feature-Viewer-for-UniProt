@@ -524,7 +524,6 @@ const UFVAnalysis = (() => {
             byPos.forEach((scores, pos) => {
                 out.set(pos, {
                     avg: scores.reduce((a, b) => a + b, 0) / scores.length,
-                    max: Math.max(...scores),
                     count: scores.length,
                 });
             });
@@ -727,6 +726,7 @@ const UFVAnalysis = (() => {
         const nearbyPtms = [];
         for (const ptm of ptms) {
             const p = ptm.position;
+            if (p === pos) continue; // exclude the selected residue itself (distance 0)
             if (seenPtmPos.has(p)) continue;
             seenPtmPos.add(p);
             const ca = caByUni.get(p);
@@ -740,6 +740,7 @@ const UFVAnalysis = (() => {
         const isPathogenic = v => /pathogenic|deleterious/i.test(v.consequence || v.clinVarSignificance || '');
         const nearbyVariants = [];
         for (const v of variants) {
+            if (v.position === pos) continue; // exclude the selected residue itself (distance 0)
             if (!isPathogenic(v)) continue;
             const ca = caByUni.get(v.position);
             if (!ca) continue;
@@ -752,5 +753,72 @@ const UFVAnalysis = (() => {
         return { nearbyPtms, nearbyVariants };
     }
 
-    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity, computeResidueProximity };
+    /**
+     * Aggregate pocket-level evidence for a set of pocket residues (UniProt positions).
+     *   meanB    — mean CA B-factor over pocket residues (= mean pLDDT for AlphaFold/AlphaFill models)
+     *   count    — number of pocket residues that had a CA B-factor
+     *   siteHits — UniProt functional sites (ACT_SITE/BINDING/METAL/SITE) overlapping the pocket
+     * @param {Iterable<number>} pocketPositions  UniProt positions forming the pocket
+     * @param {Array} geometry  residueGeometry() output ({ uniPos, ca, b })
+     * @param {Array} sites      UniProt site features ({ position, endPosition, description })
+     */
+    function pocketEvidence(pocketPositions, geometry, sites, sequence) {
+        const posSet = pocketPositions instanceof Set ? pocketPositions : new Set(pocketPositions || []);
+        let sum = 0, count = 0;
+        for (const g of (geometry || [])) {
+            if (g.uniPos != null && posSet.has(g.uniPos) && typeof g.b === 'number') { sum += g.b; count++; }
+        }
+        const meanB = count ? sum / count : null;
+        const siteHits = (sites || []).filter(site => {
+            const end = site.endPosition || site.position;
+            for (let p = site.position; p <= end; p++) if (posSet.has(p)) return true;
+            return false;
+        });
+        // Pocket-residue fingerprint: amino-acid CLASS composition of the lining residues (from the
+        // canonical sequence), a quick read on whether the pocket is hydrophobic, polar or charged.
+        const composition = pocketComposition(posSet, sequence);
+        return { meanB, count, siteHits, composition };
+    }
+
+    const _AA_CLASS = {};
+    'AVLIMFWPGC'.split('').forEach(a => (_AA_CLASS[a] = 'hydrophobic'));
+    'STNQY'.split('').forEach(a => (_AA_CLASS[a] = 'polar'));
+    'DE'.split('').forEach(a => (_AA_CLASS[a] = 'acidic'));
+    'KRH'.split('').forEach(a => (_AA_CLASS[a] = 'basic'));
+    function pocketComposition(posSet, sequence) {
+        if (!sequence) return null;
+        const comp = { hydrophobic: 0, polar: 0, acidic: 0, basic: 0, aromatic: 0, total: 0 };
+        posSet.forEach(p => {
+            const aa = sequence[p - 1]; if (!aa) return;
+            comp.total++;
+            const c = _AA_CLASS[aa]; if (c) comp[c]++;
+            if ('FWYH'.includes(aa)) comp.aromatic++;
+        });
+        return comp.total ? comp : null;
+    }
+
+    /**
+     * Closest heavy-atom contact between a ligand and the protein — a pure-JS clash check (works for any
+     * ligand, not just AlphaFill transplants). Returns the min distance and a band: severe (<2.0 Å,
+     * atoms interpenetrate), suspicious (<2.6 Å, tighter than a typical non-bonded contact), or normal.
+     * @param {Array} atoms  full atom list (getModel().selectedAtoms({}))
+     */
+    function ligandClash(ligResn, ligResi, ligChain, atoms) {
+        if (!atoms || !atoms.length) return null;
+        const isHeavy = a => a.elem !== 'H' && a.elem !== 'D';
+        const lig = atoms.filter(a => a.hetflag && a.resn === ligResn && a.resi === ligResi && (ligChain == null || a.chain === ligChain) && isHeavy(a));
+        if (!lig.length) return null;
+        const prot = atoms.filter(a => !a.hetflag && isHeavy(a));
+        let min2 = Infinity;
+        for (const l of lig) for (const p of prot) {
+            const dx = l.x - p.x, dy = l.y - p.y, dz = l.z - p.z;
+            const d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < min2) min2 = d2;
+        }
+        if (!isFinite(min2)) return null;
+        const d = Math.sqrt(min2);
+        return { minDist: d, band: d < 2.0 ? 'severe' : d < 2.6 ? 'suspicious' : 'normal' };
+    }
+
+    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity, computeResidueProximity, pocketEvidence, ligandClash };
 })();

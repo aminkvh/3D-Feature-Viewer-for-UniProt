@@ -7,6 +7,7 @@ const UFVInjector = (() => {
         observer: null,
         entryPoll: null,
         variantPoll: null,
+        featurePoll: null,
         urlPoll: null,
         scrollBound: false,
         visibilityBound: false,
@@ -14,6 +15,7 @@ const UFVInjector = (() => {
         lastUrl: '',
     };
     window.__UFV_RUNTIME__ = runtime;
+    if (!runtime.injectedIds) runtime.injectedIds = new Set(); // ids of buttons we've actually placed
 
     function getUniProtId() {
         const m = window.location.pathname.match(/\/uniprotkb\/([A-Za-z0-9_-]+)/);
@@ -22,6 +24,10 @@ const UFVInjector = (() => {
 
     function isVariantViewerPage() {
         return window.location.pathname.includes('/variant-viewer');
+    }
+
+    function isFeatureViewerPage() {
+        return window.location.pathname.includes('/feature-viewer');
     }
 
     function scrapeDiseaseHeadings(sectionHeading) {
@@ -53,6 +59,8 @@ const UFVInjector = (() => {
             ptm_processing: ['PTM/Processing', 'PTM / Processing'],
             disease_variants: ['Disease & Variants', 'Disease and Variants'],
             function: ['Function'],
+            structure: ['Structure'],
+            subcellular_location: ['Subcellular location', 'Subcellular Location'],
         };
         const main = document.querySelector('main') || document.querySelector('[role="main"]') || document.body;
         for (const h of main.querySelectorAll('h1, h2, h3')) {
@@ -62,12 +70,18 @@ const UFVInjector = (() => {
         return null;
     }
 
-    // Append the button inline into the heading (after the heading's own text content).
-    // The button uses vertical-align:middle and zero top/bottom margin so it sits on the
-    // heading's existing line without adding height — the sections below don't shift.
+    // Append the button after the heading text, wrapped in a ZERO-SIZE inline anchor. The button is
+    // absolutely positioned relative to that anchor, so it adds NO height to the heading's line box and
+    // never shifts the sections below it. That keeps UniProt's left-nav scroll-spy section offsets intact —
+    // the real cause of the active-section indicator landing on the wrong item (no scroll/resize nudges
+    // needed once the layout is genuinely untouched).
     function placeButton(heading, btn) {
         btn.classList.add('ufv-3d-btn--inline');
-        heading.appendChild(btn);
+        const anchor = document.createElement('span');
+        anchor.className = 'ufv-3d-btn-anchor';
+        anchor.appendChild(btn);
+        heading.appendChild(anchor);
+        if (btn.id) runtime.injectedIds.add(btn.id); // remember it so the observer re-injects only if dropped
     }
 
     function tryInjectPTMButton() {
@@ -108,16 +122,31 @@ const UFVInjector = (() => {
         placeButton(h, UFVModal.createButton('ufv-btn-domains', 'View Domains in 3D', () => UFVModal.open('domains')));
     }
 
+    function tryInjectStructureButton() {
+        const existing = document.getElementById('ufv-btn-structure');
+        if (existing?.isConnected) return;
+        const h = findSectionHeading('structure');
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-structure', 'View in 3D', () => UFVModal.open('structure')));
+    }
+
+    function tryInjectSubcellularButton() {
+        const existing = document.getElementById('ufv-btn-subcellular');
+        if (existing?.isConnected) return;
+        // Anchor to the "Features" sub-heading inside the Subcellular location section. If the entry has
+        // no subcellular Features sub-heading, the button is intentionally NOT shown.
+        const h = findSectionSubHeading('subcellular_location', ['subcellular location'], ['features']);
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-subcellular', 'View in 3D', () => UFVModal.open('subcellular')));
+    }
+
     function injectAllEntryButtons() {
         tryInjectPTMButton();
         tryInjectVariantButton();
         tryInjectFeaturesButton();
         tryInjectDomainsButton();
-    }
-
-    function allPresent() {
-        return ['ufv-btn-ptm','ufv-btn-variant','ufv-btn-features','ufv-btn-domains']
-            .every(id => document.getElementById(id)?.isConnected);
+        tryInjectStructureButton();
+        tryInjectSubcellularButton();
     }
 
     // Find an <h3> sub-heading (matching one of h3Texts) inside a section. We anchor buttons to the
@@ -140,12 +169,12 @@ const UFVInjector = (() => {
 
     function tryInjectVariantViewerButton() {
         const existing = document.getElementById('ufv-btn-variant-page');
-        if (existing && document.body.contains(existing)) return;
-        const btn = UFVModal.createButton('ufv-btn-variant-page', 'View Variants in 3D', () => UFVModal.open('variant'));
-        // Always attach to body with fixed positioning — anchoring to a DOM element
-        // inside the variant-viewer causes the button to jump when React re-renders
-        // on tab switches (each render may produce a different h2 target).
-        btn.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3);';        document.body.appendChild(btn);
+        if (existing && existing.isConnected) return;
+        // Anchor inline next to the page's "Variants" heading (the poll re-injects if React drops it).
+        const main = document.querySelector('main') || document.body;
+        const h = [...main.querySelectorAll('h1, h2')].find(x => /^variants?\b/i.test((x.textContent || '').trim()));
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-variant-page', 'View Variants in 3D', () => UFVModal.open('variant')));
     }
 
     function injectEntryButtons() {
@@ -155,7 +184,14 @@ const UFVInjector = (() => {
         if (!runtime.observer) {
             let _t = null;
             runtime.observer = new MutationObserver(() => {
-                if (allPresent()) return;
+                // Re-inject ONLY when a button we previously PLACED was dropped by a React re-render.
+                // Buttons whose section doesn't exist on this entry (e.g. PTM/Processing absent on some
+                // entries) never enter injectedIds, so a missing section can no longer keep the observer
+                // firing on every mutation — which churned the DOM during scroll/lazy-load and disturbed
+                // UniProt's nav. (allPresent() never became true on those entries — the old bug.)
+                let dropped = false;
+                runtime.injectedIds.forEach(id => { if (!document.getElementById(id)?.isConnected) dropped = true; });
+                if (!dropped) return;
                 if (_t) return;
                 _t = setTimeout(() => { _t = null; injectAllEntryButtons(); }, 200);
             });
@@ -168,43 +204,39 @@ const UFVInjector = (() => {
         if (!runtime.entryPoll) {
             runtime.entryPoll = setInterval(injectAllEntryButtons, 2000);
         }
-        // PTM nav fix: dispatch scroll when PTM section enters the viewport, nudging UniProt's
-        // scroll-spy to re-evaluate the active nav link.
-        schedulePTMNavFix();
-        [0, 120, 300, 600, 1000, 1600].forEach(d => setTimeout(injectAllEntryButtons, d));
-    }
-
-    function schedulePTMNavFix() {
-        if (runtime.ptmNavObserver) return;
-        const tryFind = () => {
-            if (runtime.ptmNavObserver) return;
-            const el = document.getElementById('ptm_processing')
-                || [...document.querySelectorAll('section[id]')].find(s => s.id.toLowerCase().includes('ptm'));
-            if (!el) { setTimeout(tryFind, 1500); return; }
-            runtime.ptmNavObserver = new IntersectionObserver(entries => {
-                if (entries.some(e => e.isIntersecting)) {
-                    window.dispatchEvent(new Event('scroll'));
-                    setTimeout(() => window.dispatchEvent(new Event('scroll')), 80);
-                }
-            }, { threshold: 0.05 });
-            runtime.ptmNavObserver.observe(el);
-        };
-        tryFind();
+        // Buttons are layout-neutral (zero-size anchor + absolute button) and the observer no longer churns
+        // (see injectedIds), so the extension does NOT perturb UniProt's left-nav scroll-spy. We deliberately
+        // do NOT touch the page's scroll/indicator ourselves — earlier scroll/resize/scrollIntoView "revive"
+        // hooks fought UniProt's own settle mechanism and caused random scroll jumps. Let UniProt own it.
+        [0, 120, 300, 600, 1000, 1600, 2500, 4000].forEach(d => setTimeout(injectAllEntryButtons, d));
     }
 
     function injectVariantViewerButton() {
-        if (!runtime.variantPoll) {
-            let attempts = 0;
-            runtime.variantPoll = setInterval(() => {
-                tryInjectVariantViewerButton();
-                attempts++;
-                if (document.getElementById('ufv-btn-variant-page') || attempts > 40) {
-                    clearInterval(runtime.variantPoll);
-                    runtime.variantPoll = null;
-                }
-            }, 500);
-        }
+        // Persistent poll (cheap — returns early if present): the button is now anchored to the page
+        // heading, which React can re-render away, so keep re-injecting. Cleared on page navigation.
+        if (!runtime.variantPoll) runtime.variantPoll = setInterval(tryInjectVariantViewerButton, 800);
         [0, 120, 300, 600, 1000].forEach(d => setTimeout(tryInjectVariantViewerButton, d));
+    }
+
+    // The expanded feature-viewer page (/uniprotkb/<id>/feature-viewer) lists every feature. The button
+    // opens the unified Structure window (all layers available, toggle on what you want), anchored inline
+    // next to the "Feature viewer" heading.
+    function tryInjectFeatureViewerButton() {
+        const existing = document.getElementById('ufv-btn-feature-page');
+        if (existing && existing.isConnected) return;
+        const main = document.querySelector('main') || document.body;
+        const heads = [...main.querySelectorAll('h1, h2, h3')].filter(x => x.offsetParent !== null); // visible headings
+        // Prefer a "Feature viewer" / "Features" heading; otherwise fall back to the page's first visible
+        // heading (the feature-viewer page sometimes titles itself by the protein name, not "Feature viewer").
+        const h = heads.find(x => /feature\s*viewer|^features?\b/i.test((x.textContent || '').trim())) || heads[0];
+        if (!h) return;
+        placeButton(h, UFVModal.createButton('ufv-btn-feature-page', 'View Features in 3D', () => UFVModal.open('structure')));
+    }
+
+    function injectFeatureViewerButton() {
+        // Persistent poll (anchored to the heading; cleared on page navigation).
+        if (!runtime.featurePoll) runtime.featurePoll = setInterval(tryInjectFeatureViewerButton, 800);
+        [0, 120, 300, 600, 1000].forEach(d => setTimeout(tryInjectFeatureViewerButton, d));
     }
 
     function handlePageType() {
@@ -216,24 +248,38 @@ const UFVInjector = (() => {
             // Drop the previous protein's loaded model + caches so a stale structure can't be
             // mistaken for an already-loaded one (and so the next open starts clean).
             try { StructureViewer?.clearModel(); } catch (_) {}
+            // Explicitly remove previous protein's injected buttons so tryInject* doesn't treat
+            // them as already-placed before React unmounts the old page DOM.
+            const BTNS = ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-domains', 'ufv-btn-structure', 'ufv-btn-subcellular'];
+            BTNS.forEach(btnId => document.getElementById(btnId)?.remove());
+            runtime.injectedIds.clear();
         }
         UFVState.state.pageContext = isVariantViewerPage() ? 'variant-viewer' : 'entry';
         // Kick off background annotation fetch so the modal opens instantly
         UFVModal.prefetchData();
-        if (isVariantViewerPage()) {
-            // Cancel entry-page injection machinery.
+        const ENTRY_BTNS = ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-domains', 'ufv-btn-structure', 'ufv-btn-subcellular'];
+        // Stop the entry-page injection machinery — shared by the variant-viewer and feature-viewer sub-pages.
+        const stopEntryMachinery = () => {
             if (runtime.observer) { runtime.observer.disconnect(); runtime.observer = null; }
             if (runtime.entryPoll) { clearInterval(runtime.entryPoll); runtime.entryPoll = null; }
-            if (runtime.ptmNavObserver) { runtime.ptmNavObserver.disconnect(); runtime.ptmNavObserver = null; }
-            // Remove all extension buttons — no button on the variant-viewer page.
-            ['ufv-btn-ptm', 'ufv-btn-variant', 'ufv-btn-features', 'ufv-btn-domains', 'ufv-btn-variant-page'].forEach(id => document.getElementById(id)?.remove());
+            runtime.injectedIds.clear();
+        };
+        if (isVariantViewerPage()) {
+            stopEntryMachinery();
+            if (runtime.featurePoll) { clearInterval(runtime.featurePoll); runtime.featurePoll = null; }
+            [...ENTRY_BTNS, 'ufv-btn-variant-page', 'ufv-btn-feature-page'].forEach(id => document.getElementById(id)?.remove());
             injectVariantViewerButton();
-        } else {
-            // Cancel the variant-viewer poll so it can't re-inject ufv-btn-variant-page
-            // into whatever main h2 happens to be present on the new page.
+        } else if (isFeatureViewerPage()) {
+            stopEntryMachinery();
             if (runtime.variantPoll) { clearInterval(runtime.variantPoll); runtime.variantPoll = null; }
-            // Remove variant-viewer button when back on the entry page
+            [...ENTRY_BTNS, 'ufv-btn-variant-page', 'ufv-btn-feature-page'].forEach(id => document.getElementById(id)?.remove());
+            injectFeatureViewerButton();
+        } else {
+            // Entry page: cancel the sub-page polls so they can't re-inject their fixed buttons.
+            if (runtime.variantPoll) { clearInterval(runtime.variantPoll); runtime.variantPoll = null; }
+            if (runtime.featurePoll) { clearInterval(runtime.featurePoll); runtime.featurePoll = null; }
             document.getElementById('ufv-btn-variant-page')?.remove();
+            document.getElementById('ufv-btn-feature-page')?.remove();
             injectEntryButtons();
         }
     }
@@ -263,16 +309,21 @@ const UFVInjector = (() => {
         // Ignore hash-only changes (sidebar anchor links) — they don't switch pages
         // and firing handlePageType() would race with UniProt's sidebar indicator updates.
         if (prevPath === newPath) return;
+        runtime.injectedIds.clear(); // new page/protein → forget which buttons we'd placed
         handlePageType();
     }
 
     function boot() {
         runtime.lastUrl = window.location.href;
+        // Patch history FIRST and unconditionally. The content script now loads across /uniprotkb* (incl.
+        // the search/listing pages and the bare /uniprotkb/<id> URL). The user often lands on one of those
+        // and then client-side-navigates into an entry; without an early history patch that SPA navigation
+        // is never observed and the button only appears after a manual page refresh.
+        patchHistory();
         const id = getUniProtId();
         if (!id) return;
         if (!UFVState.state.uniprotId) UFVState.resetForProtein(id);
         handlePageType();
-        patchHistory();
         // Restored from the back/forward (bfcache) cache: the content script doesn't re-run
         // and the injection timers may have been frozen, so re-arm injection on pageshow.
         if (!runtime.pageshowBound) {

@@ -489,14 +489,26 @@ const UFVExport = (() => {
         L.push('# 3D Feature Viewer for UniProt — VMD session');
         L.push(`# Coloring mode: ${scene.coloringMode}`);
         L.push(`set _data {${scene.coordinates.replace(/\r\n/g, '\n')}}`);
-        L.push(`set _p [file join [pwd] "ufv_${objName}.${scene.format}"]`);
+        // Write the coordinates to a WRITABLE directory. [pwd] is often VMD's install dir (e.g.
+        // C:/Program Files/VMD), which isn't writable → "permission denied". Prefer the OS temp dir
+        // (TMPDIR/TEMP/TMP), then the home dir, and only fall back to pwd if nothing else is writable.
+        L.push('set _dir ""');
+        L.push('foreach _v {TMPDIR TEMP TMP} { if {[info exists ::env($_v)] && [file isdirectory $::env($_v)] && [file writable $::env($_v)]} { set _dir $::env($_v); break } }');
+        L.push('if {$_dir eq "" && [file writable [file normalize ~]]} { set _dir [file normalize ~] }');
+        L.push('if {$_dir eq ""} { set _dir [pwd] }');
+        L.push(`set _p [file join $_dir "ufv_${objName}.${scene.format}"]`);
         L.push('set _fh [open $_p w]');
         L.push('puts -nonewline $_fh $_data');
         L.push('close $_fh');
         L.push('mol new $_p waitfor all');
+        L.push('file delete $_p');   // coordinates are in memory now — don't leave the temp file behind
         L.push('mol delrep 0 top');
-        let cid = 33; // first user-definable ColorID
-        const defColor = c => { const [r, g, b] = colorToUnit(c); L.push(`color change rgb ${cid} ${fix(r)} ${fix(g)} ${fix(b)}`); return cid++; };
+        // Custom colours overwrite VMD's SECONDARY named slots (17–32): these are reliably repainted by
+        // `color change rgb` and `mol color ColorID`, and are NOT used by element ("Name") colouring. IDs
+        // 33+ alias the colour SCALE — on many VMD builds those render as a goldish gradient no matter what
+        // `color change rgb` sets, which made every rep gold. We cycle 17→32 (collisions beat all-gold).
+        let cid = 17;
+        const defColor = c => { const [r, g, b] = colorToUnit(c); L.push(`color change rgb ${cid} ${fix(r)} ${fix(g)} ${fix(b)}`); const id = cid; cid = cid >= 32 ? 17 : cid + 1; return id; };
         // Base cartoon.
         const baseId = defColor(scene.cartoonBase);
         L.push('mol representation NewCartoon');
