@@ -10,7 +10,6 @@
 - Switch between AlphaFold models and mapped experimental PDB structures.
 - Per-residue predictor table: EVE, ESM1b, FoldX ΔΔG, conservation, and CADD scores via ProtVar.
 - Ligand and pocket context: PDBe-KB known sites, AlphaFill ligand context, PubChem/ChEMBL chemical links, and structure-based pocket inspection.
-- External DrugBank links where available.
 - Open Targets tractability and drug evidence per protein.
 - Ligand similarity by CACTVS/Tanimoto fingerprint against AlphaFill transplants.
 - Export residue sets and annotation data to CSV.
