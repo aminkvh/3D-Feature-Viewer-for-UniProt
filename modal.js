@@ -1419,8 +1419,8 @@ const UFVModal = (() => {
         const ourChains = new Set([...(st.chainIds || []), ...(st.chainId ? [st.chainId] : [])]);
         const chimericResidues = geo.filter(g => g.uniPos === null && g.chain != null && ourChains.has(g.chain));
         if (!chimericResidues.length) return;
-        // Auto-apply gray tint so chimeric residues are immediately visually distinct, like unresolved residues.
-        const CHIMERIC_COLOR = '#9e9e9e';
+        // Auto-apply blue-gray so chimeric residues read as distinct from the annotation palette.
+        const CHIMERIC_COLOR = '#8fa5c0';
         StructureViewer.setChimericHighlight?.(chimericResidues, CHIMERIC_COLOR);
         ['ufv-ptm-panel', 'ufv-var-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(id =>
             appendChimericSection(id, chimericResidues, st, CHIMERIC_COLOR));
@@ -3012,25 +3012,42 @@ const UFVModal = (() => {
         const hdr = document.createElement('div'); hdr.className = 'ufv-sub-hdr';
         hdr.append(document.createTextNode('AutoPocket'), makeInfoIcon('AutoPocket (AutoSite via ProtVar)', POCKET_INFO));
         const _pvLink = document.createElement('a'); _pvLink.className = 'ufv-ext-link'; _pvLink.href = `https://www.ebi.ac.uk/ProtVar/${s.uniprotId}`; _pvLink.target = '_blank'; _pvLink.rel = 'noopener noreferrer'; _pvLink.textContent = '⇗ ProtVar'; hdr.appendChild(_pvLink);
-        // "Show all" toggle — overlays all pocket surfaces at once in distinct colors, full-structure view.
+        // "Show all" toggle — fetches ALL pockets for the whole protein (not just those at this residue),
+        // then overlays every pocket surface in a distinct color with a full-structure camera reset.
         let _allShown = false;
         const _showAllBtn = document.createElement('button');
         _showAllBtn.className = 'ufv-section-btn ufv-show-all-btn';
         _showAllBtn.textContent = 'Show all';
-        _showAllBtn.title = 'Overlay all detected pocket surfaces in distinct colors (full-structure view, no sticks)';
-        _showAllBtn.addEventListener('click', () => {
-            _allShown = !_allShown;
-            _showAllBtn.textContent = _allShown ? 'Hide all' : 'Show all';
-            _showAllBtn.classList.toggle('ufv-section-btn-active', _allShown);
+        _showAllBtn.title = 'Overlay all pockets across the whole structure in distinct colors';
+        _showAllBtn.addEventListener('click', async () => {
             if (_allShown) {
+                _allShown = false;
+                _showAllBtn.textContent = 'Show all';
+                _showAllBtn.classList.remove('ufv-section-btn-active');
+                StructureViewer.clearPocket?.();
+                restoreResidueFocus();
+                return;
+            }
+            _showAllBtn.textContent = '…';
+            _showAllBtn.disabled = true;
+            try {
                 const COLORS = ['#26c6da','#ff7043','#66bb6a','#ab47bc','#ffa726','#ec407a','#29b6f6','#9ccc65'];
-                StructureViewer.showAllPockets?.(pockets.map((p, i) => ({
+                // Try the protein-level endpoint first (returns every pocket, not just those at this residue).
+                // Falls back to the per-residue pockets already loaded if the endpoint is unavailable.
+                let allPockets = pockets;
+                try {
+                    const allPk = await UFVApi.fetchAllProtVarPockets?.(s.uniprotId);
+                    if (allPk?.pockets?.length) allPockets = allPk.pockets;
+                } catch (_) {}
+                StructureViewer.showAllPockets?.(allPockets.map((p, i) => ({
                     resids: p.resid || [],
                     color: COLORS[i % COLORS.length],
                 })), chain);
-            } else {
-                StructureViewer.clearPocket?.();
-                restoreResidueFocus();
+                _allShown = true;
+            } finally {
+                _showAllBtn.textContent = _allShown ? 'Hide all' : 'Show all';
+                _showAllBtn.classList.toggle('ufv-section-btn-active', _allShown);
+                _showAllBtn.disabled = false;
             }
         });
         hdr.appendChild(_showAllBtn);

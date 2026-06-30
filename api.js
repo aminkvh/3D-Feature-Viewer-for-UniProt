@@ -66,7 +66,8 @@ const UFVApi = (() => {
         return out;
     }
     const PROTVAR_FOLDX = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/${acc}/${pos}`;
-    const PROTVAR_POCKET = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}/${pos}`;
+    const PROTVAR_POCKET     = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}/${pos}`;
+    const PROTVAR_ALL_POCKETS = acc       => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}`;
     // Public: the raw ProtVar pocket endpoint for a residue, so the UI can link users to the source data.
     const protVarPocketUrl = (acc, pos) => PROTVAR_POCKET(String(acc || '').replace(/-\d+$/, ''), pos);
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
@@ -666,6 +667,20 @@ const UFVApi = (() => {
         _pocketCache.set(key, p);
         return p;
     }
+    // Fetch ALL pockets for the whole protein at once (protein-level endpoint, no position filter).
+    // Falls back to null if the endpoint is not available; caller should degrade to per-residue pockets.
+    function fetchAllProtVarPockets(acc) {
+        const canonAcc = acc.replace(/-\d+$/, '');
+        const key = `all:${canonAcc}`;
+        if (_pocketCache.has(key)) return _pocketCache.get(key);
+        const p = (async () => {
+            const pockets = normalizePockets(await fetchOptionalJson(PROTVAR_ALL_POCKETS(canonAcc)));
+            if (!pockets.length) return null;
+            return { count: pockets.length, pockets };
+        })();
+        _pocketCache.set(key, p);
+        return p;
+    }
 
     const _protVarCache = new Map();
     function _summ(vals) {
@@ -1228,5 +1243,5 @@ const UFVApi = (() => {
 
     // getPrimaryStructure: just the canonical AlphaFold model, fetched fast so the viewer can paint
     // immediately while getStructures streams in the experimental/isoform/computed list behind it.
-    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, loadPartnerAnnotations, fetchPocketLabelIds, fetchProtVarPocket, protVarPocketUrl, getPaeMatrix, getLigandInfo, getLigandFingerprint, pubchemUrl, pubchemCid, pubchemSimilarity2dUrl, pubchemSimilarity3dUrl, pubchemSimilarity2dByKey, pubchemSimilarity3dByKey, getSimilarLigands, chemblCompoundUrl, chemblSearchUrl, getAlphaFillTransplants, fetchProtVar, fetchProtVarAll, fetchOpenTargets, fetchPdbeKbContext };
+    return { loadFeatureData, getStructures, getPrimaryStructure: getAlphaFoldStructure, fetchText, loadPartnerClassified, loadPartnerAnnotations, fetchPocketLabelIds, fetchProtVarPocket, fetchAllProtVarPockets, protVarPocketUrl, getPaeMatrix, getLigandInfo, getLigandFingerprint, pubchemUrl, pubchemCid, pubchemSimilarity2dUrl, pubchemSimilarity3dUrl, pubchemSimilarity2dByKey, pubchemSimilarity3dByKey, getSimilarLigands, chemblCompoundUrl, chemblSearchUrl, getAlphaFillTransplants, fetchProtVar, fetchProtVarAll, fetchOpenTargets, fetchPdbeKbContext };
 })();
