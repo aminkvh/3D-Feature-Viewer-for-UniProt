@@ -647,7 +647,19 @@ const UFVModal = (() => {
         // The observed-residue cache is built from an async 'atoms' event that arrives AFTER this window
         // is first drawn, so unresolved residues (PTMs/sites not modelled in this structure) aren't greyed
         // yet. Re-grey the current filter window once the cache lands.
-        StructureViewer.observedResiCb = () => { if (_loadSeq === mySeq && UFVState.state.currentMode) { rebuildCurrentWindow(); updateChimericSections(); } };
+        StructureViewer.observedResiCb = () => {
+            if (_loadSeq !== mySeq || !UFVState.state.currentMode) return;
+            rebuildCurrentWindow();
+            updateChimericSections();
+            // Recompute coverage from actual loaded atom coordinates — more accurate than the
+            // pre-load RCSB estimate (which uses modeled_residue_count for the whole chain entity,
+            // not just residues mapping to our UniProt accession).
+            const actualModeled = StructureViewer.computeActualCoverage?.(structure);
+            if (actualModeled != null && s.sequence?.length) {
+                structure.coverage = Math.round((actualModeled / s.sequence.length) * 1000) / 10;
+                renderStructureSelector();
+            }
+        };
         // Already-loaded structures skip the loadStructure() that would re-frame the camera, so
         // reset the view here — reopening a window should return to the default framing, not keep
         // wherever the previous session was zoomed/panned.

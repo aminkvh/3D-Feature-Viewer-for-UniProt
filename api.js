@@ -176,12 +176,13 @@ const UFVApi = (() => {
         const pdbStart = parseInt(item.pdb_start || item.start || start || 0, 10);
         const pdbEnd = parseInt(item.pdb_end || item.end || end || 0, 10);
         const covered = start && end ? Math.max(0, end - start + 1) : 0;
-        // Prefer PDBe's pre-computed observed-residue fraction (0–1) over the raw range
-        // estimate, which counts all residues in the SIFTS mapping range including
-        // unresolved ones and therefore overstates coverage.
-        const coverage = item.coverage != null
-            ? Math.round(item.coverage * 1000) / 10
-            : (sequenceLength && covered ? Math.round((covered / sequenceLength) * 1000) / 10 : 0);
+        // PDBe's item.coverage is "SIFTS range coverage" (unp_end-unp_start+1 / seq_length),
+        // which equals 1.0 whenever the SIFTS mapping spans the whole UniProt sequence — even
+        // when many loop residues inside that range are unresolved in the electron density.
+        // Don't use it as a display value: it overstates observed coverage for large EM structures.
+        // decoratePdbStructures overwrites this with the true RCSB modeled_residue_count ratio.
+        // Use the range estimate only as a deduplication key (not as a label — that comes from RCSB).
+        const coverage = sequenceLength && covered ? Math.round((covered / sequenceLength) * 1000) / 10 : 0;
         return {
             id: `${String(item.pdb_id || item.pdbId || '').toUpperCase()}_${item.chain_id || item.chain || 'A'}`,
             label: `${String(item.pdb_id || '').toUpperCase()} chain ${item.chain_id || item.chain || '?'}`,

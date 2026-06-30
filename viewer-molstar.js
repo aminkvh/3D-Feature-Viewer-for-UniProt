@@ -800,7 +800,12 @@ const MolstarViewer = (() => {
           if (!atom || !atom.resi) return;
           if (atom.hetflag && atom.resn !== 'HOH' && atom.resn !== 'WAT') { self._hoverLigand(atom); if (self.hoverCb) self.hoverCb(null, mode, null); return; }
           if (!atom.hetflag && isPartner(atom)) { if (self.hoverCb) self.hoverCb(null, mode, null); return; }
-          const d = map.get(resolveUni(atom)); if (d && self.hoverCb) self.hoverCb({ ...d, pdbResi: atom.resi, chain: atom.chain }, mode, {}, atom.chain);
+          if (!self.hoverCb) return;
+          const uniPos = resolveUni(atom);
+          // Always fire so the tooltip shows both UniProt and PDB residue numbers, even for residues
+          // that carry no annotation sphere in the current mode (d can be undefined for plain backbone).
+          const d = map.get(uniPos);
+          self.hoverCb({ ...(d || { position: uniPos }), pdbResi: atom.resi, chain: atom.chain }, mode, {}, atom.chain);
         },
         () => { self._clearLigandHover(); if (self.hoverCb) self.hoverCb(null, mode, null); });
       this.viewer.setClickable({}, true,
