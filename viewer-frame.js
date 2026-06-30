@@ -597,6 +597,32 @@
     } catch (_) { return false; }
     return true;
   }
+  // Show multiple pocket surfaces simultaneously — one per pocket, each with its own color.
+  // No sticks, no focus: camera resets to show the whole structure.
+  async function doShowMultiPocket(pockets) {
+    if (!currentStructureData() || !pockets || !pockets.length) return false;
+    await removeFocusRep();
+    await doClearPocket();
+    try {
+      const SelT = L().plugin.StateTransforms.Model.StructureSelectionFromBundle;
+      const structureRef = currentStructureCell().cell.transform.ref;
+      for (const { residues, color } of pockets) {
+        if (!residues || !residues.length) continue;
+        const b = viewer.plugin.build();
+        const sel = b.to(structureRef).apply(SelT,
+          { bundle: bundleForResidueList(residues.map(r => [r.chain, r.resi])), label: 'ufv-pocket' },
+          { tags: 'ufv-pocket' }
+        );
+        await b.commit();
+        await viewer.plugin.builders.structure.representation.addRepresentation(sel.ref, {
+          type: 'molecular-surface', typeParams: { alpha: 0.45, ignoreHydrogens: true },
+          color: 'uniform', colorParams: { value: colorToInt(color || '#26c6da') },
+        });
+      }
+      try { viewer.plugin.managers.camera.reset(); } catch (_) {}
+    } catch (_) { return false; }
+    return true;
+  }
   // Focus = OUR OWN ball-and-stick rep of exactly the focused residue/ligand + its nearby set. We do not
   // use Mol*'s focus manager: it only dims (doesn't remove) the rest, adds its own ~5 Å surroundings, and
   // builds the rep across several async transactions (the colour/blob race). Building our own rep is
@@ -784,6 +810,7 @@
     refocus(m) { return doFocus(m.chain, m.resi, m.neighbors, true, m.annotations); },
     camFocus(m) { doCamFocus(m.chain, m.resi, m.radius, m.panOnly); return true; },
     showPocket(m) { return doShowPocket(m.residues, m.color); },
+    showMultiPocket(m) { return doShowMultiPocket(m.pockets); },
     clearPocket() { return doClearPocket(); },
     frameResidues(m) { try { if (m.residues && m.residues.length) viewer.plugin.managers.camera.focusLoci(lociForResidueList(m.residues), { extraRadius: 4 }); } catch (_) {} return true; },
     unfocus() { return doUnfocus(); },

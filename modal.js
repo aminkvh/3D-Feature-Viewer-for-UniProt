@@ -2135,9 +2135,9 @@ const UFVModal = (() => {
     // Pocket-metric explanations (info popover on the Pocket section). These are COMPUTATIONAL predictions of
     // cavities on the protein, not the ligands shown and not a specific highlightable region.
     const POCKET_INFO = [
-        ['Predicted pocket', 'A predicted cavity that could bind a small molecule, identified with AutoSite on the AlphaFold model and served by ProtVar. Click a pocket’s “res” box to highlight it and list its residues.', 'https://www.ebi.ac.uk/ProtVar'],
+        ['AutoPocket', 'Predicted binding cavities identified with AutoSite on the AlphaFold model, served by ProtVar. Click a pocket\'s "res" box to highlight it and zoom in (surface + sticks). Use "Show all" to overlay every pocket surface at once in distinct colors with a full-structure view.', 'https://www.ebi.ac.uk/ProtVar'],
         ['Buriedness', 'How enclosed the pocket is (0 = open, 1 = buried).', ''],
-        ['Pocket score', 'AutoSite’s ranking of how pronounced and ligand-favourable the cavity is — higher = a larger, better-defined pocket.', ''],
+        ['Pocket score', 'AutoSite\'s ranking of how pronounced and ligand-favourable the cavity is — higher = a larger, better-defined pocket.', ''],
     ].map(([name, desc, url]) => `<p><b>${name}</b> — ${desc}${url ? ` <a href="${url}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</p>`).join('');
 
     // Small magnifier "zoom to" button used across sidebar lists (ligands, and per-residue entries).
@@ -3010,8 +3010,30 @@ const UFVModal = (() => {
         const ann = buildAnnotationMap();
         // Sub-block inside the parent "Binding & pockets" section (the parent owns the collapsible).
         const hdr = document.createElement('div'); hdr.className = 'ufv-sub-hdr';
-        hdr.append(document.createTextNode('Predicted pockets'), makeInfoIcon('Predicted pockets (AutoSite)', POCKET_INFO));
+        hdr.append(document.createTextNode('AutoPocket'), makeInfoIcon('AutoPocket (AutoSite via ProtVar)', POCKET_INFO));
         const _pvLink = document.createElement('a'); _pvLink.className = 'ufv-ext-link'; _pvLink.href = `https://www.ebi.ac.uk/ProtVar/${s.uniprotId}`; _pvLink.target = '_blank'; _pvLink.rel = 'noopener noreferrer'; _pvLink.textContent = '⇗ ProtVar'; hdr.appendChild(_pvLink);
+        // "Show all" toggle — overlays all pocket surfaces at once in distinct colors, full-structure view.
+        let _allShown = false;
+        const _showAllBtn = document.createElement('button');
+        _showAllBtn.className = 'ufv-section-btn ufv-show-all-btn';
+        _showAllBtn.textContent = 'Show all';
+        _showAllBtn.title = 'Overlay all detected pocket surfaces in distinct colors (full-structure view, no sticks)';
+        _showAllBtn.addEventListener('click', () => {
+            _allShown = !_allShown;
+            _showAllBtn.textContent = _allShown ? 'Hide all' : 'Show all';
+            _showAllBtn.classList.toggle('ufv-section-btn-active', _allShown);
+            if (_allShown) {
+                const COLORS = ['#26c6da','#ff7043','#66bb6a','#ab47bc','#ffa726','#ec407a','#29b6f6','#9ccc65'];
+                StructureViewer.showAllPockets?.(pockets.map((p, i) => ({
+                    resids: p.resid || [],
+                    color: COLORS[i % COLORS.length],
+                })), chain);
+            } else {
+                StructureViewer.clearPocket?.();
+                restoreResidueFocus();
+            }
+        });
+        hdr.appendChild(_showAllBtn);
         container.appendChild(hdr);
         const body = container; // render the pocket blocks directly into the container
 
@@ -3069,9 +3091,8 @@ const UFVModal = (() => {
                 });
             }
             bw.appendChild(resBox);
-            if (p.buriedness != null) bw.appendChild(mkBox(p.buriedness.toFixed(2), 'buried', 'Buriedness — how enclosed the pocket is (0 = open surface, 1 = fully buried).'));
-            if (p.meanPlddt != null) bw.appendChild(mkBox(Math.round(p.meanPlddt), 'pLDDT', 'Mean AlphaFold confidence over the pocket’s residues (0–100).'));
-            if (p.radGyration != null) bw.appendChild(mkBox(p.radGyration.toFixed(1), 'Rg', 'Radius of gyration (Å) — the pocket’s spatial extent. Smaller = a tighter, more compact cavity.'));
+            if (p.meanPlddt != null) bw.appendChild(mkBox(Math.round(p.meanPlddt), 'pLDDT', `Mean AlphaFold confidence over the pocket's residues (0-100).`));
+            if (p.radGyration != null) bw.appendChild(mkBox(p.radGyration.toFixed(1), 'Rg', `Radius of gyration (Å) — the pocket's spatial extent. Smaller = a tighter, more compact cavity.`));
             if (p.energyPerVol != null) bw.appendChild(mkBox(p.energyPerVol.toFixed(2), 'E/V', 'Interaction-affinity energy per unit pocket volume — higher = a denser, more ligand-favourable cavity.'));
             if (p.score != null) bw.appendChild(mkBox(Math.round(p.score), 'score', POCKET_SCORE_TIP));
             block.appendChild(bw);
@@ -3103,7 +3124,7 @@ const UFVModal = (() => {
                 const ma = document.createElement('a');
                 ma.href = 'javascript:void 0'; ma.className = 'ufv-ligand-link';
                 ma.textContent = 'Find Similar Motifs ↗';
-                ma.title = 'Search the PDB for structures with a similar 3-D arrangement of this pocket’s residues (RCSB Structure Motif Search)';
+                ma.title = `Search the PDB for structures with a similar 3-D arrangement of this pocket's residues (RCSB Structure Motif Search)`;
                 ma.addEventListener('click', (e) => {
                     e.preventDefault(); ma.textContent = 'searching…';
                     openPocketSearch(new Set(resids)).then(ok => { ma.textContent = ok ? 'Find Similar Motifs ↗' : 'motif search unavailable'; }).catch(() => { ma.textContent = 'motif search unavailable'; });
@@ -3180,8 +3201,8 @@ const UFVModal = (() => {
         }
     }
     const STRUCT_CTX_INFO = [
-        ['Experimental binding (PDBe-KB)', 'Aggregated from every experimental PDB structure of this protein, mapped to UniProt residues — shown whether you’re viewing the AlphaFold model or an experimental structure.', 'https://www.ebi.ac.uk/pdbe/pdbe-kb'],
-        ['Ligands', 'Small molecules / ions observed bound at this residue. Each links to a representative PDB structure (RCSB) where it’s bound.', ''],
+        ['Experimental binding (PDBe-KB)', 'Aggregated from every experimental PDB structure of this protein, mapped to UniProt residues — shown for this protein regardless of which structure is selected.', 'https://www.ebi.ac.uk/pdbe/pdbe-kb'],
+        ['Ligands', 'Small molecules / ions observed bound at this residue. Each links to a representative PDB structure (RCSB) where it is bound.', ''],
         ['PPI interface', 'Partner proteins whose interface includes this residue — flagged even when the loaded structure is a monomer.', ''],
     ].map(([name, desc, url]) => `<p><b>${name}</b> — ${desc}${url ? ` <a href="${url}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</p>`).join('');
 

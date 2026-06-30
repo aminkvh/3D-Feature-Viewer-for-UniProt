@@ -254,6 +254,25 @@ const MolstarViewer = (() => {
       return true;
     },
     clearPocket() { if (this._pocketShown) { this._pocketShown = false; send('clearPocket').catch(() => {}); } },
+    // Overlay multiple pocket surfaces simultaneously (one per pocket, each with its own color).
+    // No sticks; camera resets to show the whole structure after all surfaces are added.
+    showAllPockets(pocketList, chain = null) {
+      const mapped = (pocketList || []).map(({ resids, color }) => {
+        const residues = []; const seen = new Set();
+        for (const p of (resids || [])) {
+          const sel = this.residueSelectorForChain(p, chain);
+          if (!sel || sel.resi === -999999) continue;
+          const ch = sel.chain != null ? sel.chain : (chain != null ? chain : null);
+          const k = (ch == null ? '' : ch) + '|' + sel.resi; if (seen.has(k)) continue; seen.add(k);
+          residues.push({ chain: ch, resi: sel.resi });
+        }
+        return { residues, color };
+      }).filter(p => p.residues.length > 0);
+      if (!mapped.length) return false;
+      this._pocketShown = true;
+      send('showMultiPocket', { pockets: mapped }).catch(() => {});
+      return true;
+    },
     // Frame the camera on a set of residues (e.g. a whole domain range) — UniProt positions → PDB — without
     // entering focus mode or drawing sticks. Used by the range-feature magnifier ("zoom to a–b").
     frameResidues(positions, chain = null) {

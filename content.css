@@ -1493,6 +1493,11 @@
     border-color: var(--ufv-accent-border);
 }
 
+.ufv-section-btn-active {
+    background: var(--ufv-accent);
+    color: #fff;
+    border-color: var(--ufv-accent);
+}
 .ufv-brush-btn.active {
     background: var(--ufv-accent);
     color: #fff;
