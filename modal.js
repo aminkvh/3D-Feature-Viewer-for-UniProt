@@ -2533,20 +2533,22 @@ const UFVModal = (() => {
             { label: 'Contact-network centrality',  color: '#6a1b9a', active: () => s.analysis.distantContacts instanceof Map && s.analysis.distantContacts.has(pos) },
             { label: 'Burial-adjusted constraint cluster', color: '#00897b', active: () => s.analysis.prism?.byPos instanceof Map && s.analysis.prism.byPos.has(pos) },
         ];
-        const bulbRow = document.createElement('span');
-        bulbRow.className = 'ufv-bulb-row';
-        const bulbInfo = bulbDefs.map(b => `<p><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${b.color};margin-right:6px;vertical-align:middle"></span><b>${b.label}</b> — ${b.active() ? 'flagged at this residue' : 'computed; not flagged here'}.</p>`).join('')
-            + '<p style="opacity:.75">A filled dot = this residue is flagged by that structural-genomics algorithm; faint = not flagged.</p>';
-        bulbDefs.forEach(b => {
-            const bulb = document.createElement('span');
-            bulb.className = 'ufv-bulb' + (b.active() ? ' ufv-bulb-on' : '');
-            bulb.style.setProperty('--bulb-color', b.color);
-            bulb.title = b.label;
-            bulbRow.appendChild(bulb);
-        });
         titleEl.appendChild(document.createTextNode((AA1TO3[wt] || wt) + ' ' + pos));
-        titleEl.appendChild(bulbRow);
-        bulbRow.appendChild(makeInfoIcon('Structural-genomics flags', bulbInfo)); // explains the coloured dots
+        if (s.settings.showExploratoryAlgorithms) {
+            const bulbRow = document.createElement('span');
+            bulbRow.className = 'ufv-bulb-row';
+            const bulbInfo = bulbDefs.map(b => `<p><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${b.color};margin-right:6px;vertical-align:middle"></span><b>${b.label}</b> — ${b.active() ? 'flagged at this residue' : 'computed; not flagged here'}.</p>`).join('')
+                + '<p style="opacity:.75">A filled dot = this residue is flagged by that structural-genomics algorithm; faint = not flagged.</p>';
+            bulbDefs.forEach(b => {
+                const bulb = document.createElement('span');
+                bulb.className = 'ufv-bulb' + (b.active() ? ' ufv-bulb-on' : '');
+                bulb.style.setProperty('--bulb-color', b.color);
+                bulb.title = b.label;
+                bulbRow.appendChild(bulb);
+            });
+            titleEl.appendChild(bulbRow);
+            bulbRow.appendChild(makeInfoIcon('Structural-genomics flags', bulbInfo));
+        }
 
         // ── Nearby box (with live distance slider) ──────────────────────────────
         body.appendChild(makeNearbyBox(s.selectedChain));
