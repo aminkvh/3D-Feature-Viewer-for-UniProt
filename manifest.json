@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "3D Feature Viewer for UniProt",
-  "version": "2.0.1",
+  "version": "2.0.1.1",
   "description": "Map UniProt residue annotations, variants, ligand context, and precomputed variant-effect evidence onto experimental and predicted protein structures.",
   "permissions": ["storage"],
   "sandbox": {
