@@ -1348,13 +1348,12 @@ const UFVModal = (() => {
     // Added to each filter panel when a chimeric PDB structure is loaded. Lets the user highlight
     // the residues in our chain that belong to the co-crystallized partner sequence (no UniProt
     // annotation), so they read as a visually distinct group from the annotation-coloured residues.
-    function appendChimericSection(panelId, chimericResidues, st) {
+    function appendChimericSection(panelId, chimericResidues, st, CHIMERIC_COLOR) {
         const panel = byId(panelId);
         if (!panel) return;
         panel.querySelector('.ufv-chimeric-section')?.remove();
         if (!chimericResidues.length) return;
 
-        const CHIMERIC_COLOR = '#8fa5c0';
         const section = document.createElement('div');
         section.className = 'ufv-collapsible ufv-chimeric-section';
 
@@ -1366,8 +1365,7 @@ const UFVModal = (() => {
         chevron.textContent = '▶';
 
         const nameSpan = document.createElement('span');
-        const orgNote = (st.organisms?.length > 0) ? ` — ${st.organisms[0]}` : '';
-        nameSpan.textContent = `Chimeric partner (${chimericResidues.length} res${orgNote})`;
+        nameSpan.textContent = 'Chimeric partner';
 
         const actions = document.createElement('div');
         actions.className = 'ufv-section-actions';
@@ -1375,7 +1373,7 @@ const UFVModal = (() => {
         const allBtn = document.createElement('button');
         allBtn.className = 'ufv-section-btn';
         allBtn.textContent = 'All';
-        allBtn.title = 'Highlight chimeric partner residues in the 3D view';
+        allBtn.title = 'Gray out chimeric partner residues in the 3D view';
         allBtn.addEventListener('click', e => {
             e.stopPropagation();
             StructureViewer.setChimericHighlight?.(chimericResidues, CHIMERIC_COLOR);
@@ -1384,7 +1382,7 @@ const UFVModal = (() => {
         const noneBtn = document.createElement('button');
         noneBtn.className = 'ufv-section-btn';
         noneBtn.textContent = 'None';
-        noneBtn.title = 'Remove chimeric highlight';
+        noneBtn.title = 'Restore normal coloring for chimeric region';
         noneBtn.addEventListener('click', e => {
             e.stopPropagation();
             StructureViewer.clearChimericHighlight?.();
@@ -1397,8 +1395,7 @@ const UFVModal = (() => {
         body.className = 'ufv-collapsible-body ufv-collapsed';
         const info = document.createElement('p');
         info.style.cssText = 'margin:0;padding:6px 0;font-size:.88em;color:var(--ufv-muted,#888);';
-        const orgFull = st.organisms?.length > 1 ? st.organisms.join(' / ') : (st.organisms?.[0] || 'partner sequence');
-        info.textContent = `${chimericResidues.length} residues in this chain originate from ${orgFull}. They have no annotations from this UniProt entry and appear gray when highlighted.`;
+        info.textContent = `${chimericResidues.length} residues in this chain are from a co-crystallized partner sequence. They have no annotations from this UniProt entry.`;
         body.appendChild(info);
 
         hdr.addEventListener('click', () => {
@@ -1414,14 +1411,19 @@ const UFVModal = (() => {
         const st = UFVState.selectedStructure();
         ['ufv-ptm-panel', 'ufv-var-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(id =>
             byId(id)?.querySelector('.ufv-chimeric-section')?.remove());
+        // Always clear any previous chimeric highlighting (handles switching from chimeric to non-chimeric).
+        StructureViewer.clearChimericHighlight?.();
         if (!st?.chimeric) return;
         const geo = StructureViewer.residueGeometry?.();
         if (!geo?.length) return;
         const ourChains = new Set([...(st.chainIds || []), ...(st.chainId ? [st.chainId] : [])]);
         const chimericResidues = geo.filter(g => g.uniPos === null && g.chain != null && ourChains.has(g.chain));
         if (!chimericResidues.length) return;
+        // Auto-apply gray tint so chimeric residues are immediately visually distinct, like unresolved residues.
+        const CHIMERIC_COLOR = '#9e9e9e';
+        StructureViewer.setChimericHighlight?.(chimericResidues, CHIMERIC_COLOR);
         ['ufv-ptm-panel', 'ufv-var-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(id =>
-            appendChimericSection(id, chimericResidues, st));
+            appendChimericSection(id, chimericResidues, st, CHIMERIC_COLOR));
     }
 
     // Re-draw the disease-variant checklist in every window that hosts one (so All/None and
