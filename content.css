@@ -692,6 +692,15 @@
     gap: 6px;
     flex-shrink: 0;
 }
+.ufv-view-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ufv-view-row .ufv-cm {
+    flex: 1;
+    min-width: 0;
+}
 
 .ufv-select {
     min-height: 28px;
@@ -2335,4 +2344,92 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--ufv-text-secondary);
+}
+
+/* ── All Pockets button (inline next to coloring-mode dropdown) ─────────── */
+.ufv-all-pockets-btn {
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+    background: none;
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 5px;
+    color: var(--ufv-text-muted);
+    cursor: pointer;
+    transition: all 0.12s ease;
+    line-height: 26px;
+}
+.ufv-all-pockets-btn:hover {
+    color: var(--ufv-accent);
+    border-color: var(--ufv-accent-border);
+    background: var(--ufv-bg-hover);
+}
+.ufv-all-pockets-btn.ufv-section-btn-active {
+    background: var(--ufv-accent);
+    color: #fff;
+    border-color: var(--ufv-accent);
+}
+
+/* ── All Pockets panel ──────────────────────────────────────────────────── */
+#ufv-all-pockets-panel {
+    /* Override ufv-filter-scroll's flex:1 so the panel sits above the main annotation list
+       rather than competing with it for the full available height. */
+    flex: none;
+    max-height: 240px;
+    border-bottom: 1px solid var(--ufv-border);
+    padding: 0 0 4px;
+}
+.ufv-ap-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px 4px;
+    border-bottom: 1px solid var(--ufv-border);
+}
+.ufv-ap-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ufv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.ufv-ap-loading, .ufv-ap-empty {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--ufv-text-muted);
+}
+.ufv-ap-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--ufv-border);
+}
+.ufv-ap-row:last-child { border-bottom: none; }
+.ufv-ap-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.ufv-ap-info {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+}
+.ufv-ap-id {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ufv-text-primary);
+    white-space: nowrap;
+}
+.ufv-ap-score, .ufv-ap-res-count {
+    font-size: 10px;
+    color: var(--ufv-text-muted);
+    white-space: nowrap;
 }

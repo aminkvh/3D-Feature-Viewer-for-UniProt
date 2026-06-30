@@ -114,25 +114,29 @@ const UFVModal = (() => {
                 </div>
                 <div class="ufv-side">
                     <div class="ufv-view-section">
-                        <div class="ufv-cm" id="ufv-cm">
-                            <button class="ufv-cm-btn" id="ufv-cm-btn">Default</button>
-                            <div class="ufv-cm-drop" id="ufv-cm-drop">
-                                <div class="ufv-cm-opt selected" data-value="default">Default</div>
-                                <div class="ufv-cm-opt" data-value="plddt">pLDDT confidence</div>
-                                <div class="ufv-cm-opt" data-value="bfactor">Experimental B-factor</div>
-                                <div class="ufv-cm-opt ufv-hidden" data-value="topology">Membrane topology</div>
-                                <div class="ufv-cm-opt" data-value="hotspots">Pathogenic variant hotspots</div>
-                                <div class="ufv-cm-opt" data-value="distantContacts">Contact-network centrality</div>
-                                <div class="ufv-cm-opt" data-value="alphaMissense">AlphaMissense summary</div>
-                                <div class="ufv-cm-opt" data-value="residueBurden">Recurrent phenotype residues</div>
-                                <div class="ufv-cm-opt" data-value="prism">Burial-adjusted constraint clusters</div>
+                        <div class="ufv-view-row">
+                            <div class="ufv-cm" id="ufv-cm">
+                                <button class="ufv-cm-btn" id="ufv-cm-btn">Default</button>
+                                <div class="ufv-cm-drop" id="ufv-cm-drop">
+                                    <div class="ufv-cm-opt selected" data-value="default">Default</div>
+                                    <div class="ufv-cm-opt" data-value="plddt">pLDDT confidence</div>
+                                    <div class="ufv-cm-opt" data-value="bfactor">Experimental B-factor</div>
+                                    <div class="ufv-cm-opt ufv-hidden" data-value="topology">Membrane topology</div>
+                                    <div class="ufv-cm-opt" data-value="hotspots">Pathogenic variant hotspots</div>
+                                    <div class="ufv-cm-opt" data-value="distantContacts">Contact-network centrality</div>
+                                    <div class="ufv-cm-opt" data-value="alphaMissense">AlphaMissense summary</div>
+                                    <div class="ufv-cm-opt" data-value="residueBurden">Recurrent phenotype residues</div>
+                                    <div class="ufv-cm-opt" data-value="prism">Burial-adjusted constraint clusters</div>
+                                </div>
                             </div>
+                            <button class="ufv-all-pockets-btn ufv-hidden" id="ufv-all-pockets-btn" title="Compute and display all predicted pockets across the whole protein">All Pockets</button>
                         </div>
                         <div class="ufv-sens-slider ufv-hidden" id="ufv-sens-wrap">
                             <label for="ufv-sens-slider">Sensitivity (FDR q ≤ <span id="ufv-sens-q">0.10</span>)</label>
                             <input type="range" id="ufv-sens-slider" min="1" max="40" value="10">
                         </div>
                     </div>
+                    <div id="ufv-all-pockets-panel" class="ufv-filter-scroll ufv-hidden"></div>
                     <div id="ufv-ptm-panel" class="ufv-filter-scroll">
                         <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button><button class="ufv-sm-btn ufv-brush-btn" id="ufv-brush-ptm" title="Colour PTM spheres by PTM type">C</button></div></div>
                         <div id="ufv-ptm-list"></div>
@@ -396,6 +400,7 @@ const UFVModal = (() => {
         });
         byId('ufv-structure-prev').addEventListener('click', () => cycleStructure(-1));
         byId('ufv-structure-next').addEventListener('click', () => cycleStructure(1));
+        initAllPocketsBtn();
     }
 
     function bindSettings() {
@@ -1032,6 +1037,13 @@ const UFVModal = (() => {
             }
         }
         byId('ufv-structure-meta') && (byId('ufv-structure-meta').textContent = '');
+        // Show "All Pockets" button only when a structure is loaded
+        const apBtn = byId('ufv-all-pockets-btn');
+        if (apBtn) apBtn.classList.toggle('ufv-hidden', !st);
+        // Reset panel when structure changes
+        const apPanel = byId('ufv-all-pockets-panel');
+        if (apPanel) { apPanel.classList.add('ufv-hidden'); apPanel.textContent = ''; delete apPanel.dataset.loaded; }
+        if (apBtn) apBtn.classList.remove('ufv-section-btn-active');
         renderStructureSelector();
         renderSequence();
     }
@@ -3043,54 +3055,7 @@ const UFVModal = (() => {
         const pockets = (pk.pockets && pk.pockets.length)
             ? pk.pockets
             : [{ pocketId: null, buriedness: pk.buriedness, score: pk.score, resid: [] }]; // legacy fallback
-        const closeFns = []; // mutual-exclusion: collapse every individual pocket block (used by both
-                              // per-pocket rows below and the "Show all"/"Hide all" toggle, so the two
-                              // never display a stale combination of each other's state).
-
-        // "Show all" toggle — fetches ALL pockets for the whole protein (not just those at this residue),
-        // then overlays every pocket surface in a distinct color with a full-structure camera reset.
-        let _allShown = false;
-        const setAllShown = (on) => {
-            _allShown = on;
-            _showAllBtn.textContent = on ? 'Hide all' : 'Show all';
-            _showAllBtn.classList.toggle('ufv-section-btn-active', on);
-        };
-        const _showAllBtn = document.createElement('button');
-        _showAllBtn.className = 'ufv-section-btn ufv-show-all-btn';
-        _showAllBtn.textContent = 'Show all';
-        _showAllBtn.title = 'Overlay all pockets across the whole structure in distinct colors';
-        _showAllBtn.addEventListener('click', async () => {
-            if (_allShown) {
-                setAllShown(false);
-                StructureViewer.clearPocket?.();
-                restoreResidueFocus();
-                return;
-            }
-            closeFns.forEach(fn => fn()); // an individual pocket may be open — collapse it, "Show all" supersedes it
-            _showAllBtn.disabled = true;
-            try {
-                const COLORS = ['#26c6da','#ff7043','#66bb6a','#ab47bc','#ffa726','#ec407a','#29b6f6','#9ccc65'];
-                // ProtVar has no protein-level pocket endpoint, so fetchAllProtVarPockets crawls
-                // /pocket/{acc}/{pos} for every residue and de-dupes by pocketId. Falls back to the
-                // pockets already loaded for this residue if the crawl turns up nothing.
-                let allPockets = pockets;
-                try {
-                    const allPk = await UFVApi.fetchAllProtVarPockets?.(s.uniprotId, s.sequence.length,
-                        (done, total) => { _showAllBtn.textContent = `…${Math.round(100 * done / total)}%`; });
-                    if (allPk?.pockets?.length) allPockets = allPk.pockets;
-                } catch (_) {}
-                StructureViewer.showAllPockets?.(allPockets.map((p, i) => ({
-                    resids: p.resid || [],
-                    color: COLORS[i % COLORS.length],
-                })), chain);
-                setAllShown(true);
-            } finally {
-                _showAllBtn.textContent = _allShown ? 'Hide all' : 'Show all';
-                _showAllBtn.classList.toggle('ufv-section-btn-active', _allShown);
-                _showAllBtn.disabled = false;
-            }
-        });
-        hdr.appendChild(_showAllBtn);
+        const closeFns = []; // mutual-exclusion: collapse every individual pocket block
         container.appendChild(hdr);
         const body = container; // render the pocket blocks directly into the container
 
@@ -3131,7 +3096,6 @@ const UFVModal = (() => {
                     closeFns.forEach(fn => { if (fn !== collapse) fn(); }); // mutual exclusion
                     if (willOpen) {
                         children.classList.remove('ufv-collapsed'); resBox.classList.add('ufv-open');
-                        setAllShown(false); // a single pocket view supersedes "Show all" — keep the button in sync
                         StructureViewer.showPocket?.(resids, chain, ann);
                     } else {
                         collapse();
@@ -3187,6 +3151,141 @@ const UFVModal = (() => {
 
         // (Attribution to AutoSite / ProtVar lives in the (i) popover.)
     }
+
+    // ── All Pockets panel ───────────────────────────────────────────────────────────────────────
+    // Protein-wide pocket view: fetches every pocket across all residues, lists them with their
+    // stats + an "Overlay all" toggle, and lets the user zoom into individual pockets.
+    const POCKET_COLORS = ['#26c6da','#ff7043','#66bb6a','#ab47bc','#ffa726','#ec407a','#29b6f6','#9ccc65'];
+
+    async function buildAllPocketsPanel() {
+        const panel = byId('ufv-all-pockets-panel');
+        const btn = byId('ufv-all-pockets-btn');
+        if (!panel || !btn) return;
+
+        const s = UFVState.state;
+        const chain = s.selectedChain ?? null;
+        const ann = buildAnnotationMap();
+
+        // Toggle open/closed
+        const isOpen = !panel.classList.contains('ufv-hidden');
+        if (isOpen) {
+            panel.classList.add('ufv-hidden');
+            btn.classList.remove('ufv-section-btn-active');
+            StructureViewer.clearPocket?.();
+            return;
+        }
+
+        panel.classList.remove('ufv-hidden');
+        btn.classList.add('ufv-section-btn-active');
+
+        // If already populated (cached) just show it
+        if (panel.dataset.loaded === 'true') return;
+
+        panel.textContent = '';
+
+        // Loading indicator
+        const loadingEl = document.createElement('div');
+        loadingEl.className = 'ufv-ap-loading';
+        loadingEl.textContent = 'Scanning all residues… 0%';
+        panel.appendChild(loadingEl);
+        btn.disabled = true;
+
+        let allPockets = null;
+        try {
+            allPockets = await UFVApi.fetchAllProtVarPockets?.(s.uniprotId, s.sequence?.length ?? 0,
+                (done, total) => {
+                    loadingEl.textContent = `Scanning all residues… ${Math.round(100 * done / total)}%`;
+                });
+        } catch (_) {}
+        btn.disabled = false;
+
+        panel.textContent = '';
+
+        if (!allPockets?.pockets?.length) {
+            const empty = document.createElement('div');
+            empty.className = 'ufv-ap-empty';
+            empty.textContent = 'No pockets detected across this protein.';
+            panel.appendChild(empty);
+            return;
+        }
+
+        panel.dataset.loaded = 'true';
+        const pockets = allPockets.pockets;
+
+        // Panel header with pocket count and "Overlay all" toggle
+        const hdr = document.createElement('div'); hdr.className = 'ufv-ap-hdr';
+        const title = document.createElement('span'); title.className = 'ufv-ap-title';
+        title.textContent = `${pockets.length} pocket${pockets.length === 1 ? '' : 's'} detected`;
+        hdr.appendChild(title);
+
+        let _overlayOn = false;
+        const overlayBtn = document.createElement('button');
+        overlayBtn.className = 'ufv-section-btn';
+        overlayBtn.textContent = 'Overlay all';
+        overlayBtn.title = 'Show all pocket surfaces simultaneously with distinct colours';
+        overlayBtn.addEventListener('click', () => {
+            if (_overlayOn) {
+                _overlayOn = false;
+                overlayBtn.textContent = 'Overlay all';
+                overlayBtn.classList.remove('ufv-section-btn-active');
+                StructureViewer.clearPocket?.();
+            } else {
+                _overlayOn = true;
+                overlayBtn.textContent = 'Hide overlay';
+                overlayBtn.classList.add('ufv-section-btn-active');
+                StructureViewer.showAllPockets?.(pockets.map((p, i) => ({
+                    resids: p.resid || [],
+                    color: POCKET_COLORS[i % POCKET_COLORS.length],
+                })), chain);
+            }
+        });
+        hdr.appendChild(overlayBtn);
+        panel.appendChild(hdr);
+
+        pockets.forEach((p, i) => {
+            const color = POCKET_COLORS[i % POCKET_COLORS.length];
+            const resids = p.resid || [];
+            const row = document.createElement('div'); row.className = 'ufv-ap-row';
+
+            const swatch = document.createElement('span'); swatch.className = 'ufv-ap-swatch';
+            swatch.style.background = color;
+            row.appendChild(swatch);
+
+            const info = document.createElement('span'); info.className = 'ufv-ap-info';
+            const idLabel = document.createElement('span'); idLabel.className = 'ufv-ap-id';
+            idLabel.textContent = p.pocketId != null ? `Pocket ${p.pocketId}` : `Pocket ${i + 1}`;
+            info.appendChild(idLabel);
+
+            if (p.score != null) {
+                const sc = document.createElement('span'); sc.className = 'ufv-ap-score';
+                sc.textContent = `score ${Math.round(p.score)}`;
+                sc.title = POCKET_SCORE_TIP;
+                info.appendChild(sc);
+            }
+            const rc = document.createElement('span'); rc.className = 'ufv-ap-res-count';
+            rc.textContent = `${resids.length} res`;
+            info.appendChild(rc);
+            row.appendChild(info);
+
+            if (resids.length) {
+                const zoomBtn = makeZoomBtn(`Show pocket ${p.pocketId ?? i + 1} in 3-D`, () => {
+                    _overlayOn = false;
+                    overlayBtn.textContent = 'Overlay all';
+                    overlayBtn.classList.remove('ufv-section-btn-active');
+                    StructureViewer.showPocket?.(resids, chain, ann);
+                });
+                row.appendChild(zoomBtn);
+            }
+            panel.appendChild(row);
+        });
+    }
+
+    function initAllPocketsBtn() {
+        const btn = byId('ufv-all-pockets-btn');
+        if (!btn) return;
+        btn.addEventListener('click', () => buildAllPocketsPanel());
+    }
+
     // AutoSite's per-pocket score (ProtVar predicts pockets with AutoSite).
     const POCKET_SCORE_TIP = 'AutoSite pocket score — ranks how pronounced and ligand-favourable the cavity is; higher = a larger, better-defined pocket.';
 

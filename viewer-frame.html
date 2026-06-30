@@ -37,6 +37,15 @@
   <div id="app"></div>
   <div id="ufv-tip"></div>
   <div id="ufv-spike-status">Loading Mol*…</div>
+  <script>
+    // UniProt's Permissions-Policy header blocks xr-spatial-tracking at the top-frame level,
+    // which propagates to our iframe regardless of the allow attribute. Mol* probes navigator.xr
+    // on startup and triggers a policy-violation console error. Pre-stub the property as undefined
+    // so Mol* sees no XR support without touching the blocked API.
+    try {
+      Object.defineProperty(navigator, 'xr', { get: () => undefined, configurable: true });
+    } catch (_) {}
+  </script>
   <script src="lib/molstar.js"></script>
   <script src="viewer-frame.js"></script>
 </body>
