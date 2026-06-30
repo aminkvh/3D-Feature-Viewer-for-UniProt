@@ -414,13 +414,22 @@ const UFVExport = (() => {
             L.push('rebuild');
             L.push('deselect');
         }
-        // Ligands / cofactors: sticks coloured by element; ions as small spheres.
+        // Ligands / cofactors: explicit selection of only the currently-visible ones.
+        // (scene.ligands is already filtered by hiddenLigands and focus-mode visibility — using a
+        //  broad "not polymer" here would reveal every ligand in the file, defeating that filter.)
         if (scene.ligands.length) {
-            L.push('show sticks, (not polymer and not solvent)');
-            L.push('util.cnc (not polymer and not solvent)');
-            const ions = scene.ligands.filter(l => l.ion);
-            if (ions.length) {
-                L.push(`show spheres, (${pymolSel(itemsByChain(ions))})`);
+            const normalLigs = scene.ligands.filter(l => !l.ion);
+            const ionLigs    = scene.ligands.filter(l =>  l.ion);
+            if (normalLigs.length) {
+                const ligSel = pymolSel(itemsByChain(normalLigs));
+                L.push(`show sticks, (${ligSel})`);
+                L.push(`util.cnc (${ligSel})`);
+            }
+            if (ionLigs.length) {
+                const ionSel = pymolSel(itemsByChain(ionLigs));
+                L.push(`show spheres, (${ionSel})`);
+                L.push(`set sphere_scale, 0.5, (${ionSel})`);
+                L.push(`util.cnc (${ionSel})`);
             }
         }
         // Zoom-in (focus) state: selected residue + 5 Å neighbourhood as sticks.
@@ -533,10 +542,11 @@ const UFVExport = (() => {
             L.push('mol addrep top');
         });
         // Ligands: licorice, coloured by element name.
+        // Explicit residue selection — scene.ligands is already filtered to visible-only.
         if (scene.ligands.length) {
             L.push('mol representation Licorice 0.3 12');
             L.push('mol color Name');
-            L.push('mol selection {not protein and not water}');
+            L.push(`mol selection {${vmdSelParts(itemsByChain(scene.ligands))}}`);
             L.push('mol addrep top');
         }
         // Zoom-in (focus) state: selected residue + 5 Å neighbourhood as licorice.

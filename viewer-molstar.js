@@ -1077,11 +1077,17 @@ const MolstarViewer = (() => {
         if (_focusRegion && (_focusRegion.has(key) || _focusRegion.has('|' + sp.resi))) continue;
         spheres.push({ chain: sp.chain || '', resi: sp.resi, color: sp.color });
       }
-      // Ligands / cofactors (non-water HETATM), unique per chain+resi+resn.
+      // Ligands / cofactors (non-water HETATM) — filtered to match EXACTLY what is visible:
+      // · hiddenLigands: residues individually toggled off by the user
+      // · _focusNearbyLigands: in focus mode, only the ligands near the focused residue are shown
+      //   (AlphaFill/multi-ligand structures keep dozens hidden; transplant-crowded views keep all hidden)
       const ligands = []; const seen = new Set();
       for (const a of atoms) {
         if (!a.hetflag || a.resn === 'HOH' || a.resn === 'WAT') continue;
-        const key = (a.chain || '') + '|' + a.resi + '|' + a.resn;
+        const ligKey = (a.chain || '') + '|' + a.resi;
+        if (this.hiddenLigands.has(ligKey)) continue;
+        if (this._focusNearbyLigands && !this._focusNearbyLigands.has(ligKey)) continue;
+        const key = ligKey + '|' + a.resn;
         if (seen.has(key)) continue; seen.add(key);
         ligands.push({ chain: a.chain || '', resi: a.resi, resn: a.resn, ion: this.ION_CODES.has(a.resn) });
       }
