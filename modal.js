@@ -1,4 +1,4 @@
-/* global UFVState, UFVApi, UFVExport, UFVAnalysis, DataProcessor, StructureViewer */
+﻿/* global UFVState, UFVApi, UFVExport, UFVAnalysis, DataProcessor, StructureViewer */
 const UFVModal = (() => {
     'use strict';
 
@@ -647,7 +647,7 @@ const UFVModal = (() => {
         // The observed-residue cache is built from an async 'atoms' event that arrives AFTER this window
         // is first drawn, so unresolved residues (PTMs/sites not modelled in this structure) aren't greyed
         // yet. Re-grey the current filter window once the cache lands.
-        StructureViewer.observedResiCb = () => { if (_loadSeq === mySeq && UFVState.state.currentMode) rebuildCurrentWindow(); };
+        StructureViewer.observedResiCb = () => { if (_loadSeq === mySeq && UFVState.state.currentMode) { rebuildCurrentWindow(); updateChimericSections(); } };
         // Already-loaded structures skip the loadStructure() that would re-frame the camera, so
         // reset the view here — reopening a window should return to the default framing, not keep
         // wherever the previous session was zoomed/panned.
@@ -665,6 +665,9 @@ const UFVModal = (() => {
         // Heavy graph analyses (hotspots, contact hubs) run off the critical path so the
         // structure shows immediately; they recolour / augment when ready.
         scheduleStructureAnalyses(structure, requestedId, mySeq);
+        // Chimeric panel section: added once atoms are loaded (observedResiCb), but also
+        // attempted here in case atoms were already cached from a previous structure load.
+        updateChimericSections();
         // Multichain: fetch the OTHER subunits' (partner proteins') annotations and overlay their disease
         // variants, off the critical path. Clicking a partner residue then shows that protein's data.
         loadPartnerAnnotations(structure, requestedId, mySeq);
@@ -1339,6 +1342,86 @@ const UFVModal = (() => {
         const wasExpanded = existing && !existing.querySelector('.ufv-collapsible-body')?.classList.contains('ufv-collapsed');
         existing?.remove();
         panel?.appendChild(buildDomainSection(wasExpanded));
+    }
+
+    // ── Chimeric partner section ─────────────────────────────────────────────
+    // Added to each filter panel when a chimeric PDB structure is loaded. Lets the user highlight
+    // the residues in our chain that belong to the co-crystallized partner sequence (no UniProt
+    // annotation), so they read as a visually distinct group from the annotation-coloured residues.
+    function appendChimericSection(panelId, chimericResidues, st) {
+        const panel = byId(panelId);
+        if (!panel) return;
+        panel.querySelector('.ufv-chimeric-section')?.remove();
+        if (!chimericResidues.length) return;
+
+        const CHIMERIC_COLOR = '#8fa5c0';
+        const section = document.createElement('div');
+        section.className = 'ufv-collapsible ufv-chimeric-section';
+
+        const hdr = document.createElement('div');
+        hdr.className = 'ufv-collapsible-hdr';
+
+        const chevron = document.createElement('span');
+        chevron.className = 'ufv-collapsible-chevron';
+        chevron.textContent = '▶';
+
+        const nameSpan = document.createElement('span');
+        const orgNote = (st.organisms?.length > 0) ? ` — ${st.organisms[0]}` : '';
+        nameSpan.textContent = `Chimeric partner (${chimericResidues.length} res${orgNote})`;
+
+        const actions = document.createElement('div');
+        actions.className = 'ufv-section-actions';
+
+        const allBtn = document.createElement('button');
+        allBtn.className = 'ufv-section-btn';
+        allBtn.textContent = 'All';
+        allBtn.title = 'Highlight chimeric partner residues in the 3D view';
+        allBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            StructureViewer.setChimericHighlight?.(chimericResidues, CHIMERIC_COLOR);
+        });
+
+        const noneBtn = document.createElement('button');
+        noneBtn.className = 'ufv-section-btn';
+        noneBtn.textContent = 'None';
+        noneBtn.title = 'Remove chimeric highlight';
+        noneBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            StructureViewer.clearChimericHighlight?.();
+        });
+
+        actions.append(allBtn, noneBtn);
+        hdr.append(chevron, nameSpan, actions);
+
+        const body = document.createElement('div');
+        body.className = 'ufv-collapsible-body ufv-collapsed';
+        const info = document.createElement('p');
+        info.style.cssText = 'margin:0;padding:6px 0;font-size:.88em;color:var(--ufv-muted,#888);';
+        const orgFull = st.organisms?.length > 1 ? st.organisms.join(' / ') : (st.organisms?.[0] || 'partner sequence');
+        info.textContent = `${chimericResidues.length} residues in this chain originate from ${orgFull}. They have no annotations from this UniProt entry and appear gray when highlighted.`;
+        body.appendChild(info);
+
+        hdr.addEventListener('click', () => {
+            const collapsed = body.classList.toggle('ufv-collapsed');
+            chevron.textContent = collapsed ? '▶' : '▼';
+        });
+
+        section.append(hdr, body);
+        panel.appendChild(section);
+    }
+
+    function updateChimericSections() {
+        const st = UFVState.selectedStructure();
+        ['ufv-ptm-panel', 'ufv-var-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(id =>
+            byId(id)?.querySelector('.ufv-chimeric-section')?.remove());
+        if (!st?.chimeric) return;
+        const geo = StructureViewer.residueGeometry?.();
+        if (!geo?.length) return;
+        const ourChains = new Set([...(st.chainIds || []), ...(st.chainId ? [st.chainId] : [])]);
+        const chimericResidues = geo.filter(g => g.uniPos === null && g.chain != null && ourChains.has(g.chain));
+        if (!chimericResidues.length) return;
+        ['ufv-ptm-panel', 'ufv-var-panel', 'ufv-feat-panel', 'ufv-dom-panel'].forEach(id =>
+            appendChimericSection(id, chimericResidues, st));
     }
 
     // Re-draw the disease-variant checklist in every window that hosts one (so All/None and
@@ -2465,7 +2548,13 @@ const UFVModal = (() => {
         }
         const pos = data.position || data.resi;
         const aa = UFVState.state.sequence?.[pos - 1] || '';
-        byId('ufv-tooltip-hdr').textContent = `${aa}${pos}`;
+        const _hoverSt = UFVState.selectedStructure();
+        let _hoverHdr = `${aa}${pos}`;
+        if (_hoverSt?.pdbId && data.pdbResi != null) {
+            const _chain = data.chain ?? _hoverSt.chainId ?? '';
+            _hoverHdr += ` · PDB ${_chain} ${data.pdbResi}`;
+        }
+        byId('ufv-tooltip-hdr').textContent = _hoverHdr;
         byId('ufv-tooltip-body').innerHTML = residueSummary(pos, data);
         if (event) {
             const rect = document.querySelector('.ufv-viewer-wrap').getBoundingClientRect();
@@ -2507,6 +2596,24 @@ const UFVModal = (() => {
     function onClick(data, _mode, chain = null) {
         const s = UFVState.state;
         const pos = Number(data.position);
+
+        // Chimeric partner residue: no UniProt mapping — show a brief notice and zoom in on the PDB residue.
+        if (!pos || isNaN(pos)) {
+            s.selectedResidue = null; s.selectedChain = chain; s.selectedLigand = null;
+            if (data.pdbResi != null && chain) StructureViewer.focusPartnerResidue(chain, data.pdbResi);
+            const body = byId('ufv-details-body'); body.textContent = '';
+            byId('ufv-sphere-toggle')?.classList.remove('ufv-hidden');
+            const titleEl = byId('ufv-details-title'); titleEl.textContent = '';
+            const pdbLabel = data.pdbResi != null ? ` ${chain ?? '?'} ${data.pdbResi}` : '';
+            titleEl.appendChild(document.createTextNode('PDB' + pdbLabel));
+            const notice = document.createElement('p');
+            notice.style.cssText = 'margin:12px 0;color:var(--ufv-muted,#888);font-size:.9em;';
+            notice.textContent = 'This residue belongs to the chimeric partner sequence. It has no annotation from this UniProt entry.';
+            body.appendChild(notice);
+            byId('ufv-details').classList.add('show');
+            return;
+        }
+
         s.selectedResidue = pos;
         s.selectedChain = chain;
         s.selectedLigand = null; // clicking a residue clears any ligand focus
@@ -2534,6 +2641,17 @@ const UFVModal = (() => {
             { label: 'Burial-adjusted constraint cluster', color: '#00897b', active: () => s.analysis.prism?.byPos instanceof Map && s.analysis.prism.byPos.has(pos) },
         ];
         titleEl.appendChild(document.createTextNode((AA1TO3[wt] || wt) + ' ' + pos));
+        // Feature 2: for experimental PDB structures, show PDB author residue number alongside UniProt position.
+        const _clickSt = UFVState.selectedStructure();
+        if (_clickSt?.pdbId) {
+            const _pdbResi = UFVAnalysis.mapUniToPdb(pos, _clickSt);
+            if (_pdbResi != null) {
+                const _pdbSub = document.createElement('span');
+                _pdbSub.className = 'ufv-resi-pdb';
+                _pdbSub.textContent = ` · PDB ${chain ?? _clickSt.chainId ?? ''} ${_pdbResi}`;
+                titleEl.appendChild(_pdbSub);
+            }
+        }
         if (s.settings.showExploratoryAlgorithms) {
             const bulbRow = document.createElement('span');
             bulbRow.className = 'ufv-bulb-row';
@@ -2891,6 +3009,7 @@ const UFVModal = (() => {
         // Sub-block inside the parent "Binding & pockets" section (the parent owns the collapsible).
         const hdr = document.createElement('div'); hdr.className = 'ufv-sub-hdr';
         hdr.append(document.createTextNode('Predicted pockets'), makeInfoIcon('Predicted pockets (AutoSite)', POCKET_INFO));
+        const _pvLink = document.createElement('a'); _pvLink.className = 'ufv-ext-link'; _pvLink.href = `https://www.ebi.ac.uk/ProtVar/${s.uniprotId}`; _pvLink.target = '_blank'; _pvLink.rel = 'noopener noreferrer'; _pvLink.textContent = '⇗ ProtVar'; hdr.appendChild(_pvLink);
         container.appendChild(hdr);
         const body = container; // render the pocket blocks directly into the container
 
@@ -3010,6 +3129,7 @@ const UFVModal = (() => {
         // Sub-block inside the parent "Binding & pockets" section (the parent owns the collapsible).
         const hdr = document.createElement('div'); hdr.className = 'ufv-sub-hdr';
         hdr.append(document.createTextNode('Experimental binding'), makeInfoIcon('Experimental binding (PDBe-KB)', STRUCT_CTX_INFO));
+        const _pdbKbLink = document.createElement('a'); _pdbKbLink.className = 'ufv-ext-link'; _pdbKbLink.href = `https://www.ebi.ac.uk/pdbe/pdbe-kb/proteins/${UFVState.state.uniprotId}`; _pdbKbLink.target = '_blank'; _pdbKbLink.rel = 'noopener noreferrer'; _pdbKbLink.textContent = '⇗ PDBe-KB'; hdr.appendChild(_pdbKbLink);
         container.appendChild(hdr);
         const body = container;
         const row = (label, valueNode, cls) => {

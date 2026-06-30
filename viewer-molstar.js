@@ -26,6 +26,7 @@ const MolstarViewer = (() => {
   let sphereBuffer = [];          // capture buffer for marker spheres: {chain, resi, color, radius}
   let _partnerSpheres = [];       // multichain: partner-protein spheres by PDB author residue {chain, resi, color, radius, label}
   let _partnerCartoon = [];       // multichain: partner-protein cartoon overrides by PDB author residue {chain, resi, color}
+  let _chimericCartoon = [];      // chimeric-partner highlighting overrides {chain, resi, color}
   let cartoonDirty = false, markersDirty = false;
   let lastCartoonJSON = '', lastMarkersJSON = '', lastLabelsJSON = '';  // dedup: skip unchanged sends
   let _clickFn = null, _hoverFn = null, _hoverOutFn = null;  // native-pick handlers (from _bindHover)
@@ -203,7 +204,7 @@ const MolstarViewer = (() => {
       await ensureReady();
       this.currentStructure = structure;
       this._observedResi = this._observedResiByChain = null; this._waterKeysCache = null;
-      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
+      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
       // Reset all focus / ligand-visibility state BEFORE the new structure loads. Otherwise a focus left
       // active from the previous structure carries over — in particular a hide-all _focusNearbyLigands
       // (residue focus on a transplant-crowded model) would hide every ligand on the freshly loaded one.
@@ -501,6 +502,8 @@ const MolstarViewer = (() => {
         for (const o of cartoonOverrides) resColor.set((o.chain == null ? '' : o.chain) + '|' + o.resi, o);
         // Multichain: partner-protein cartoon overrides (disease colours on partner chains), applied LAST.
         for (const pc of _partnerCartoon) resColor.set((pc.chain == null ? '' : pc.chain) + '|' + pc.resi, pc);
+        // Chimeric-partner highlighting: overrides the mode colour for unmapped residues in our chain.
+        for (const cc of _chimericCartoon) resColor.set((cc.chain == null ? '' : cc.chain) + '|' + cc.resi, cc);
         const byColor = new Map();
         for (const o of resColor.values()) { if (!byColor.has(o.color)) byColor.set(o.color, []); byColor.get(o.color).push([o.chain, o.resi]); }
         const payload = { base: cartoonBase || '#d0d0d0', groups: [...byColor.entries()].map(([color, residues]) => ({ color, residues })) };
@@ -630,6 +633,20 @@ const MolstarViewer = (() => {
       }
       cartoonDirty = true; lastCartoonJSON = '';
       this._flush(true);
+    },
+    // Chimeric-partner highlighting: override the backbone colour of unmapped residues in our chain
+    // so they read as a distinct group from the annotation-coloured residues. Persists through
+    // colour-mode changes (applied after partner overrides in _flush). Pass [] to clear.
+    setChimericHighlight(residues, color = '#8fa5c0') {
+      _chimericCartoon = residues.map(r => ({ chain: r.chain, resi: r.resi, color }));
+      cartoonDirty = true;
+      this._flush();
+    },
+    clearChimericHighlight() {
+      if (!_chimericCartoon.length) return;
+      _chimericCartoon = [];
+      cartoonDirty = true;
+      this._flush();
     },
     // Multichain: focus a PARTNER residue with its surroundings (normal Mol* behaviour) — zoom + sticks for
     // the residue and its neighbourhood, by PDB author residue (bypassing our UniProt mapping).
@@ -764,7 +781,7 @@ const MolstarViewer = (() => {
           if (!atom || !atom.resi) return;
           if (atom.hetflag && atom.resn !== 'HOH' && atom.resn !== 'WAT') { self._hoverLigand(atom); if (self.hoverCb) self.hoverCb(null, mode, null); return; }
           if (!atom.hetflag && isPartner(atom)) { if (self.hoverCb) self.hoverCb(null, mode, null); return; }
-          const d = map.get(resolveUni(atom)); if (d && self.hoverCb) self.hoverCb(d, mode, {}, atom.chain);
+          const d = map.get(resolveUni(atom)); if (d && self.hoverCb) self.hoverCb({ ...d, pdbResi: atom.resi }, mode, {}, atom.chain);
         },
         () => { self._clearLigandHover(); if (self.hoverCb) self.hoverCb(null, mode, null); });
       this.viewer.setClickable({}, true,
@@ -780,7 +797,7 @@ const MolstarViewer = (() => {
           // Partner-subunit residue (different protein): route to the partner handler (multichain) with the
           // PDB author residue — NOT our clickCb, which would mis-map it.
           if (isPartner(atom)) { if (self.partnerClickCb) self.partnerClickCb({ chain: atom.chain, resi: atom.resi, resn: atom.resn }); return; }
-          const d = map.get(resolveUni(atom)); if (self.clickCb) self.clickCb(d || { position: resolveUni(atom) }, mode, atom.chain);
+          const uni = resolveUni(atom); const d = map.get(uni); if (self.clickCb) self.clickCb(d || { position: uni, pdbResi: atom.resi }, mode, atom.chain);
         });
     },
     _hoverLigand() {},        // Mol* handles native ligand hover highlight

@@ -820,5 +820,5 @@ const UFVAnalysis = (() => {
         return { minDist: d, band: d < 2.0 ? 'severe' : d < 2.6 ? 'suspicious' : 'normal' };
     }
 
-    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity, computeResidueProximity, pocketEvidence, ligandClash };
+    return { residueNeighborhood, computeHotspots, computeDistantContacts, aggregateAlphaMissense, computeResidueBurden, computePtmVariantProximity, computeResidueProximity, pocketEvidence, ligandClash, mapUniToPdb };
 })();

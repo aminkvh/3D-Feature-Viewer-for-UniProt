@@ -488,6 +488,17 @@
     color: var(--ufv-text-muted);
 }
 .ufv-sub-hdr:first-child { margin-top: 2px; }
+.ufv-ext-link {
+    margin-left: auto;
+    font-size: .8em;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ufv-link, #1976d2);
+    text-decoration: none;
+    opacity: .85;
+}
+.ufv-ext-link:hover { opacity: 1; text-decoration: underline; }
 
 /* Structural context (PDBe-KB) + Target druggability (Open Targets) — value-coloured rows + chips. */
 .ufv-detail-val.ufv-ctx-ligand { color: var(--ufv-ligand-color); }
@@ -2226,6 +2237,15 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
 
 /* --- Hidden utility --- */
 .ufv-hidden { display: none !important; }
+
+/* ── PDB author residue subtitle (dual numbering for experimental structures) */
+.ufv-resi-pdb {
+    font-size: .78em;
+    font-weight: 400;
+    opacity: .7;
+    margin-left: 5px;
+    letter-spacing: .01em;
+}
 
 /* ── Algorithm status bulbs ─────────────────────────────────────────────── */
 .ufv-bulb-row {
