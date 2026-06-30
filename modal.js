@@ -1298,7 +1298,7 @@ const UFVModal = (() => {
             lbl.className = 'ufv-filter-label';
             lbl.textContent = `${v.wildType || ''}${v.position}${v.mutant || ''}`;
             if (v.consequenceColor) lbl.style.color = v.consequenceColor;
-            rowEl.append(cb, lbl, makeZoomBtn(`Zoom to ${v.position}`, () => onClick({ position: v.position }, null, s.selectedChain ?? null)));
+            rowEl.append(cb, lbl, makeZoomBtn(zoomTitle(v.position, s.selectedChain), () => onClick({ position: v.position }, null, s.selectedChain ?? null)));
             children.appendChild(rowEl);
         });
         const top = makeFilterItem(name, color, count, s.featDiseases.has(name), checked => {
@@ -2139,6 +2139,19 @@ const UFVModal = (() => {
         ['Buriedness', 'How enclosed the pocket is (0 = open, 1 = buried).', ''],
         ['Pocket score', 'AutoSite\'s ranking of how pronounced and ligand-favourable the cavity is — higher = a larger, better-defined pocket.', ''],
     ].map(([name, desc, url]) => `<p><b>${name}</b> — ${desc}${url ? ` <a href="${url}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</p>`).join('');
+
+    // "Zoom to 421" → "Zoom to 421 · PDB B 423" when an experimental structure is loaded and the
+    // UniProt position maps to a PDB author residue number. Shared by every sidebar list (PTMs,
+    // sites, domains, disease variants) so hovering any annotation row shows both numbering schemes.
+    function zoomTitle(pos, chain) {
+        let t = `Zoom to ${pos}`;
+        const st = UFVState.selectedStructure();
+        if (st?.pdbId) {
+            const pdbResi = UFVAnalysis.mapUniToPdb(pos, st);
+            if (pdbResi != null && pdbResi !== pos) t += ` · PDB ${chain ?? st.chainId ?? ''} ${pdbResi}`;
+        }
+        return t;
+    }
 
     // Small magnifier "zoom to" button used across sidebar lists (ligands, and per-residue entries).
     function makeZoomBtn(title, onClick) {
@@ -3012,38 +3025,53 @@ const UFVModal = (() => {
         const hdr = document.createElement('div'); hdr.className = 'ufv-sub-hdr';
         hdr.append(document.createTextNode('AutoPocket'), makeInfoIcon('AutoPocket (AutoSite via ProtVar)', POCKET_INFO));
         const _pvLink = document.createElement('a'); _pvLink.className = 'ufv-ext-link'; _pvLink.href = `https://www.ebi.ac.uk/ProtVar/${s.uniprotId}`; _pvLink.target = '_blank'; _pvLink.rel = 'noopener noreferrer'; _pvLink.textContent = '⇗ ProtVar'; hdr.appendChild(_pvLink);
+        // ONE block per detected pocket (the number of blocks IS the pocket count, so no redundant aggregate
+        // header). Clicking a pocket's residues box highlights it in 3-D (translucent surface + annotation-
+        // coloured sticks) and lists its residues; opening a different pocket collapses the previous one.
+        const pockets = (pk.pockets && pk.pockets.length)
+            ? pk.pockets
+            : [{ pocketId: null, buriedness: pk.buriedness, score: pk.score, resid: [] }]; // legacy fallback
+        const closeFns = []; // mutual-exclusion: collapse every individual pocket block (used by both
+                              // per-pocket rows below and the "Show all"/"Hide all" toggle, so the two
+                              // never display a stale combination of each other's state).
+
         // "Show all" toggle — fetches ALL pockets for the whole protein (not just those at this residue),
         // then overlays every pocket surface in a distinct color with a full-structure camera reset.
         let _allShown = false;
+        const setAllShown = (on) => {
+            _allShown = on;
+            _showAllBtn.textContent = on ? 'Hide all' : 'Show all';
+            _showAllBtn.classList.toggle('ufv-section-btn-active', on);
+        };
         const _showAllBtn = document.createElement('button');
         _showAllBtn.className = 'ufv-section-btn ufv-show-all-btn';
         _showAllBtn.textContent = 'Show all';
         _showAllBtn.title = 'Overlay all pockets across the whole structure in distinct colors';
         _showAllBtn.addEventListener('click', async () => {
             if (_allShown) {
-                _allShown = false;
-                _showAllBtn.textContent = 'Show all';
-                _showAllBtn.classList.remove('ufv-section-btn-active');
+                setAllShown(false);
                 StructureViewer.clearPocket?.();
                 restoreResidueFocus();
                 return;
             }
-            _showAllBtn.textContent = '…';
+            closeFns.forEach(fn => fn()); // an individual pocket may be open — collapse it, "Show all" supersedes it
             _showAllBtn.disabled = true;
             try {
                 const COLORS = ['#26c6da','#ff7043','#66bb6a','#ab47bc','#ffa726','#ec407a','#29b6f6','#9ccc65'];
-                // Try the protein-level endpoint first (returns every pocket, not just those at this residue).
-                // Falls back to the per-residue pockets already loaded if the endpoint is unavailable.
+                // ProtVar has no protein-level pocket endpoint, so fetchAllProtVarPockets crawls
+                // /pocket/{acc}/{pos} for every residue and de-dupes by pocketId. Falls back to the
+                // pockets already loaded for this residue if the crawl turns up nothing.
                 let allPockets = pockets;
                 try {
-                    const allPk = await UFVApi.fetchAllProtVarPockets?.(s.uniprotId);
+                    const allPk = await UFVApi.fetchAllProtVarPockets?.(s.uniprotId, s.sequence.length,
+                        (done, total) => { _showAllBtn.textContent = `…${Math.round(100 * done / total)}%`; });
                     if (allPk?.pockets?.length) allPockets = allPk.pockets;
                 } catch (_) {}
                 StructureViewer.showAllPockets?.(allPockets.map((p, i) => ({
                     resids: p.resid || [],
                     color: COLORS[i % COLORS.length],
                 })), chain);
-                _allShown = true;
+                setAllShown(true);
             } finally {
                 _showAllBtn.textContent = _allShown ? 'Hide all' : 'Show all';
                 _showAllBtn.classList.toggle('ufv-section-btn-active', _allShown);
@@ -3062,14 +3090,6 @@ const UFVModal = (() => {
                 if (nb) s.nearbyResidues = nb;
             }
         };
-
-        // ONE block per detected pocket (the number of blocks IS the pocket count, so no redundant aggregate
-        // header). Clicking a pocket's residues box highlights it in 3-D (translucent surface + annotation-
-        // coloured sticks) and lists its residues; opening a different pocket collapses the previous one.
-        const pockets = (pk.pockets && pk.pockets.length)
-            ? pk.pockets
-            : [{ pocketId: null, buriedness: pk.buriedness, score: pk.score, resid: [] }]; // legacy fallback
-        const closeFns = []; // mutual-exclusion: collapse every other pocket block when one opens
         pockets.forEach((p, i) => {
             const resids = p.resid || [];
             const block = document.createElement('div'); block.className = 'ufv-pocket-block';
@@ -3099,6 +3119,7 @@ const UFVModal = (() => {
                     closeFns.forEach(fn => { if (fn !== collapse) fn(); }); // mutual exclusion
                     if (willOpen) {
                         children.classList.remove('ufv-collapsed'); resBox.classList.add('ufv-open');
+                        setAllShown(false); // a single pocket view supersedes "Show all" — keep the button in sync
                         StructureViewer.showPocket?.(resids, chain, ann);
                     } else {
                         collapse();
@@ -3928,7 +3949,7 @@ const UFVModal = (() => {
                 const [a, b] = opts.zoomRange;
                 el.appendChild(makeZoomBtn(`Zoom to ${a}–${b}`, () => StructureViewer.frameResidues?.(rangeList(a, b), opts.chain ?? null)));
             } else {
-                el.appendChild(makeZoomBtn(`Zoom to ${opts.zoomPos}`, () => onClick({ position: opts.zoomPos }, null, opts.chain ?? null)));
+                el.appendChild(makeZoomBtn(zoomTitle(opts.zoomPos, opts.chain), () => onClick({ position: opts.zoomPos }, null, opts.chain ?? null)));
             }
         }
         return el;
@@ -3967,7 +3988,7 @@ const UFVModal = (() => {
                 if (v.consequenceColor) lbl.style.color = v.consequenceColor;
                 // Zoom only via the icon (not the row), so it doesn't fight the checkbox.
                 const focus = () => onClick({ position: v.position }, null, s.selectedChain ?? null);
-                rowEl.append(cb, lbl, makeZoomBtn(`Zoom to ${v.position}`, focus));
+                rowEl.append(cb, lbl, makeZoomBtn(zoomTitle(v.position, s.selectedChain), focus));
                 children.appendChild(rowEl);
             });
         const top = makeFilterItem(name, color, count, true,

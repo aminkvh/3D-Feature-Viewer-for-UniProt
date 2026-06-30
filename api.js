@@ -67,7 +67,6 @@ const UFVApi = (() => {
     }
     const PROTVAR_FOLDX = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/foldx/${acc}/${pos}`;
     const PROTVAR_POCKET     = (acc, pos) => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}/${pos}`;
-    const PROTVAR_ALL_POCKETS = acc       => `https://www.ebi.ac.uk/ProtVar/api/prediction/pocket/${acc}`;
     // Public: the raw ProtVar pocket endpoint for a residue, so the UI can link users to the source data.
     const protVarPocketUrl = (acc, pos) => PROTVAR_POCKET(String(acc || '').replace(/-\d+$/, ''), pos);
     // Hosts we will actually fetch a computed model file from (reputable model providers only).
@@ -667,18 +666,36 @@ const UFVApi = (() => {
         _pocketCache.set(key, p);
         return p;
     }
-    // Fetch ALL pockets for the whole protein at once (protein-level endpoint, no position filter).
-    // Falls back to null if the endpoint is not available; caller should degrade to per-residue pockets.
-    function fetchAllProtVarPockets(acc) {
+    // ProtVar has no protein-level pocket endpoint — /pocket/{acc} (no position) 404s. The only way to
+    // discover every pocket is to crawl /pocket/{acc}/{pos} across all residues and de-dupe by pocketId
+    // (each call returns only the pockets that contain that residue). Mirrors fetchProtVarAll's
+    // concurrency-limited full-length crawl. Cached per accession so repeat "Show all" clicks are free.
+    const _allPocketCache = new Map();
+    function fetchAllProtVarPockets(acc, length, onProgress) {
         const canonAcc = acc.replace(/-\d+$/, '');
-        const key = `all:${canonAcc}`;
-        if (_pocketCache.has(key)) return _pocketCache.get(key);
+        const key = `${canonAcc}:${length}`;
+        if (_allPocketCache.has(key)) return _allPocketCache.get(key);
         const p = (async () => {
-            const pockets = normalizePockets(await fetchOptionalJson(PROTVAR_ALL_POCKETS(canonAcc)));
+            const byId = new Map();
+            const CONC = 8;
+            let idx = 0, done = 0;
+            async function worker() {
+                while (idx < length) {
+                    const pos = (idx++) + 1;
+                    try {
+                        const pockets = normalizePockets(await fetchOptionalJson(PROTVAR_POCKET(canonAcc, pos)));
+                        for (const pk of pockets) if (pk.pocketId != null && !byId.has(pk.pocketId)) byId.set(pk.pocketId, pk);
+                    } catch (_) {}
+                    done++;
+                    if (onProgress) onProgress(done, length);
+                }
+            }
+            await Promise.all(Array.from({ length: Math.min(CONC, length || 0) }, worker));
+            const pockets = [...byId.values()].sort((a, b) => (b.score || 0) - (a.score || 0));
             if (!pockets.length) return null;
             return { count: pockets.length, pockets };
         })();
-        _pocketCache.set(key, p);
+        _allPocketCache.set(key, p);
         return p;
     }
 
