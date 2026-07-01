@@ -3495,21 +3495,24 @@ const UFVModal = (() => {
             const borrowBtn = document.createElement('button'); borrowBtn.className = 'ufv-cpdb-borrow-btn';
             const borrowList = document.createElement('div'); borrowList.className = 'ufv-cpdb-borrow-list ufv-hidden';
             const borrowItems = refStructures.length
-                ? refStructures.map((st, i) => `${st.pdbId || 'Structure'}-${st.chainId || '?'}`)
+                ? refStructures.map(st => stLabel(st))
                 : ['(no structures loaded)'];
             borrowBtn.textContent = borrowItems[0] || '—';
             borrowItems.forEach((txt, i) => {
                 const opt = document.createElement('div'); opt.className = 'ufv-cpdb-borrow-opt';
                 opt.textContent = txt;
-                opt.addEventListener('click', () => {
+                opt.addEventListener('click', e => {
+                    e.stopPropagation();
                     cfg.refIdx = i;
                     borrowBtn.textContent = txt;
                     borrowList.classList.add('ufv-hidden');
                 });
                 borrowList.appendChild(opt);
             });
+            // Use stopPropagation on the button (no capture) so the document listener
+            // correctly closes on outside clicks but doesn't fight the toggle.
             borrowBtn.addEventListener('click', e => { e.stopPropagation(); borrowList.classList.toggle('ufv-hidden'); });
-            document.addEventListener('click', () => borrowList.classList.add('ufv-hidden'), { capture: true, passive: true });
+            document.addEventListener('click', () => borrowList.classList.add('ufv-hidden'));
             borrowDd.append(borrowBtn, borrowList);
             borrowWrap.append(borrowLbl, borrowDd);
 
