@@ -2590,36 +2590,7 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     width: 52px;
     flex-shrink: 0;
 }
-/* Mode tab buttons */
-.ufv-cpdb-tabs {
-    display: flex;
-    flex-shrink: 0;
-}
-.ufv-cpdb-tab {
-    font-size: 9px;
-    font-weight: 500;
-    padding: 2px 6px !important;
-    margin: 0 !important;
-    background: none;
-    border: 1px solid var(--ufv-border-hover);
-    color: var(--ufv-text-muted);
-    cursor: pointer;
-    transition: background 0.1s, color 0.1s, border-color 0.1s;
-    line-height: 1.4;
-}
-.ufv-cpdb-tab-first { border-radius: 3px 0 0 3px; }
-.ufv-cpdb-tab-last  { border-radius: 0 3px 3px 0; margin-left: -1px; }
-/* Adopt tab is wrapped in a relative container so its list drops below it */
-.ufv-cpdb-adopt-dd { position: relative; display: inline-flex; margin-left: -1px; }
-.ufv-cpdb-tab-adopt::after { content: ' ▾'; font-size: 7px; opacity: 0.75; }
-.ufv-cpdb-tab.active {
-    background: var(--ufv-accent);
-    color: var(--ufv-bg-primary);
-    border-color: var(--ufv-accent);
-    z-index: 1;
-}
-.ufv-cpdb-tab:hover:not(.active) { border-color: var(--ufv-accent-border); color: var(--ufv-accent); }
-/* Accession input — autocomplete from datalist of known accessions */
+/* Accession input */
 .ufv-cpdb-acc-inp {
     width: 76px !important;
     font-size: 9px !important;
@@ -2635,34 +2606,71 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     flex-shrink: 0;
 }
 .ufv-cpdb-acc-inp:focus { outline: none !important; border-color: var(--ufv-accent-border) !important; }
-/* Context area (offset / adopt / ignore) — sits after the tabs on the same line */
-.ufv-cpdb-ctx {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-}
-.ufv-cpdb-offset-lbl {
-    font-size: 9px;
-    color: var(--ufv-text-muted);
-    white-space: nowrap;
-}
+/* Combined mapping control: [offset-input | Adopt▾] [⊘] */
+.ufv-cpdb-map-ctrl { display: inline-flex; align-items: center; flex-shrink: 0; }
 .ufv-cpdb-offset-inp {
-    width: 52px !important;
-    max-width: 52px !important;
+    width: 44px !important;
     font-size: 10px !important;
     padding: 2px 4px !important;
-    height: 20px !important;
+    height: 22px !important;
     box-sizing: border-box !important;
     background: var(--ufv-bg-secondary) !important;
     border: 1px solid var(--ufv-border-hover) !important;
-    border-radius: 3px !important;
+    border-radius: 3px 0 0 3px !important;
     color: var(--ufv-text-primary) !important;
     margin: 0 !important;
     text-align: center;
+    transition: opacity 0.15s;
 }
-.ufv-cpdb-offset-inp:focus { outline: none !important; border-color: var(--ufv-accent-border) !important; }
+.ufv-cpdb-offset-inp:focus { outline: none !important; border-color: var(--ufv-accent-border) !important; z-index: 1; position: relative; }
+/* Adopt dropdown — anchors the list, right half of the map control */
+.ufv-cpdb-adopt-dd { position: relative; display: inline-flex; }
+.ufv-cpdb-adopt-btn {
+    font-size: 9px;
+    font-weight: 500;
+    padding: 2px 16px 2px 7px !important;
+    margin: 0 !important;
+    height: 22px;
+    background: none;
+    border: 1px solid var(--ufv-border-hover);
+    border-left: none;
+    border-radius: 0 3px 3px 0;
+    color: var(--ufv-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    position: relative;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.ufv-cpdb-adopt-btn::after {
+    content: '';
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 3px solid transparent;
+    border-top: 4px solid currentColor;
+    pointer-events: none;
+}
+.ufv-cpdb-adopt-btn.active { background: var(--ufv-accent); color: var(--ufv-bg-primary); border-color: var(--ufv-accent); }
+.ufv-cpdb-adopt-btn:hover:not(.active) { border-color: var(--ufv-accent-border); color: var(--ufv-accent); }
+/* Ignore toggle — standalone ⊘ button */
+.ufv-cpdb-ignore-btn {
+    font-size: 11px;
+    padding: 0 !important;
+    margin: 0 0 0 4px !important;
+    width: 22px;
+    height: 22px;
+    background: none;
+    border: 1px solid var(--ufv-border-hover);
+    border-radius: 3px;
+    color: var(--ufv-text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+    line-height: 1;
+}
+.ufv-cpdb-ignore-btn.active { background: #ef5350; border-color: #ef5350; color: #fff; }
+.ufv-cpdb-ignore-btn:hover:not(.active) { border-color: #ef5350; color: #ef5350; }
 /* Adopt dropdown list — drops below the Adopt tab button */
 .ufv-cpdb-borrow-list {
     position: absolute;

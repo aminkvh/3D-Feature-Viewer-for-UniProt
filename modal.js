@@ -3470,39 +3470,28 @@ const UFVModal = (() => {
             accInp.setAttribute('list', dlId);
             accInp.title = 'UniProt accession this chain represents';
 
-            // Tab strip: [Offset] [Adopt▾+inline list] [⊘]
-            const tabs = document.createElement('span'); tabs.className = 'ufv-cpdb-tabs';
+            // Combined mapping control: [offset-input | Adopt▾+list] [⊘ toggle]
+            const mapCtrl = document.createElement('span'); mapCtrl.className = 'ufv-cpdb-map-ctrl';
 
-            const tabOffset = document.createElement('button');
-            tabOffset.className = 'ufv-cpdb-tab ufv-cpdb-tab-first' + (cfg.mode === 'offset' ? ' active' : '');
-            tabOffset.textContent = 'Offset'; tabOffset.dataset.mode = 'offset';
-
-            const adoptDd = document.createElement('span'); adoptDd.className = 'ufv-cpdb-adopt-dd';
-            const tabAdopt = document.createElement('button');
-            tabAdopt.className = 'ufv-cpdb-tab ufv-cpdb-tab-adopt' + (cfg.mode === 'adopt' ? ' active' : '');
-            tabAdopt.textContent = 'Adopt'; tabAdopt.dataset.mode = 'adopt';
-            const adoptListEl = document.createElement('div'); adoptListEl.className = 'ufv-cpdb-borrow-list ufv-hidden';
-            adoptDd.append(tabAdopt, adoptListEl);
-
-            const tabIgnore = document.createElement('button');
-            tabIgnore.className = 'ufv-cpdb-tab ufv-cpdb-tab-last' + (cfg.mode === 'ignore' ? ' active' : '');
-            tabIgnore.textContent = '⊘'; tabIgnore.dataset.mode = 'ignore';
-            tabIgnore.title = 'Ignore — no annotations for this chain';
-
-            tabs.append(tabOffset, adoptDd, tabIgnore);
-
-            // Offset context
-            const offsetWrap = document.createElement('span'); offsetWrap.className = 'ufv-cpdb-ctx' + (cfg.mode !== 'offset' ? ' ufv-hidden' : '');
-            const offsetLbl = document.createElement('label'); offsetLbl.className = 'ufv-cpdb-offset-lbl';
-            offsetLbl.textContent = 'start:';
             const offsetInput = document.createElement('input');
             offsetInput.type = 'number'; offsetInput.className = 'ufv-cpdb-offset-inp';
             offsetInput.min = '1'; offsetInput.value = '1';
             offsetInput.title = `UniProt position that aligns to PDB residue ${range.first}`;
+            offsetInput.addEventListener('focus', () => { if (cfg.mode !== 'offset') setMode('offset'); });
             offsetInput.addEventListener('input', () => { cfg.uniprotStart = parseInt(offsetInput.value, 10) || 1; });
-            offsetWrap.append(offsetLbl, offsetInput);
 
-            // Populate / refresh the Adopt dropdown filtered by assigned accession
+            const adoptDd = document.createElement('span'); adoptDd.className = 'ufv-cpdb-adopt-dd';
+            const adoptBtn = document.createElement('button'); adoptBtn.className = 'ufv-cpdb-adopt-btn';
+            adoptBtn.textContent = 'Adopt';
+            adoptBtn.title = 'Adopt residue mapping from a loaded structure';
+            const adoptListEl = document.createElement('div'); adoptListEl.className = 'ufv-cpdb-borrow-list ufv-hidden';
+            adoptDd.append(adoptBtn, adoptListEl);
+
+            const ignoreBtn = document.createElement('button'); ignoreBtn.className = 'ufv-cpdb-ignore-btn';
+            ignoreBtn.textContent = '⊘'; ignoreBtn.title = 'Ignore — no annotations for this chain';
+
+            mapCtrl.append(offsetInput, adoptDd);
+
             const refreshAdoptList = () => {
                 adoptListEl.innerHTML = '';
                 const acc = cfg.accession || '';
@@ -3522,6 +3511,7 @@ const UFVModal = (() => {
                     opt.addEventListener('click', e => {
                         e.stopPropagation();
                         cfg.adoptSt = st;
+                        setMode('adopt');
                         adoptListEl.classList.add('ufv-hidden');
                     });
                     adoptListEl.appendChild(opt);
@@ -3529,22 +3519,21 @@ const UFVModal = (() => {
             };
             refreshAdoptList();
 
-            const setMode = (mode) => {
+            function setMode(mode) {
                 cfg.mode = mode;
-                tabOffset.classList.toggle('active', mode === 'offset');
-                tabAdopt.classList.toggle('active',  mode === 'adopt');
-                tabIgnore.classList.toggle('active',  mode === 'ignore');
-                offsetWrap.classList.toggle('ufv-hidden', mode !== 'offset');
+                const dim = mode !== 'offset';
+                offsetInput.style.opacity = dim ? '0.4' : '';
+                adoptBtn.classList.toggle('active', mode === 'adopt');
+                ignoreBtn.classList.toggle('active', mode === 'ignore');
                 if (mode !== 'adopt') adoptListEl.classList.add('ufv-hidden');
-            };
+            }
 
-            tabOffset.addEventListener('click', () => setMode('offset'));
-            tabAdopt.addEventListener('click', e => {
+            adoptBtn.addEventListener('click', e => {
                 e.stopPropagation();
-                setMode('adopt');
+                if (cfg.mode !== 'adopt') setMode('adopt');
                 adoptListEl.classList.toggle('ufv-hidden');
             });
-            tabIgnore.addEventListener('click', () => setMode('ignore'));
+            ignoreBtn.addEventListener('click', () => setMode(cfg.mode === 'ignore' ? 'offset' : 'ignore'));
             document.addEventListener('click', () => adoptListEl.classList.add('ufv-hidden'));
 
             const onAccChange = () => {
@@ -3555,7 +3544,7 @@ const UFVModal = (() => {
             accInp.addEventListener('change', onAccChange);
             accInp.addEventListener('blur',   onAccChange);
 
-            row.append(badge, rangeLbl, accInp, tabs, offsetWrap);
+            row.append(badge, rangeLbl, accInp, mapCtrl, ignoreBtn);
             body.appendChild(row);
         });
 
