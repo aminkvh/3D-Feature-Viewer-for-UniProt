@@ -3423,26 +3423,39 @@ const UFVModal = (() => {
 
     function buildCustomPdbChainConfig(panel, pdbText, label, chains) {
         panel.dataset.chainConfig = '1';
-        // Keep only the header, replace body
         const oldBody = panel.querySelector('.ufv-cpdb-body');
         if (oldBody) panel.removeChild(oldBody);
 
         const s = UFVState.state;
         const refStructures = (s.structures || []).filter(st => st.source !== 'Custom');
+        const currentAcc = s.accession || '';
+
+        // Collect known accessions: current protein + all loaded structures + their partner chains
+        const knownAccessions = new Set();
+        if (currentAcc) knownAccessions.add(currentAcc);
+        refStructures.forEach(st => {
+            if (st.accession) knownAccessions.add(st.accession);
+            (st.partners || []).forEach(p => { if (p.accession) knownAccessions.add(p.accession); });
+        });
 
         const body = document.createElement('div'); body.className = 'ufv-cpdb-body';
         panel.appendChild(body);
 
+        // Shared datalist for accession autocomplete (appended to body so it's cleaned up with it)
+        const dlId = 'ufv-cpdb-acc-dl';
+        const dl = document.createElement('datalist'); dl.id = dlId;
+        knownAccessions.forEach(acc => { const o = document.createElement('option'); o.value = acc; dl.appendChild(o); });
+        body.appendChild(dl);
+
         const subHdr = document.createElement('div'); subHdr.className = 'ufv-cpdb-sub-hdr';
-        subHdr.textContent = `${chains.size} chain${chains.size === 1 ? '' : 's'} — set residue mapping:`;
+        subHdr.textContent = `${chains.size} chain${chains.size === 1 ? '' : 's'} — assign accession and mapping:`;
         body.appendChild(subHdr);
 
         const configs = new Map();
-        [...chains.keys()].forEach(ch => configs.set(ch, { mode: 'offset', uniprotStart: 1, refIdx: 0 }));
+        [...chains.keys()].forEach(ch => configs.set(ch, { mode: 'offset', accession: currentAcc, uniprotStart: 1, adoptSt: null }));
 
         [...chains.entries()].forEach(([ch, range]) => {
             const cfg = configs.get(ch);
-            // Single flex row: [badge] [range] [tabs] [context]
             const row = document.createElement('div'); row.className = 'ufv-cpdb-chain-row';
 
             const badge = document.createElement('span'); badge.className = 'ufv-cpdb-badge';
@@ -3451,61 +3464,93 @@ const UFVModal = (() => {
             const rangeLbl = document.createElement('span'); rangeLbl.className = 'ufv-cpdb-range';
             rangeLbl.textContent = `${range.first}–${range.last}`;
 
+            // Accession input — datalist provides autocomplete from known accessions
+            const accInp = document.createElement('input');
+            accInp.type = 'text'; accInp.className = 'ufv-cpdb-acc-inp';
+            accInp.value = currentAcc; accInp.placeholder = 'Accession';
+            accInp.setAttribute('list', dlId);
+            accInp.title = 'UniProt accession this chain represents';
+
             const tabs = document.createElement('span'); tabs.className = 'ufv-cpdb-tabs';
-            const mkTab = (id, label) => {
+            const mkTab = (id, lbl) => {
                 const b = document.createElement('button'); b.className = 'ufv-cpdb-tab' + (cfg.mode === id ? ' active' : '');
-                b.textContent = label; b.dataset.mode = id;
+                b.textContent = lbl; b.dataset.mode = id;
                 return b;
             };
             const tabOffset = mkTab('offset', 'Offset');
-            const tabBorrow = mkTab('borrow', 'Borrow');
+            const tabAdopt  = mkTab('adopt',  'Adopt');
             const tabIgnore = mkTab('ignore', 'Ignore');
-            tabs.append(tabOffset, tabBorrow, tabIgnore);
+            tabs.append(tabOffset, tabAdopt, tabIgnore);
 
-            // Offset: short label + number input
+            // Offset context: which UniProt position does PDB residue range.first align to?
             const offsetWrap = document.createElement('span'); offsetWrap.className = 'ufv-cpdb-ctx';
             const offsetLbl = document.createElement('label'); offsetLbl.className = 'ufv-cpdb-offset-lbl';
-            offsetLbl.textContent = 'UniProt:';
+            offsetLbl.textContent = 'start:';
             const offsetInput = document.createElement('input');
             offsetInput.type = 'number'; offsetInput.className = 'ufv-cpdb-offset-inp';
             offsetInput.min = '1'; offsetInput.value = '1';
-            offsetInput.title = `UniProt sequence position that corresponds to PDB residue ${range.first}`;
+            offsetInput.title = `UniProt position that aligns to PDB residue ${range.first}`;
             offsetInput.addEventListener('input', () => { cfg.uniprotStart = parseInt(offsetInput.value, 10) || 1; });
             offsetWrap.append(offsetLbl, offsetInput);
 
-            // Borrow: custom dropdown
-            const borrowWrap = document.createElement('span'); borrowWrap.className = 'ufv-cpdb-ctx ufv-hidden';
-            const borrowDd = document.createElement('div'); borrowDd.className = 'ufv-cpdb-borrow-dd';
-            const borrowBtn = document.createElement('button'); borrowBtn.className = 'ufv-cpdb-borrow-btn';
-            const borrowList = document.createElement('div'); borrowList.className = 'ufv-cpdb-borrow-list ufv-hidden';
-            const borrowItems = refStructures.length ? refStructures.map(st => stLabel(st)) : ['(none loaded)'];
-            borrowBtn.textContent = borrowItems[0] || '—';
-            borrowItems.forEach((txt, i) => {
-                const opt = document.createElement('div'); opt.className = 'ufv-cpdb-borrow-opt';
-                opt.textContent = txt;
-                opt.addEventListener('click', e => { e.stopPropagation(); cfg.refIdx = i; borrowBtn.textContent = txt; borrowList.classList.add('ufv-hidden'); });
-                borrowList.appendChild(opt);
-            });
-            borrowBtn.addEventListener('click', e => { e.stopPropagation(); borrowList.classList.toggle('ufv-hidden'); });
-            document.addEventListener('click', () => borrowList.classList.add('ufv-hidden'));
-            borrowDd.append(borrowBtn, borrowList);
-            borrowWrap.appendChild(borrowDd);
+            // Adopt context: pick a loaded structure whose mapping to adopt for this chain
+            const adoptWrap = document.createElement('span'); adoptWrap.className = 'ufv-cpdb-ctx ufv-hidden';
+            const adoptDd  = document.createElement('div');    adoptDd.className  = 'ufv-cpdb-borrow-dd';
+            const adoptBtn = document.createElement('button'); adoptBtn.className = 'ufv-cpdb-borrow-btn';
+            const adoptListEl = document.createElement('div'); adoptListEl.className = 'ufv-cpdb-borrow-list ufv-hidden';
+            adoptDd.append(adoptBtn, adoptListEl);
+            adoptWrap.appendChild(adoptDd);
 
-            // Ignore: just a muted note
+            const refreshAdoptList = () => {
+                adoptListEl.innerHTML = '';
+                const acc = cfg.accession || '';
+                const matches = refStructures.filter(st => !acc || st.accession === acc);
+                if (!matches.length) {
+                    adoptBtn.textContent = '(none for this accession)';
+                    cfg.adoptSt = null;
+                    return;
+                }
+                cfg.adoptSt = matches[0];
+                adoptBtn.textContent = stLabel(matches[0]);
+                matches.forEach(st => {
+                    const opt = document.createElement('div'); opt.className = 'ufv-cpdb-borrow-opt';
+                    opt.textContent = stLabel(st);
+                    opt.addEventListener('click', e => {
+                        e.stopPropagation();
+                        cfg.adoptSt = st; adoptBtn.textContent = stLabel(st);
+                        adoptListEl.classList.add('ufv-hidden');
+                    });
+                    adoptListEl.appendChild(opt);
+                });
+            };
+            refreshAdoptList();
+            adoptBtn.addEventListener('click', e => { e.stopPropagation(); adoptListEl.classList.toggle('ufv-hidden'); });
+            document.addEventListener('click', () => adoptListEl.classList.add('ufv-hidden'));
+
+            // Ignore note
             const ignoreNote = document.createElement('span'); ignoreNote.className = 'ufv-cpdb-ctx ufv-cpdb-ignore-note ufv-hidden';
             ignoreNote.textContent = 'no annotations';
 
-            row.append(badge, rangeLbl, tabs, offsetWrap, borrowWrap, ignoreNote);
+            // When accession changes, normalise and refresh the Adopt list
+            const onAccChange = () => {
+                cfg.accession = accInp.value.trim().toUpperCase();
+                accInp.value = cfg.accession;
+                if (cfg.mode === 'adopt') refreshAdoptList();
+            };
+            accInp.addEventListener('change', onAccChange);
+            accInp.addEventListener('blur',   onAccChange);
+
+            row.append(badge, rangeLbl, accInp, tabs, offsetWrap, adoptWrap, ignoreNote);
             body.appendChild(row);
 
             const setMode = (mode) => {
                 cfg.mode = mode;
-                [tabOffset, tabBorrow, tabIgnore].forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+                [tabOffset, tabAdopt, tabIgnore].forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
                 offsetWrap.classList.toggle('ufv-hidden', mode !== 'offset');
-                borrowWrap.classList.toggle('ufv-hidden', mode !== 'borrow');
+                adoptWrap.classList.toggle('ufv-hidden',  mode !== 'adopt');
                 ignoreNote.classList.toggle('ufv-hidden', mode !== 'ignore');
             };
-            [tabOffset, tabBorrow, tabIgnore].forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
+            [tabOffset, tabAdopt, tabIgnore].forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
         });
 
         const footer = document.createElement('div'); footer.className = 'ufv-cpdb-footer';
@@ -3518,6 +3563,7 @@ const UFVModal = (() => {
         applyBtn.addEventListener('click', async () => {
             errEl.classList.add('ufv-hidden');
             const chainMappings = {};
+            const chainAccessions = {};
             let primaryChain = null;
             const ignoredChains = new Set();
             let hasMapping = false;
@@ -3525,17 +3571,18 @@ const UFVModal = (() => {
             for (const [ch, range] of chains.entries()) {
                 const cfg = configs.get(ch);
                 if (cfg.mode === 'ignore') { ignoredChains.add(ch); continue; }
+                const acc = cfg.accession || currentAcc;
                 let ranges;
-                if (cfg.mode === 'borrow') {
-                    const ref = refStructures[cfg.refIdx];
-                    if (!ref) { errEl.textContent = `No reference structure for chain ${ch}.`; errEl.classList.remove('ufv-hidden'); return; }
+                if (cfg.mode === 'adopt') {
+                    const ref = cfg.adoptSt;
+                    if (!ref) { errEl.textContent = `Chain ${ch}: no structure to adopt — switch to Offset or load a structure for that accession.`; errEl.classList.remove('ufv-hidden'); return; }
                     ranges = (ref.chainMappings?.[ref.chainId] || ref.mappedRanges || []).map(r => ({ ...r }));
                 } else {
-                    const uniStart = cfg.uniprotStart;
-                    const offset = uniStart - range.first;
+                    const offset = cfg.uniprotStart - range.first;
                     ranges = [{ pdbStart: range.first, pdbEnd: range.last, uniprotStart: range.first + offset, uniprotEnd: range.last + offset }];
                 }
                 chainMappings[ch] = ranges;
+                chainAccessions[ch] = acc;
                 if (!primaryChain) primaryChain = ch;
                 hasMapping = true;
             }
@@ -3546,6 +3593,7 @@ const UFVModal = (() => {
             const structure = {
                 source: 'Custom', label, pdbId: null,
                 chainId: primaryChain, chainIds, chainMappings,
+                chainAccessions,
                 mappedRanges: chainMappings[primaryChain],
                 ignoredChains, coverage: 0, pdbText,
             };

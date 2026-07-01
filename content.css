@@ -2617,7 +2617,23 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     z-index: 1;
 }
 .ufv-cpdb-tab:hover:not(.active) { border-color: var(--ufv-accent-border); color: var(--ufv-accent); }
-/* Context area (offset / borrow / ignore) — sits after the tabs on the same line */
+/* Accession input — autocomplete from datalist of known accessions */
+.ufv-cpdb-acc-inp {
+    width: 76px !important;
+    font-size: 9px !important;
+    font-family: monospace !important;
+    padding: 2px 5px !important;
+    height: 22px !important;
+    box-sizing: border-box !important;
+    background: var(--ufv-bg-secondary) !important;
+    border: 1px solid var(--ufv-border-hover) !important;
+    border-radius: 4px !important;
+    color: var(--ufv-text-primary) !important;
+    margin: 0 !important;
+    flex-shrink: 0;
+}
+.ufv-cpdb-acc-inp:focus { outline: none !important; border-color: var(--ufv-accent-border) !important; }
+/* Context area (offset / adopt / ignore) — sits after the tabs on the same line */
 .ufv-cpdb-ctx {
     display: inline-flex;
     align-items: center;
