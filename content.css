@@ -2607,9 +2607,11 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     transition: background 0.1s, color 0.1s, border-color 0.1s;
     line-height: 1.4;
 }
-.ufv-cpdb-tab:first-child { border-radius: 3px 0 0 3px; }
-.ufv-cpdb-tab:last-child  { border-radius: 0 3px 3px 0; }
-.ufv-cpdb-tab:not(:first-child) { margin-left: -1px; }
+.ufv-cpdb-tab-first { border-radius: 3px 0 0 3px; }
+.ufv-cpdb-tab-last  { border-radius: 0 3px 3px 0; margin-left: -1px; }
+/* Adopt tab is wrapped in a relative container so its list drops below it */
+.ufv-cpdb-adopt-dd { position: relative; display: inline-flex; margin-left: -1px; }
+.ufv-cpdb-tab-adopt::after { content: ' ▾'; font-size: 7px; opacity: 0.75; }
 .ufv-cpdb-tab.active {
     background: var(--ufv-accent);
     color: var(--ufv-bg-primary);
@@ -2661,43 +2663,13 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     text-align: center;
 }
 .ufv-cpdb-offset-inp:focus { outline: none !important; border-color: var(--ufv-accent-border) !important; }
-/* Custom borrow dropdown — fully themed, no native select */
-.ufv-cpdb-borrow-dd {
-    position: relative;
-    display: inline-block;
-}
-.ufv-cpdb-borrow-btn {
-    font-size: 10px;
-    padding: 2px 20px 2px 7px;
-    height: 20px;
-    line-height: 16px;
-    background: var(--ufv-bg-secondary);
-    border: 1px solid var(--ufv-border-hover);
-    border-radius: 3px;
-    color: var(--ufv-text-primary);
-    cursor: pointer;
-    white-space: nowrap;
-    max-width: 110px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    position: relative;
-}
-.ufv-cpdb-borrow-btn::after {
-    content: '';
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    border: 3px solid transparent;
-    border-top: 4px solid var(--ufv-text-muted);
-    pointer-events: none;
-}
+/* Adopt dropdown list — drops below the Adopt tab button */
 .ufv-cpdb-borrow-list {
     position: absolute;
     top: calc(100% + 2px);
     left: 0;
     z-index: 100;
-    min-width: 100%;
+    min-width: 160px;
     background: var(--ufv-bg-secondary);
     border: 1px solid var(--ufv-border-hover);
     border-radius: 4px;
