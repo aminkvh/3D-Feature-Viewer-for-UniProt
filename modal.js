@@ -3357,29 +3357,21 @@ const UFVModal = (() => {
         const body = document.createElement('div'); body.className = 'ufv-cpdb-body';
         panel.appendChild(body);
 
-        // File row — button left, filename right
+        // Single load row: [Choose file] [name] [or] [URL…] [Load]
         const fileInput = byId('ufv-pdb-file-input');
-        const fileRow = document.createElement('div'); fileRow.className = 'ufv-cpdb-file-row';
+        const loadRow = document.createElement('div'); loadRow.className = 'ufv-cpdb-load-row';
         const fileBtn = document.createElement('button'); fileBtn.className = 'ufv-cpdb-file-btn';
         fileBtn.textContent = 'Choose file';
-        const fileNameEl = document.createElement('span'); fileNameEl.className = 'ufv-cpdb-filename';
-        fileNameEl.textContent = 'No file chosen';
         fileBtn.addEventListener('click', () => fileInput.click());
-        fileRow.append(fileBtn, fileNameEl);
-        body.appendChild(fileRow);
-
-        // Divider
-        const or = document.createElement('div'); or.className = 'ufv-cpdb-or'; or.textContent = 'or';
-        body.appendChild(or);
-
-        // URL row — input + load button in same line
-        const urlRow = document.createElement('div'); urlRow.className = 'ufv-cpdb-url-row';
+        const fileNameEl = document.createElement('span'); fileNameEl.className = 'ufv-cpdb-filename';
+        fileNameEl.textContent = 'No file';
+        const or = document.createElement('span'); or.className = 'ufv-cpdb-or'; or.textContent = 'or';
         const urlInput = document.createElement('input');
-        urlInput.type = 'text'; urlInput.className = 'ufv-cpdb-url'; urlInput.placeholder = 'Paste PDB URL…';
+        urlInput.type = 'text'; urlInput.className = 'ufv-cpdb-url'; urlInput.placeholder = 'PDB URL…';
         const loadBtn = document.createElement('button'); loadBtn.className = 'ufv-cpdb-go-btn';
         loadBtn.textContent = 'Load';
-        urlRow.append(urlInput, loadBtn);
-        body.appendChild(urlRow);
+        loadRow.append(fileBtn, fileNameEl, or, urlInput, loadBtn);
+        body.appendChild(loadRow);
 
         const errEl = document.createElement('div'); errEl.className = 'ufv-cpdb-err ufv-hidden';
         body.appendChild(errEl);

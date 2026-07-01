@@ -2446,9 +2446,7 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
 .ufv-custom-pdb-panel {
     flex: none;
     border-bottom: 1px solid var(--ufv-border);
-    overflow-y: auto;
-    max-height: 360px;
-    overscroll-behavior: contain;
+    overflow-x: hidden;
 }
 .ufv-cpdb-hdr {
     display: flex;
@@ -2474,11 +2472,11 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     flex-direction: column;
     gap: 5px;
 }
-/* File row */
-.ufv-cpdb-file-row {
+/* Single-line load row: [Choose file] [name] [or] [URL…] [Load] */
+.ufv-cpdb-load-row {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
 }
 .ufv-cpdb-file-btn {
     flex-shrink: 0;
@@ -2492,6 +2490,7 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     cursor: pointer;
     line-height: 1.4;
     transition: border-color 0.12s, color 0.12s;
+    white-space: nowrap;
 }
 .ufv-cpdb-file-btn:hover { border-color: var(--ufv-accent-border); color: var(--ufv-accent); }
 .ufv-cpdb-filename {
@@ -2500,22 +2499,16 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
-    flex: 1;
+    max-width: 72px;
+    flex-shrink: 0;
 }
 /* "or" divider */
 .ufv-cpdb-or {
     font-size: 9px;
     color: var(--ufv-text-muted);
-    text-align: center;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-}
-/* URL row */
-.ufv-cpdb-url-row {
-    display: flex;
-    gap: 5px;
-    align-items: center;
+    flex-shrink: 0;
 }
 .ufv-cpdb-url {
     flex: 1;
