@@ -222,6 +222,21 @@ const MolstarViewer = (() => {
       return true;
     },
 
+    // Load a user-supplied PDB text directly (no network fetch). Used by the Custom PDB upload panel.
+    async loadCustomStructure(pdbText, structure = null) {
+      await ensureReady();
+      this.currentStructure = structure;
+      this._observedResi = this._observedResiByChain = null; this._waterKeysCache = null;
+      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
+      this._selectedResi = null; this._inFocusMode = false; this._focusState = null;
+      this._focusNearbyLigands = null; this.hiddenLigands = new Set(); this._lastLigandJSON = '';
+      _showOtherSpheres = true;
+      this.currentPdbText = pdbText;
+      this.currentFormat = 'pdb';
+      await send('loadData', { data: pdbText, format: 'pdb', isBinary: false });
+      return true;
+    },
+
     async clearModel() {
       this.currentStructure = this.currentPdbText = this.currentFormat = null;
       this._observedResi = this._observedResiByChain = null; this._waterKeysCache = null; atoms = [];

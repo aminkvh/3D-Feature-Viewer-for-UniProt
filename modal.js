@@ -137,6 +137,8 @@ const UFVModal = (() => {
                         </div>
                     </div>
                     <div id="ufv-all-pockets-panel" class="ufv-filter-scroll ufv-hidden"></div>
+                    <div id="ufv-custom-pdb-panel" class="ufv-custom-pdb-panel ufv-hidden"></div>
+                    <input type="file" id="ufv-pdb-file-input" accept=".pdb,.ent" style="display:none">
                     <div id="ufv-ptm-panel" class="ufv-filter-scroll">
                         <div class="ufv-panel-hdr"><h3>PTM Types</h3><div class="ufv-panel-actions"><button class="ufv-sm-btn" id="ufv-ptm-all">All</button><button class="ufv-sm-btn" id="ufv-ptm-none">None</button><button class="ufv-sm-btn ufv-brush-btn" id="ufv-brush-ptm" title="Colour PTM spheres by PTM type">C</button></div></div>
                         <div id="ufv-ptm-list"></div>
@@ -592,11 +594,16 @@ const UFVModal = (() => {
             return;
         }
         resetViewerTransients(); // clean slate on every structure (re)load / launch
-        const alreadyLoaded = StructureViewer.currentStructure?.url === structure.url;
+        const alreadyLoaded = structure.source === 'Custom'
+            ? StructureViewer.currentStructure === structure
+            : StructureViewer.currentStructure?.url === structure.url;
         if (!alreadyLoaded) {
             showLoading(`Loading ${structure.label}...`);
             try {
                 if (!StructureViewer.viewer) StructureViewer.init(byId('ufv-mol-viewer'));
+                if (structure.source === 'Custom') {
+                    await StructureViewer.loadCustomStructure?.(structure.pdbText, structure);
+                } else {
                 try {
                     await StructureViewer.loadStructure(structure.url, structure);
                 } catch (pdbErr) {
@@ -608,6 +615,7 @@ const UFVModal = (() => {
                     } else {
                         throw pdbErr;
                     }
+                }
                 }
                 // Bail if the protein changed or a newer load started while we were fetching —
                 // prevents two interleaved loads from rendering against a half-built model.
@@ -924,6 +932,10 @@ const UFVModal = (() => {
         if (st.source === 'Computed') {
             return `${st.provider}${st.coverage ? ` (model, ${st.coverage}%)` : ' (model)'}`;
         }
+        if (st.source === 'Custom') {
+            const name = st.label?.replace(/\.(pdb|ent)$/i, '') || 'Custom PDB';
+            return `Custom: ${name}`;
+        }
         const chains = st.chainIds?.length > 1 ? st.chainIds.join(',') : (st.chainId || '?');
         const parts = [];
         if (st.method) parts.push(shortMethod(st.method));
@@ -951,6 +963,16 @@ const UFVModal = (() => {
             });
             drop.appendChild(opt);
         });
+        // "Upload custom PDB..." entry at bottom of dropdown
+        const uploadOpt = document.createElement('div');
+        uploadOpt.className = 'ufv-cs-opt ufv-cs-upload';
+        uploadOpt.textContent = '+ Custom PDB…';
+        uploadOpt.addEventListener('click', () => {
+            byId('ufv-cs').classList.remove('open');
+            showCustomPdbPanel();
+        });
+        drop.appendChild(uploadOpt);
+
         const sel = UFVState.state.structures[idx];
         const btn = byId('ufv-cs-btn');
         if (btn && sel) {
@@ -3284,6 +3306,288 @@ const UFVModal = (() => {
         const btn = byId('ufv-all-pockets-btn');
         if (!btn) return;
         btn.addEventListener('click', () => buildAllPocketsPanel());
+    }
+
+    // ── Custom PDB upload ───────────────────────────────────────────────────────────────────────
+
+    // Parse chain IDs + residue ranges from raw PDB text (ATOM records only — exclude HETATM so
+    // ligand/water chains don't clutter the chain config UI).
+    function parsePdbChains(pdbText) {
+        const chains = new Map(); // chainId -> { first, last }
+        for (const line of pdbText.split('\n')) {
+            if (!line.startsWith('ATOM')) continue;
+            const chain = line[21];
+            const resi = parseInt(line.substring(22, 26).trim(), 10);
+            if (!chain || chain === ' ' || isNaN(resi)) continue;
+            if (!chains.has(chain)) {
+                chains.set(chain, { first: resi, last: resi });
+            } else {
+                const c = chains.get(chain);
+                if (resi < c.first) c.first = resi;
+                if (resi > c.last) c.last = resi;
+            }
+        }
+        return chains;
+    }
+
+    function showCustomPdbPanel() {
+        const panel = byId('ufv-custom-pdb-panel');
+        if (!panel) return;
+
+        if (!panel.classList.contains('ufv-hidden') && !panel.dataset.chainConfig) {
+            panel.classList.add('ufv-hidden');
+            return;
+        }
+
+        panel.classList.remove('ufv-hidden');
+        delete panel.dataset.chainConfig;
+        panel.innerHTML = '';
+
+        // Header
+        const hdr = document.createElement('div'); hdr.className = 'ufv-cpdb-hdr';
+        const title = document.createElement('span'); title.className = 'ufv-cpdb-title';
+        title.textContent = 'Custom PDB';
+        const closeBtn = document.createElement('button'); closeBtn.className = 'ufv-details-close';
+        closeBtn.innerHTML = '&#10005;';
+        closeBtn.addEventListener('click', () => { panel.classList.add('ufv-hidden'); delete panel.dataset.chainConfig; });
+        hdr.append(title, closeBtn);
+        panel.appendChild(hdr);
+
+        // Body
+        const body = document.createElement('div'); body.className = 'ufv-cpdb-body';
+        panel.appendChild(body);
+
+        // File row — button left, filename right
+        const fileInput = byId('ufv-pdb-file-input');
+        const fileRow = document.createElement('div'); fileRow.className = 'ufv-cpdb-file-row';
+        const fileBtn = document.createElement('button'); fileBtn.className = 'ufv-cpdb-file-btn';
+        fileBtn.textContent = 'Choose file';
+        const fileNameEl = document.createElement('span'); fileNameEl.className = 'ufv-cpdb-filename';
+        fileNameEl.textContent = 'No file chosen';
+        fileBtn.addEventListener('click', () => fileInput.click());
+        fileRow.append(fileBtn, fileNameEl);
+        body.appendChild(fileRow);
+
+        // Divider
+        const or = document.createElement('div'); or.className = 'ufv-cpdb-or'; or.textContent = 'or';
+        body.appendChild(or);
+
+        // URL row — input + load button in same line
+        const urlRow = document.createElement('div'); urlRow.className = 'ufv-cpdb-url-row';
+        const urlInput = document.createElement('input');
+        urlInput.type = 'text'; urlInput.className = 'ufv-cpdb-url'; urlInput.placeholder = 'Paste PDB URL…';
+        const loadBtn = document.createElement('button'); loadBtn.className = 'ufv-cpdb-go-btn';
+        loadBtn.textContent = 'Load';
+        urlRow.append(urlInput, loadBtn);
+        body.appendChild(urlRow);
+
+        const errEl = document.createElement('div'); errEl.className = 'ufv-cpdb-err ufv-hidden';
+        body.appendChild(errEl);
+
+        let _pdbText = null, _fileName = null;
+
+        fileInput.value = '';
+        if (fileInput._ufvChange) fileInput.removeEventListener('change', fileInput._ufvChange);
+        fileInput._ufvChange = () => {
+            const f = fileInput.files?.[0];
+            if (!f) return;
+            _fileName = f.name;
+            fileNameEl.textContent = f.name;
+            fileNameEl.title = f.name;
+            urlInput.value = '';
+            const reader = new FileReader();
+            reader.onload = e => { _pdbText = e.target.result; };
+            reader.readAsText(f);
+        };
+        fileInput.addEventListener('change', fileInput._ufvChange);
+
+        const doLoad = async () => {
+            errEl.classList.add('ufv-hidden');
+            const url = urlInput.value.trim();
+            if (!_pdbText && url) {
+                loadBtn.disabled = true; loadBtn.textContent = '…';
+                try {
+                    const resp = await fetch(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    _pdbText = await resp.text();
+                    _fileName = url.split('/').pop() || 'custom.pdb';
+                } catch (e) {
+                    errEl.textContent = `Fetch failed: ${e.message}`;
+                    errEl.classList.remove('ufv-hidden');
+                    loadBtn.disabled = false; loadBtn.textContent = 'Load';
+                    return;
+                }
+                loadBtn.disabled = false; loadBtn.textContent = 'Load';
+            }
+            if (!_pdbText) { errEl.textContent = 'Choose a file or paste a URL.'; errEl.classList.remove('ufv-hidden'); return; }
+            const chains = parsePdbChains(_pdbText);
+            if (!chains.size) { errEl.textContent = 'No ATOM records found — check that this is a valid PDB file.'; errEl.classList.remove('ufv-hidden'); return; }
+            if (fileInput._ufvChange) { fileInput.removeEventListener('change', fileInput._ufvChange); fileInput._ufvChange = null; }
+            buildCustomPdbChainConfig(panel, _pdbText, _fileName || 'custom.pdb', chains);
+        };
+        loadBtn.addEventListener('click', doLoad);
+        urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') doLoad(); });
+    }
+
+    function buildCustomPdbChainConfig(panel, pdbText, label, chains) {
+        panel.dataset.chainConfig = '1';
+        // Keep only the header, replace body
+        const oldBody = panel.querySelector('.ufv-cpdb-body');
+        if (oldBody) panel.removeChild(oldBody);
+
+        const s = UFVState.state;
+        const refStructures = (s.structures || []).filter(st => st.source !== 'Custom');
+
+        const body = document.createElement('div'); body.className = 'ufv-cpdb-body';
+        panel.appendChild(body);
+
+        const subHdr = document.createElement('div'); subHdr.className = 'ufv-cpdb-sub-hdr';
+        subHdr.textContent = `${chains.size} chain${chains.size === 1 ? '' : 's'} — set residue mapping:`;
+        body.appendChild(subHdr);
+
+        const configs = new Map();
+        [...chains.keys()].forEach(ch => configs.set(ch, { mode: 'offset', uniprotStart: 1, refIdx: 0 }));
+
+        [...chains.entries()].forEach(([ch, range]) => {
+            const cfg = configs.get(ch);
+            const block = document.createElement('div'); block.className = 'ufv-cpdb-chain-block';
+
+            // Top line: chain badge + range + mode tabs
+            const top = document.createElement('div'); top.className = 'ufv-cpdb-chain-top';
+
+            const badge = document.createElement('span'); badge.className = 'ufv-cpdb-badge';
+            badge.textContent = ch;
+            const rangeLbl = document.createElement('span'); rangeLbl.className = 'ufv-cpdb-range';
+            rangeLbl.textContent = `${range.first}–${range.last}`;
+
+            // Tab buttons: Offset / Borrow / Ignore
+            const tabs = document.createElement('span'); tabs.className = 'ufv-cpdb-tabs';
+            const mkTab = (id, label) => {
+                const b = document.createElement('button'); b.className = 'ufv-cpdb-tab' + (cfg.mode === id ? ' active' : '');
+                b.textContent = label; b.dataset.mode = id;
+                return b;
+            };
+            const tabOffset = mkTab('offset', 'Offset');
+            const tabBorrow = mkTab('borrow', 'Borrow');
+            const tabIgnore = mkTab('ignore', 'Ignore');
+            tabs.append(tabOffset, tabBorrow, tabIgnore);
+            top.append(badge, rangeLbl, tabs);
+            block.appendChild(top);
+
+            // Bottom line: context input (changes with active tab)
+            const inputRow = document.createElement('div'); inputRow.className = 'ufv-cpdb-input-row';
+
+            // Offset input — inline with label
+            const offsetWrap = document.createElement('span'); offsetWrap.className = 'ufv-cpdb-offset-wrap';
+            const offsetLbl = document.createElement('label'); offsetLbl.className = 'ufv-cpdb-offset-lbl';
+            offsetLbl.textContent = `UniProt pos of resi ${range.first}:`;
+            const offsetInput = document.createElement('input');
+            offsetInput.type = 'number'; offsetInput.className = 'ufv-cpdb-offset-inp';
+            offsetInput.min = '1'; offsetInput.value = '1';
+            offsetInput.addEventListener('input', () => { cfg.uniprotStart = parseInt(offsetInput.value, 10) || 1; });
+            offsetWrap.append(offsetLbl, offsetInput);
+
+            // Borrow — fully custom dropdown (avoids native-select white bg in dark mode)
+            const borrowWrap = document.createElement('span'); borrowWrap.className = 'ufv-cpdb-borrow-wrap ufv-hidden';
+            const borrowLbl = document.createElement('label'); borrowLbl.className = 'ufv-cpdb-offset-lbl';
+            borrowLbl.textContent = 'Copy from:';
+            const borrowDd = document.createElement('div'); borrowDd.className = 'ufv-cpdb-borrow-dd';
+            const borrowBtn = document.createElement('button'); borrowBtn.className = 'ufv-cpdb-borrow-btn';
+            const borrowList = document.createElement('div'); borrowList.className = 'ufv-cpdb-borrow-list ufv-hidden';
+            const borrowItems = refStructures.length
+                ? refStructures.map((st, i) => `${st.pdbId || 'Structure'}-${st.chainId || '?'}`)
+                : ['(no structures loaded)'];
+            borrowBtn.textContent = borrowItems[0] || '—';
+            borrowItems.forEach((txt, i) => {
+                const opt = document.createElement('div'); opt.className = 'ufv-cpdb-borrow-opt';
+                opt.textContent = txt;
+                opt.addEventListener('click', () => {
+                    cfg.refIdx = i;
+                    borrowBtn.textContent = txt;
+                    borrowList.classList.add('ufv-hidden');
+                });
+                borrowList.appendChild(opt);
+            });
+            borrowBtn.addEventListener('click', e => { e.stopPropagation(); borrowList.classList.toggle('ufv-hidden'); });
+            document.addEventListener('click', () => borrowList.classList.add('ufv-hidden'), { capture: true, passive: true });
+            borrowDd.append(borrowBtn, borrowList);
+            borrowWrap.append(borrowLbl, borrowDd);
+
+            // Ignore notice
+            const ignoreNote = document.createElement('span'); ignoreNote.className = 'ufv-cpdb-ignore-note ufv-hidden';
+            ignoreNote.textContent = 'Shown in 3-D but no annotation mapping.';
+
+            inputRow.append(offsetWrap, borrowWrap, ignoreNote);
+            block.appendChild(inputRow);
+            body.appendChild(block);
+
+            const setMode = (mode) => {
+                cfg.mode = mode;
+                [tabOffset, tabBorrow, tabIgnore].forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+                offsetWrap.classList.toggle('ufv-hidden', mode !== 'offset');
+                borrowWrap.classList.toggle('ufv-hidden', mode !== 'borrow');
+                ignoreNote.classList.toggle('ufv-hidden', mode !== 'ignore');
+            };
+            [tabOffset, tabBorrow, tabIgnore].forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
+        });
+
+        const footer = document.createElement('div'); footer.className = 'ufv-cpdb-footer';
+        const applyBtn = document.createElement('button'); applyBtn.className = 'ufv-section-btn';
+        applyBtn.textContent = 'Load into viewer';
+        const errEl = document.createElement('div'); errEl.className = 'ufv-cpdb-err ufv-hidden';
+        footer.append(errEl, applyBtn);
+        body.appendChild(footer);
+
+        applyBtn.addEventListener('click', async () => {
+            errEl.classList.add('ufv-hidden');
+            const chainMappings = {};
+            let primaryChain = null;
+            const ignoredChains = new Set();
+            let hasMapping = false;
+
+            for (const [ch, range] of chains.entries()) {
+                const cfg = configs.get(ch);
+                if (cfg.mode === 'ignore') { ignoredChains.add(ch); continue; }
+                let ranges;
+                if (cfg.mode === 'borrow') {
+                    const ref = refStructures[cfg.refIdx];
+                    if (!ref) { errEl.textContent = `No reference structure for chain ${ch}.`; errEl.classList.remove('ufv-hidden'); return; }
+                    ranges = (ref.chainMappings?.[ref.chainId] || ref.mappedRanges || []).map(r => ({ ...r }));
+                } else {
+                    const uniStart = cfg.uniprotStart;
+                    const offset = uniStart - range.first;
+                    ranges = [{ pdbStart: range.first, pdbEnd: range.last, uniprotStart: range.first + offset, uniprotEnd: range.last + offset }];
+                }
+                chainMappings[ch] = ranges;
+                if (!primaryChain) primaryChain = ch;
+                hasMapping = true;
+            }
+
+            if (!hasMapping) { errEl.textContent = 'At least one chain needs a mapping.'; errEl.classList.remove('ufv-hidden'); return; }
+
+            const chainIds = Object.keys(chainMappings);
+            const structure = {
+                source: 'Custom', label, pdbId: null,
+                chainId: primaryChain, chainIds, chainMappings,
+                mappedRanges: chainMappings[primaryChain],
+                ignoredChains, coverage: 0, pdbText,
+            };
+
+            applyBtn.disabled = true; applyBtn.textContent = 'Loading…';
+            try {
+                s.structures = (s.structures || []).filter(st => st.source !== 'Custom');
+                s.structures.push(structure);
+                s.selectedStructureIndex = s.structures.length - 1;
+                renderStructureSelector();
+                panel.classList.add('ufv-hidden');
+                delete panel.dataset.chainConfig;
+                await StructureViewer.loadCustomStructure?.(pdbText, structure);
+            } catch (e) {
+                errEl.textContent = `Load failed: ${e.message}`;
+                errEl.classList.remove('ufv-hidden');
+                applyBtn.disabled = false; applyBtn.textContent = 'Load into viewer';
+            }
+        });
     }
 
     // AutoSite's per-pocket score (ProtVar predicts pockets with AutoSite).
