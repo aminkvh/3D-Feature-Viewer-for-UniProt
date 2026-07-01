@@ -2566,20 +2566,15 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     border-bottom: 1px solid var(--ufv-border);
     margin-bottom: 2px;
 }
-/* Per-chain block */
-.ufv-cpdb-chain-block {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 5px 0 4px;
-    border-bottom: 1px solid var(--ufv-border);
-}
-.ufv-cpdb-chain-block:last-of-type { border-bottom: none; }
-.ufv-cpdb-chain-top {
+/* Single-line per-chain row */
+.ufv-cpdb-chain-row {
     display: flex;
     align-items: center;
     gap: 6px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--ufv-border);
 }
+.ufv-cpdb-chain-row:last-of-type { border-bottom: none; }
 .ufv-cpdb-badge {
     display: inline-flex;
     align-items: center;
@@ -2599,7 +2594,8 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
     font-size: 9px;
     color: var(--ufv-text-muted);
     font-variant-numeric: tabular-nums;
-    flex: 1;
+    width: 52px;
+    flex-shrink: 0;
 }
 /* Mode tab buttons */
 .ufv-cpdb-tabs {
@@ -2623,23 +2619,18 @@ input.ufv-lig-eye[type="checkbox"]:checked::after {
 .ufv-cpdb-tab:not(:first-child) { margin-left: -1px; }
 .ufv-cpdb-tab.active {
     background: var(--ufv-accent);
-    color: var(--ufv-bg-primary); /* dark bg = readable on bright cyan; light bg = readable on dark blue */
+    color: var(--ufv-bg-primary);
     border-color: var(--ufv-accent);
     z-index: 1;
 }
 .ufv-cpdb-tab:hover:not(.active) { border-color: var(--ufv-accent-border); color: var(--ufv-accent); }
-/* Input row below each chain */
-.ufv-cpdb-input-row {
-    padding-left: 24px;
-    display: flex;
-    align-items: center;
-    min-height: 22px;
-}
-.ufv-cpdb-offset-wrap,
-.ufv-cpdb-borrow-wrap {
+/* Context area (offset / borrow / ignore) — sits after the tabs on the same line */
+.ufv-cpdb-ctx {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
 }
 .ufv-cpdb-offset-lbl {
     font-size: 9px;

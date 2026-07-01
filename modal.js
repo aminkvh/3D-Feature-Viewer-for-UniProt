@@ -3450,17 +3450,15 @@ const UFVModal = (() => {
 
         [...chains.entries()].forEach(([ch, range]) => {
             const cfg = configs.get(ch);
-            const block = document.createElement('div'); block.className = 'ufv-cpdb-chain-block';
-
-            // Top line: chain badge + range + mode tabs
-            const top = document.createElement('div'); top.className = 'ufv-cpdb-chain-top';
+            // Single flex row: [badge] [range] [tabs] [context]
+            const row = document.createElement('div'); row.className = 'ufv-cpdb-chain-row';
 
             const badge = document.createElement('span'); badge.className = 'ufv-cpdb-badge';
             badge.textContent = ch;
+
             const rangeLbl = document.createElement('span'); rangeLbl.className = 'ufv-cpdb-range';
             rangeLbl.textContent = `${range.first}–${range.last}`;
 
-            // Tab buttons: Offset / Borrow / Ignore
             const tabs = document.createElement('span'); tabs.className = 'ufv-cpdb-tabs';
             const mkTab = (id, label) => {
                 const b = document.createElement('button'); b.className = 'ufv-cpdb-tab' + (cfg.mode === id ? ' active' : '');
@@ -3471,58 +3469,42 @@ const UFVModal = (() => {
             const tabBorrow = mkTab('borrow', 'Borrow');
             const tabIgnore = mkTab('ignore', 'Ignore');
             tabs.append(tabOffset, tabBorrow, tabIgnore);
-            top.append(badge, rangeLbl, tabs);
-            block.appendChild(top);
 
-            // Bottom line: context input (changes with active tab)
-            const inputRow = document.createElement('div'); inputRow.className = 'ufv-cpdb-input-row';
-
-            // Offset input — inline with label
-            const offsetWrap = document.createElement('span'); offsetWrap.className = 'ufv-cpdb-offset-wrap';
+            // Offset: short label + number input
+            const offsetWrap = document.createElement('span'); offsetWrap.className = 'ufv-cpdb-ctx';
             const offsetLbl = document.createElement('label'); offsetLbl.className = 'ufv-cpdb-offset-lbl';
-            offsetLbl.textContent = `UniProt pos of resi ${range.first}:`;
+            offsetLbl.textContent = 'UniProt:';
             const offsetInput = document.createElement('input');
             offsetInput.type = 'number'; offsetInput.className = 'ufv-cpdb-offset-inp';
             offsetInput.min = '1'; offsetInput.value = '1';
+            offsetInput.title = `UniProt sequence position that corresponds to PDB residue ${range.first}`;
             offsetInput.addEventListener('input', () => { cfg.uniprotStart = parseInt(offsetInput.value, 10) || 1; });
             offsetWrap.append(offsetLbl, offsetInput);
 
-            // Borrow — fully custom dropdown (avoids native-select white bg in dark mode)
-            const borrowWrap = document.createElement('span'); borrowWrap.className = 'ufv-cpdb-borrow-wrap ufv-hidden';
-            const borrowLbl = document.createElement('label'); borrowLbl.className = 'ufv-cpdb-offset-lbl';
-            borrowLbl.textContent = 'Copy from:';
+            // Borrow: custom dropdown
+            const borrowWrap = document.createElement('span'); borrowWrap.className = 'ufv-cpdb-ctx ufv-hidden';
             const borrowDd = document.createElement('div'); borrowDd.className = 'ufv-cpdb-borrow-dd';
             const borrowBtn = document.createElement('button'); borrowBtn.className = 'ufv-cpdb-borrow-btn';
             const borrowList = document.createElement('div'); borrowList.className = 'ufv-cpdb-borrow-list ufv-hidden';
-            const borrowItems = refStructures.length
-                ? refStructures.map(st => stLabel(st))
-                : ['(no structures loaded)'];
+            const borrowItems = refStructures.length ? refStructures.map(st => stLabel(st)) : ['(none loaded)'];
             borrowBtn.textContent = borrowItems[0] || '—';
             borrowItems.forEach((txt, i) => {
                 const opt = document.createElement('div'); opt.className = 'ufv-cpdb-borrow-opt';
                 opt.textContent = txt;
-                opt.addEventListener('click', e => {
-                    e.stopPropagation();
-                    cfg.refIdx = i;
-                    borrowBtn.textContent = txt;
-                    borrowList.classList.add('ufv-hidden');
-                });
+                opt.addEventListener('click', e => { e.stopPropagation(); cfg.refIdx = i; borrowBtn.textContent = txt; borrowList.classList.add('ufv-hidden'); });
                 borrowList.appendChild(opt);
             });
-            // Use stopPropagation on the button (no capture) so the document listener
-            // correctly closes on outside clicks but doesn't fight the toggle.
             borrowBtn.addEventListener('click', e => { e.stopPropagation(); borrowList.classList.toggle('ufv-hidden'); });
             document.addEventListener('click', () => borrowList.classList.add('ufv-hidden'));
             borrowDd.append(borrowBtn, borrowList);
-            borrowWrap.append(borrowLbl, borrowDd);
+            borrowWrap.appendChild(borrowDd);
 
-            // Ignore notice
-            const ignoreNote = document.createElement('span'); ignoreNote.className = 'ufv-cpdb-ignore-note ufv-hidden';
-            ignoreNote.textContent = 'Shown in 3-D but no annotation mapping.';
+            // Ignore: just a muted note
+            const ignoreNote = document.createElement('span'); ignoreNote.className = 'ufv-cpdb-ctx ufv-cpdb-ignore-note ufv-hidden';
+            ignoreNote.textContent = 'no annotations';
 
-            inputRow.append(offsetWrap, borrowWrap, ignoreNote);
-            block.appendChild(inputRow);
-            body.appendChild(block);
+            row.append(badge, rangeLbl, tabs, offsetWrap, borrowWrap, ignoreNote);
+            body.appendChild(row);
 
             const setMode = (mode) => {
                 cfg.mode = mode;
