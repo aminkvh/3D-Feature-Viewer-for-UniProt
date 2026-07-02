@@ -31,7 +31,7 @@ const MolstarViewer = (() => {
   let lastCartoonJSON = '', lastMarkersJSON = '', lastLabelsJSON = '';  // dedup: skip unchanged sends
   let _clickFn = null, _hoverFn = null, _hoverOutFn = null;  // native-pick handlers (from _bindHover)
   let _focusRegion = null;        // Set of 'chain|pdbResi' shown as sticks in focus → their spheres are excluded
-  let _prevFocusHighlightResi = null; _focusHighlightResi = null;     // {chain, resi} PDB coords of the clicked residue — rendered as a green CA sphere
+  let _focusHighlightResi = null;     // {chain, resi} PDB coords of the clicked residue — rendered as a green CA sphere
   let _prevFocusHighlightResi = null; // {chain, resi} the previously clicked residue — rendered as an amber trailing sphere
   let _showOtherSpheres = true;   // when false, hide all annotation spheres outside the focus region
   // The live object: after Object.assign(StructureViewer, MolstarViewer) the modal writes state onto
