@@ -31,7 +31,8 @@ const MolstarViewer = (() => {
   let lastCartoonJSON = '', lastMarkersJSON = '', lastLabelsJSON = '';  // dedup: skip unchanged sends
   let _clickFn = null, _hoverFn = null, _hoverOutFn = null;  // native-pick handlers (from _bindHover)
   let _focusRegion = null;        // Set of 'chain|pdbResi' shown as sticks in focus → their spheres are excluded
-  let _focusHighlightResi = null; // {chain, resi} PDB coords of the clicked residue — rendered as a green CA sphere
+  let _prevFocusHighlightResi = null; _focusHighlightResi = null;     // {chain, resi} PDB coords of the clicked residue — rendered as a green CA sphere
+  let _prevFocusHighlightResi = null; // {chain, resi} the previously clicked residue — rendered as an amber trailing sphere
   let _showOtherSpheres = true;   // when false, hide all annotation spheres outside the focus region
   // The live object: after Object.assign(StructureViewer, MolstarViewer) the modal writes state onto
   // StructureViewer, not onto `api`. Module-level callbacks (render→_flush, atoms→cache) must read
@@ -204,7 +205,7 @@ const MolstarViewer = (() => {
       await ensureReady();
       this.currentStructure = structure;
       this._observedResi = this._observedResiByChain = null; this._waterKeysCache = null;
-      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
+      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _prevFocusHighlightResi = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
       // Reset all focus / ligand-visibility state BEFORE the new structure loads. Otherwise a focus left
       // active from the previous structure carries over — in particular a hide-all _focusNearbyLigands
       // (residue focus on a transplant-crowded model) would hide every ligand on the freshly loaded one.
@@ -227,7 +228,7 @@ const MolstarViewer = (() => {
       await ensureReady();
       this.currentStructure = structure;
       this._observedResi = this._observedResiByChain = null; this._waterKeysCache = null;
-      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
+      atoms = []; _partnerSpheres = []; _partnerCartoon = []; _chimericCartoon = []; _focusRegion = null; _prevFocusHighlightResi = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; this._pocketShown = false; lastCartoonJSON = lastMarkersJSON = lastLabelsJSON = '';
       this._selectedResi = null; this._inFocusMode = false; this._focusState = null;
       this._focusNearbyLigands = null; this.hiddenLigands = new Set(); this._lastLigandJSON = '';
       _showOtherSpheres = true;
@@ -247,7 +248,7 @@ const MolstarViewer = (() => {
     },
 
     resize() { send('resize').catch(() => {}); },
-    resetView() { this.clearPocket(); this._selectedResi = null; this._inFocusMode = false; this._focusState = null; this._focusLabels = null; _focusRegion = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; _showOtherSpheres = true; this._focusNearbyLigands = null; send('unfocus').catch(() => {}); markersDirty = true; this._flush(true); this._drawLigands(); this._applyMarkerVisibility(); /* clear the toggle-off marker transparency → overview shows all spheres */ },
+    resetView() { this.clearPocket(); this._selectedResi = null; this._inFocusMode = false; this._focusState = null; this._focusLabels = null; _focusRegion = null; _prevFocusHighlightResi = null; _focusHighlightResi = null; this._lastCamTarget = null; this._lastCamRadius = null; _showOtherSpheres = true; this._focusNearbyLigands = null; send('unfocus').catch(() => {}); markersDirty = true; this._flush(true); this._drawLigands(); this._applyMarkerVisibility(); /* clear the toggle-off marker transparency → overview shows all spheres */ },
     // Re-issue ONLY the camera zoom for the active focus target at the current nearbyDistance. Used by the
     // Nearby slider so dragging the radius re-frames the pocket without rebuilding the focus sticks.
     rezoomFocus() { const t = this._lastCamTarget; if (t) send('camFocus', { chain: t.chain, resi: t.resi, radius: this._lastCamRadius || (this.nearbyDistance || 5) + 3 }).catch(() => {}); },
@@ -577,6 +578,14 @@ const MolstarViewer = (() => {
           if (!byColor.has(FH_COLOR)) byColor.set(FH_COLOR, { radius: 0.7, residues: [] });
           byColor.get(FH_COLOR).residues.push([fh.chain, fh.resi]);
         }
+        // Trailing sphere: previous clicked residue, so the user can track where they navigated from.
+        // Amber (#FFB300) is warm/distinct from the cool teal focus and safe for all common colorblindness types.
+        if (_prevFocusHighlightResi) {
+          const ph = _prevFocusHighlightResi;
+          const TRAIL_COLOR = '#FFB300';
+          if (!byColor.has(TRAIL_COLOR)) byColor.set(TRAIL_COLOR, { radius: 0.7, residues: [] });
+          byColor.get(TRAIL_COLOR).residues.push([ph.chain, ph.resi]);
+        }
         const payload = { groups: [...byColor.entries()].map(([color, g]) => ({ color, radius: g.radius, residues: g.residues })) };
         const j = JSON.stringify(payload);
         if (j !== lastMarkersJSON) { lastMarkersJSON = j; send('setMarkers', { ...payload, skipCamRestore }).catch(() => {}); }
@@ -693,7 +702,7 @@ const MolstarViewer = (() => {
       try { if (targets.length) { const fn = this._focusNeighbourhood(targets, chain, resi); neighbors = fn.nearPdb || []; region = fn.region; } } catch (_) {}
       // Set the exclusion region + flush markers so the partner/our spheres at the focus residues are HIDDEN
       // (shown as sticks instead) — without this the partner spheres overlaid the focus sticks.
-      _focusRegion = region; _focusHighlightResi = { chain, resi }; this._lastCamTarget = { chain, resi };
+      _focusRegion = region; _prevFocusHighlightResi = _focusHighlightResi; _focusHighlightResi = { chain, resi }; this._lastCamTarget = { chain, resi };
       this._lastCamRadius = this._pocketCamRadius(targets, neighbors);
       // Colour the partner focus sticks with OUR disease colours (via _partnerColorMap) — no our-protein map.
       const annotations = this._stickAnnotations(neighbors, null);
@@ -1019,7 +1028,7 @@ const MolstarViewer = (() => {
       this._focusNearbyLigands = transplantCrowded
         ? new Set()                                                          // hide every ligand
         : this._nearbyLigandKeys(targets, (this.nearbyDistance || 5) + 3);   // keep pocket ligands
-      near.add(resi); _focusRegion = region; _focusHighlightResi = { chain: selChain, resi: pdbResi }; this._lastCamTarget = { chain: selChain, resi: pdbResi };
+      near.add(resi); _focusRegion = region; _prevFocusHighlightResi = _focusHighlightResi; _focusHighlightResi = { chain: selChain, resi: pdbResi }; this._lastCamTarget = { chain: selChain, resi: pdbResi };
       if (opts.showOtherSpheres !== undefined) _showOtherSpheres = opts.showOtherSpheres;
       const rezoom = opts.rezoom !== false;
       // Colour focus sticks by each nearby residue's annotation (variant pathogenicity / PTM / site),
@@ -1058,7 +1067,7 @@ const MolstarViewer = (() => {
       this._focusState = null; // residue-focus export state doesn't apply to a ligand focus
       const targets = atoms.filter(a => a.resn === resn && a.resi === resi && (chain == null || a.chain === chain));
       const { near, region, nearPdb } = this._focusNeighbourhood(targets, chain, resi);
-      _focusRegion = region; _focusHighlightResi = null; this._lastCamTarget = { chain, resi }; // ligand focus has no single "clicked residue"
+      _focusRegion = region; _prevFocusHighlightResi = null; _focusHighlightResi = null; this._lastCamTarget = { chain, resi }; // ligand focus has no single "clicked residue"
       if (opts.showOtherSpheres !== undefined) _showOtherSpheres = opts.showOtherSpheres;
       const rezoom = opts.rezoom !== false;
       // Show only the focused ligand (AlphaFill models pack many close together).
